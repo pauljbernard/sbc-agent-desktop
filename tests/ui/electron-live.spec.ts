@@ -160,6 +160,21 @@ test.describe("live sbcl-agent desktop shell", () => {
     }
   });
 
+  test("opens the command center and jumps into active supervised work", async () => {
+    const { app, page } = await launchDesktop();
+    try {
+      await page.keyboard.press(process.platform === "darwin" ? "Meta+K" : "Control+K");
+      await expect(page.getByRole("dialog", { name: "Command Center" })).toBeVisible();
+      await page.getByPlaceholder("Search current work surfaces").fill("Runtime reload recovery");
+      await expect(page.locator(".command-center-item")).toContainText("Runtime reload recovery");
+      await page.locator(".command-center-item").first().click();
+      await expect(page.locator("body")).toContainText("Reconcile Work");
+      await expect(page.locator("body")).toContainText("Runtime reload recovery");
+    } finally {
+      await app.close();
+    }
+  });
+
   test("renders runtime summary and direct evaluation shell from live state", async () => {
     const { app, page } = await launchDesktop();
     try {

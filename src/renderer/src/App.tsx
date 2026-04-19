@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
   ApprovalDecisionDto,
   ApprovalRequestDto,
@@ -81,6 +81,16 @@ interface WorkspaceResolutionState {
   label: string;
   summary: string;
   tone: "active" | "warning" | "danger" | "steady";
+}
+
+interface CommandCenterEntry {
+  id: string;
+  label: string;
+  summary: string;
+  badge: string;
+  tone: "active" | "warning" | "danger" | "steady";
+  workspace: WorkspaceId;
+  onSelect: () => Promise<void>;
 }
 
 type ThemePreference = "system" | "light" | "dark";
@@ -909,6 +919,8 @@ export function App() {
   const [documentationPages, setDocumentationPages] = useState<DocumentationPageSummaryDto[]>([]);
   const [selectedDocumentationSlug, setSelectedDocumentationSlug] = useState<string>("development-model");
   const [selectedDocumentationPage, setSelectedDocumentationPage] = useState<DocumentationPageDto | null>(null);
+  const [isCommandCenterOpen, setIsCommandCenterOpen] = useState(false);
+  const [commandCenterQuery, setCommandCenterQuery] = useState("");
 
   function updateRuntimeInspectorSymbol(value: string): void {
     runtimeInspectorSymbolRef.current = value;
@@ -928,6 +940,7 @@ export function App() {
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
   const [selectedArtifact, setSelectedArtifact] = useState<ArtifactDetailDto | null>(null);
   const effectiveEnvironmentId = summary?.environmentId ?? binding?.environmentId ?? null;
+  const deferredCommandCenterQuery = useDeferredValue(commandCenterQuery.trim().toLowerCase());
 
   useEffect(() => {
     void loadInitialState();
@@ -980,6 +993,31 @@ export function App() {
 
     return () => {
       window.removeEventListener("keydown", handleWorkspaceShortcut);
+    };
+  }, []);
+
+  useEffect(() => {
+    function handleCommandCenterShortcut(event: KeyboardEvent): void {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") {
+        return;
+      }
+
+      event.preventDefault();
+      setIsCommandCenterOpen((current) => !current);
+    }
+
+    function handleEscape(event: KeyboardEvent): void {
+      if (event.key === "Escape") {
+        setIsCommandCenterOpen(false);
+      }
+    }
+
+    window.addEventListener("keydown", handleCommandCenterShortcut);
+    window.addEventListener("keydown", handleEscape);
+
+    return () => {
+      window.removeEventListener("keydown", handleCommandCenterShortcut);
+      window.removeEventListener("keydown", handleEscape);
     };
   }, []);
 
@@ -1676,6 +1714,159 @@ export function App() {
     return base;
   }, [globalAttentionItems]);
 
+  const commandCenterEntries = useMemo<CommandCenterEntry[]>(() => {
+    const workspaceEntries: CommandCenterEntry[] = workspaceOrder
+      .filter((workspace) => workspace.primary)
+      .map((workspace) => ({
+        id: `workspace:${workspace.id}`,
+        label: workspace.label,
+        summary: `Open the ${workspace.label} workspace.`,
+        badge: "workspace",
+        tone: workspaceAttention.get(workspace.id)?.tone ?? "steady",
+        workspace: workspace.id,
+        onSelect: async () => {
+          if (workspace.id === "environment") {
+            await navigateToOperateSection(selectedOperateSection);
+            return;
+          }
+          if (workspace.id === "conversations") {
+            await navigateToConversationSection(selectedConversationSection);
+            return;
+          }
+          if (workspace.id === "runtime") {
+            await navigateToExecutionSection(selectedExecutionSection);
+            return;
+          }
+          if (workspace.id === "incidents") {
+            await navigateToRecoverySection(selectedRecoverySection);
+            return;
+          }
+          if (workspace.id === "artifacts") {
+            await navigateToEvidenceSection(selectedEvidenceSection);
+            return;
+          }
+          if (workspace.id === "browser") {
+            await navigateToBrowserDomain(selectedBrowserDomain);
+            return;
+          }
+          if (workspace.id === "configuration") {
+            await navigateToConfigurationSection(selectedConfigurationSection);
+            return;
+          }
+          await navigateToWorkspace(workspace.id);
+        }
+      }));
+
+    const threadEntries: CommandCenterEntry[] = threads.slice(0, 8).map((thread) => ({
+      id: `thread:${thread.threadId}`,
+      label: thread.title,
+      summary: thread.summary,
+      badge: "thread",
+      tone: toneForThreadState(thread.state),
+      workspace: "conversations",
+      onSelect: async () => {
+        setSelectedThreadId(thread.threadId);
+        await navigateToConversationSection("threads");
+      }
+    }));
+
+    const workEntries: CommandCenterEntry[] = workItems.slice(0, 8).map((item) => ({
+      id: `work:${item.workItemId}`,
+      label: item.title,
+      summary: item.summary,
+      badge: "work",
+      tone: toneForWorkState(item.state),
+      workspace: "runtime",
+      onSelect: async () => {
+        setSelectedWorkItemId(item.workItemId);
+        await navigateToExecutionSection("work");
+      }
+    }));
+
+    const approvalEntries: CommandCenterEntry[] = approvalRequests.slice(0, 6).map((request) => ({
+      id: `approval:${request.requestId}`,
+      label: request.title,
+      summary: request.summary,
+      badge: "approval",
+      tone: toneForApprovalState(request.state),
+      workspace: "runtime",
+      onSelect: async () => {
+        setSelectedApprovalId(request.requestId);
+        await navigateToExecutionSection("approvals");
+      }
+    }));
+
+    const incidentEntries: CommandCenterEntry[] = incidents.slice(0, 6).map((incident) => ({
+      id: `incident:${incident.incidentId}`,
+      label: incident.title,
+      summary: `Severity ${incident.severity}. ${incident.state}.`,
+      badge: "incident",
+      tone: toneForIncidentSeverity(incident.severity),
+      workspace: "incidents",
+      onSelect: async () => {
+        setSelectedIncidentId(incident.incidentId);
+        await navigateToRecoverySection("incidents");
+      }
+    }));
+
+    const artifactEntries: CommandCenterEntry[] = artifacts.slice(0, 6).map((artifact) => ({
+      id: `artifact:${artifact.artifactId}`,
+      label: artifact.title,
+      summary: artifact.summary,
+      badge: artifact.kind,
+      tone: artifact.kind.includes("incident") ? "warning" : "active",
+      workspace: "artifacts",
+      onSelect: async () => {
+        setSelectedArtifactId(artifact.artifactId);
+        await navigateToEvidenceSection("artifacts");
+      }
+    }));
+
+    return [
+      ...workspaceEntries,
+      ...threadEntries,
+      ...workEntries,
+      ...approvalEntries,
+      ...incidentEntries,
+      ...artifactEntries
+    ];
+  }, [
+    navigateToConfigurationSection,
+    navigateToConversationSection,
+    navigateToEvidenceSection,
+    navigateToExecutionSection,
+    navigateToOperateSection,
+    navigateToRecoverySection,
+    navigateToWorkspace,
+    approvalRequests,
+    artifacts,
+    incidents,
+    selectedBrowserDomain,
+    selectedConfigurationSection,
+    selectedConversationSection,
+    selectedEvidenceSection,
+    selectedExecutionSection,
+    selectedOperateSection,
+    selectedRecoverySection,
+    threads,
+    workItems,
+    workspaceAttention
+  ]);
+
+  const filteredCommandCenterEntries = useMemo(() => {
+    if (!deferredCommandCenterQuery) {
+      return commandCenterEntries.slice(0, 18);
+    }
+
+    return commandCenterEntries
+      .filter((entry) =>
+        `${entry.label} ${entry.summary} ${entry.badge} ${labelForWorkspace(entry.workspace)}`
+          .toLowerCase()
+          .includes(deferredCommandCenterQuery)
+      )
+      .slice(0, 18);
+  }, [commandCenterEntries, deferredCommandCenterQuery]);
+
   const workspaceDescriptor = useMemo<WorkspaceDescriptor>(() => {
     switch (activeWorkspace) {
       case "environment":
@@ -1921,7 +2112,49 @@ export function App() {
             <strong>Environment Shell</strong>
           </div>
         </div>
+        <div className="shell-header-supervision">
+          <div className="shell-header-supervision-copy">
+            <span className="context-label">Current continuation</span>
+            <strong>{summary?.activeContext.currentThreadTitle ?? selectedWorkItem?.title ?? "No dominant continuation"}</strong>
+            <p>{summary?.activeContext.focusSummary ?? "Use the command center to jump directly into the next active thread, blocker, or recovery path."}</p>
+          </div>
+          <div className="shell-header-supervision-metrics">
+            <button className="header-metric-chip" onClick={() => void navigateToExecutionSection("approvals")} type="button">
+              <span>Approvals</span>
+              <strong>{summary?.attention.approvalsAwaiting ?? 0}</strong>
+            </button>
+            <button className="header-metric-chip" onClick={() => void navigateToRecoverySection("incidents")} type="button">
+              <span>Incidents</span>
+              <strong>{summary?.attention.openIncidents ?? 0}</strong>
+            </button>
+            <button className="header-metric-chip" onClick={() => void navigateToExecutionSection("work")} type="button">
+              <span>Blocked Work</span>
+              <strong>{summary?.attention.blockedWork ?? 0}</strong>
+            </button>
+          </div>
+        </div>
+        <div className="shell-header-actions">
+          <button
+            aria-expanded={isCommandCenterOpen}
+            aria-haspopup="dialog"
+            className="command-center-button"
+            onClick={() => setIsCommandCenterOpen(true)}
+            type="button"
+          >
+            <span>Command Center</span>
+            <kbd>⌘K</kbd>
+          </button>
+        </div>
       </header>
+
+      {isCommandCenterOpen ? (
+        <CommandCenter
+          entries={filteredCommandCenterEntries}
+          onClose={() => setIsCommandCenterOpen(false)}
+          onQueryChange={setCommandCenterQuery}
+          query={commandCenterQuery}
+        />
+      ) : null}
 
       <aside className="sidebar">
         <nav className="workspace-nav" aria-label="Workspace navigation">
@@ -2445,6 +2678,82 @@ function WorkspaceTransitionBanner({
         {isTransitioning ? <span className="workspace-transition-pulse" aria-hidden="true" /> : null}
       </div>
     </section>
+  );
+}
+
+function CommandCenter({
+  entries,
+  onClose,
+  onQueryChange,
+  query
+}: {
+  entries: CommandCenterEntry[];
+  onClose: () => void;
+  onQueryChange: (value: string) => void;
+  query: string;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+
+  async function handleSelect(entry: CommandCenterEntry): Promise<void> {
+    await entry.onSelect();
+    onClose();
+  }
+
+  return (
+    <div className="command-center-overlay" role="presentation" onClick={onClose}>
+      <section
+        aria-label="Command Center"
+        aria-modal="true"
+        className="command-center-dialog"
+        role="dialog"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="command-center-header">
+          <div>
+            <p className="eyebrow">Command Center</p>
+            <h3>Jump to the next supervised move</h3>
+          </div>
+          <button className="command-center-close" onClick={onClose} type="button">
+            Close
+          </button>
+        </div>
+        <label className="command-center-search">
+          <span className="context-label">Search threads, work, approvals, incidents, artifacts, and workspaces</span>
+          <input
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder="Search current work surfaces"
+            ref={inputRef}
+            value={query}
+          />
+        </label>
+        <div className="command-center-list">
+          {entries.length > 0 ? (
+            entries.map((entry) => (
+              <button className="command-center-item" key={entry.id} onClick={() => void handleSelect(entry)} type="button">
+                <div className="command-center-item-copy">
+                  <div className="command-center-item-top">
+                    <strong>{entry.label}</strong>
+                    <Badge tone={entry.tone}>{entry.badge}</Badge>
+                  </div>
+                  <p>{entry.summary}</p>
+                </div>
+                <span className="command-center-item-target">{labelForWorkspace(entry.workspace)}</span>
+              </button>
+            ))
+          ) : (
+            <div className="empty-state command-center-empty">
+              <p className="eyebrow">No Matches</p>
+              <h3>Nothing in the current environment matches that search.</h3>
+            </div>
+          )}
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -3047,6 +3356,83 @@ function JourneyStageStrip({
   );
 }
 
+function SupervisionBoard({
+  lanes,
+  onOpenJourney,
+  onPrimaryAction
+}: {
+  lanes: Array<{
+    id: string;
+    label: string;
+    summary: string;
+    tone: "active" | "warning" | "danger" | "steady";
+    rows: Array<{
+      key: string;
+      title: string;
+      lane: string;
+      state: string;
+      nextStep: string;
+      tone: "active" | "warning" | "danger" | "steady";
+      detail: string;
+    }>;
+  }>;
+  onOpenJourney: (key: string) => void;
+  onPrimaryAction: (row: {
+    key: string;
+    title: string;
+    lane: string;
+    state: string;
+    nextStep: string;
+    tone: "active" | "warning" | "danger" | "steady";
+    detail: string;
+  }) => Promise<void>;
+}) {
+  return (
+    <section className="panel supervision-board-panel">
+      <PanelHeader
+        title="Supervision Board"
+        subtitle="Long-running work should remain visible as managed continuations with clear next moves."
+      />
+      <div className="supervision-board">
+        {lanes.map((lane) => (
+          <section className="supervision-lane" key={lane.id}>
+            <div className="supervision-lane-header">
+              <div>
+                <p className="eyebrow">{lane.label}</p>
+                <p className="panel-subtitle">{lane.summary}</p>
+              </div>
+              <Badge tone={lane.tone}>{String(lane.rows.length)}</Badge>
+            </div>
+            <div className="supervision-lane-body">
+              {lane.rows.length > 0 ? (
+                lane.rows.map((row) => (
+                  <article className={`supervision-card supervision-card-${row.tone}`} key={row.key}>
+                    <div className="supervision-card-top">
+                      <strong>{row.title}</strong>
+                      <Badge tone={row.tone}>{row.state}</Badge>
+                    </div>
+                    <p>{row.detail}</p>
+                    <div className="supervision-card-actions">
+                      <button className="starter-chip" onClick={() => onOpenJourney(row.key)} type="button">
+                        Focus
+                      </button>
+                      <button className="starter-chip" onClick={() => void onPrimaryAction(row)} type="button">
+                        {row.nextStep}
+                      </button>
+                    </div>
+                  </article>
+                ))
+              ) : (
+                <p className="list-empty">No continuations in this lane.</p>
+              )}
+            </div>
+          </section>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function OperateWorkspace({
   artifacts,
   navigateToBrowserDomain,
@@ -3284,6 +3670,11 @@ function OperateWorkspace({
   const selectedOrientation = orientationRows.find((row) => row.key === selectedOrientationKey) ?? orientationRows[0] ?? null;
   const selectedJourney = journeyRows.find((row) => row.key === selectedJourneyKey) ?? journeyRows[0] ?? null;
   const selectedEvidence = evidenceRows.find((row) => row.key === selectedEvidenceKey) ?? evidenceRows[0] ?? null;
+  const supervisionLanes = {
+    foreground: journeyRows.filter((row) => row.tone === "danger" || row.urgency === "critical" || row.urgency === "high").slice(0, 4),
+    active: journeyRows.filter((row) => row.tone === "active").slice(0, 4),
+    background: journeyRows.filter((row) => row.tone === "steady" || row.tone === "warning").slice(0, 4)
+  };
 
   async function openOrientationPrimary(row: (typeof orientationRows)[number]): Promise<void> {
     if (row.key === "binding") {
@@ -3554,6 +3945,34 @@ function OperateWorkspace({
               </div>
             </section>
           ) : null}
+
+          <SupervisionBoard
+            lanes={[
+              {
+                id: "foreground",
+                label: "Foreground",
+                summary: "Work that should dominate the next operator move.",
+                tone: supervisionLanes.foreground.length > 0 ? "danger" : "steady",
+                rows: supervisionLanes.foreground
+              },
+              {
+                id: "active",
+                label: "Advancing",
+                summary: "Continuations that are active but not currently blocking trust.",
+                tone: supervisionLanes.active.length > 0 ? "active" : "steady",
+                rows: supervisionLanes.active
+              },
+              {
+                id: "background",
+                label: "Background",
+                summary: "Visible but non-dominant continuations that should not disappear.",
+                tone: supervisionLanes.background.length > 0 ? "warning" : "steady",
+                rows: supervisionLanes.background
+              }
+            ]}
+            onOpenJourney={(key) => setSelectedJourneyKey(key)}
+            onPrimaryAction={openJourneyPrimary}
+          />
 
           <section className="panel operate-objective-panel">
             <div className="panel-header">

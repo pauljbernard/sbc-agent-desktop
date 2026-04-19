@@ -4,7 +4,7 @@
   "private": true,
   "description": "An environment based agentic first development enviornment",
   "author": "Paul Bernard",
-  "license": "Software/source: PolyForm Noncommercial 1.0.0; docs/non-software: CC BY-NC 4.0",
+  "license": "Apache-2.0",
   "main": "./out/main/index.js",
   "type": "module",
   "scripts": {
