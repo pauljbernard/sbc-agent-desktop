@@ -19,6 +19,15 @@ The frontend is therefore a presentation adapter over the `sbcl-agent` environme
 
 The primary target is a native macOS desktop application for developers and engineers. The shell remains an important peer adapter, but this repository is defining the desktop product.
 
+## Licensing
+
+This repository uses the same split license structure reflected in [LICENSE.md](LICENSE.md):
+
+- software and source code are licensed under [PolyForm Noncommercial 1.0.0](LICENSES/POLYFORM-NONCOMMERCIAL-1.0.0.txt)
+- documentation and other non-software content are licensed under [CC BY-NC 4.0](LICENSES/CC-BY-NC-4.0.txt)
+
+This repository is source-available and noncommercial. Commercial-use rights are reserved unless separately granted in writing by Paul Bernard or his authorized designee.
+
 ## The Shift It Must Accept
 
 The frontend must start from the premise that software development is changing in a structural way.
