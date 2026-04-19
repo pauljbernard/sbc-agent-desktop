@@ -1,0 +1,20 @@
+# macOS
+.DS_Store
+
+# Node / Electron build outputs
+node_modules/
+dist/
+dist-electron/
+out/
+release/
+
+# Editor and local workspace metadata
+.idea/
+.vscode/
+.zed/
+playwright-report/
+test-results/
+.playwright-mcp/
+
+# Local runtime artifacts
+.sbcl-agent-desktop-live-environment.sexp
