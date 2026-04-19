@@ -1891,7 +1891,7 @@ export function resolveLiveAdapterOptions(): LiveAdapterOptions {
       ? process.env.SBCL_AGENT_PIPE_COMMAND ?? "./bin/sbcl-agent"
       : process.env.SBCL_AGENT_SOCKET_ENDPOINT ?? "127.0.0.1:4017";
   const projectDir =
-    process.env.SBCL_AGENT_PROJECT_DIR ?? "/Volumes/data/development/sbcl-agent";
+    process.env.SBCL_AGENT_PROJECT_DIR ?? resolve(process.cwd(), "../sbcl-agent");
   const environmentStatePath =
     process.env.SBCL_AGENT_ENVIRONMENT_STATE_PATH ??
     resolve(__dirname, "../../.sbcl-agent-desktop-live-environment.sexp");

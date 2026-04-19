@@ -4,7 +4,7 @@
 
 This document defines the implementation plan for the `sbcl-agent` service host required by the Electron desktop application.
 
-It translates the service-host and protocol architecture into a staged execution plan for the `/Volumes/data/development/sbcl-agent` codebase.
+It translates the service-host and protocol architecture into a staged execution plan for the `sbcl-agent` codebase.
 
 ## Goal
 

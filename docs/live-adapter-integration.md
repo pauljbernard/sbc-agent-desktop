@@ -47,8 +47,8 @@ What remains:
 
 The live adapter should be implemented against the real `sbcl-agent` service boundary documented in:
 
-- `/Volumes/data/development/sbcl-agent/docs/public-service-interfaces.md`
-- `/Volumes/data/development/sbcl-agent/docs/service-event-contract.md`
-- `/Volumes/data/development/sbcl-agent/tests/service-contracts.lisp`
+- `sbcl-agent/docs/public-service-interfaces.md`
+- `sbcl-agent/docs/service-event-contract.md`
+- `sbcl-agent/tests/service-contracts.lisp`
 
 The UX should treat these contracts as the canonical integration surface rather than shell internals.

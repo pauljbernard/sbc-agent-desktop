@@ -6,7 +6,7 @@ This constitution defines the non-negotiable principles for `sbcl-agent-ux`.
 
 Every requirement, architecture decision, workflow, and interface in this repository must be evaluated against these rules. If a proposed feature violates the constitution, the feature is wrong unless the constitution itself is explicitly revised.
 
-`sbcl-agent-ux` is the frontend for `sbcl-agent`. This constitution therefore governs how the frontend represents and extends the environment model already established in `/Volumes/data/development/sbcl-agent`.
+`sbcl-agent-ux` is the frontend for `sbcl-agent`. This constitution therefore governs how the frontend represents and extends the environment model already established in the `sbcl-agent` repository.
 
 The primary frontend is a macOS desktop application. This constitution applies to that desktop application first.
 

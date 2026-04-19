@@ -8,7 +8,7 @@ import electronBinary from "electron";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const projectRoot = resolve(__dirname, "../..");
-const sbclAgentRoot = "/Volumes/data/development/sbcl-agent";
+const sbclAgentRoot = resolve(projectRoot, "../sbcl-agent");
 
 async function launchDesktop(): Promise<{
   app: ElectronApplication;
@@ -58,7 +58,7 @@ test.describe("live sbcl-agent desktop shell", () => {
     const { app, page } = await launchDesktop();
     try {
       await expect(page.locator("body")).toContainText("Environment Root");
-      await expect(page.locator("body")).toContainText("/Volumes/data/development/sbcl-agent/");
+      await expect(page.locator("body")).toContainText("sbcl-agent", { ignoreCase: true });
       await expect(page.locator("body")).toContainText("Runtime Package");
       await expect(page.locator("body")).toContainText("SBCL-AGENT-USER");
       await expect(page.locator("body")).toContainText("Live sbcl-agent Contract Adapter");

@@ -11,7 +11,7 @@ This repository does not begin with screens. It begins with the operating model 
 
 ## Frontend Role
 
-This repository defines the future UX as the frontend for `/Volumes/data/development/sbcl-agent`.
+This repository defines the future UX as the frontend for the `sbcl-agent` repository.
 
 That means the frontend must not invent a simpler product story than the one `sbcl-agent` already articulates and implements. Its job is to make the underlying system legible, powerful, and governable for developers and engineers.
 
