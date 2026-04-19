@@ -1,0 +1,22 @@
+title: sbc-agent-desktop User Documentation
+description: User-facing documentation for developers and engineers using sbc-agent Desktop.
+theme: minima
+markdown: kramdown
+plugins:
+  - jekyll-relative-links
+relative_links:
+  enabled: true
+  collections: false
+header_pages:
+  - index.md
+  - getting-started.md
+  - desktop-tour.md
+  - browser.md
+  - conversations.md
+  - execution.md
+  - recovery.md
+  - evidence.md
+  - configuration.md
+  - live-connection.md
+  - troubleshooting.md
+  - faq.md
