@@ -46,6 +46,15 @@ The current information architecture follows one main rule:
 
 This keeps the main working surface at the top of the page instead of burying it under dashboard panels.
 
+The shell is designed to support one working sequence:
+
+1. orient to the environment
+2. inspect the live system or conversation state
+3. act through browser, listener, or governed workflow
+4. review evidence, incidents, or closure posture
+
+That sequence is intentional. The desktop is trying to reduce the gap between inspection, action, and proof.
+
 ## Inspector Rail
 
 The inspector is secondary context.

@@ -24,17 +24,21 @@ It is designed to help you work across:
 
 ## Start Here
 
-1. Read [Getting Started](getting-started.md).
-2. Take the [Desktop Tour](desktop-tour.md).
-3. Go directly to the workspace guide you need:
+1. Read [Development Model](development-model.md).
+2. Read [How sbcl-agent Works](how-sbcl-agent-works.md).
+3. Read [sbcl-agent Concepts](sbcl-agent-concepts.md).
+4. Read [Transition Guide](transition-guide.md).
+5. Read [Getting Started](getting-started.md).
+6. Take the [Desktop Tour](desktop-tour.md).
+7. Go directly to the workspace guide you need:
    - [Browser](browser.md)
    - [Conversations](conversations.md)
    - [Execution](execution.md)
    - [Recovery](recovery.md)
    - [Evidence](evidence.md)
    - [Configuration](configuration.md)
-4. If you are connecting the desktop to a real host, read [Live Connection](live-connection.md).
-5. If something is wrong, go to [Troubleshooting](troubleshooting.md) and [FAQ](faq.md).
+8. If you are connecting the desktop to a real host, read [Live Connection](live-connection.md).
+9. If something is wrong, go to [Troubleshooting](troubleshooting.md) and [FAQ](faq.md).
 
 ## Core Operating Model
 
@@ -47,6 +51,10 @@ The desktop assumes:
 
 ## Documentation Map
 
+- [Development Model](development-model.md): why this tool uses an environment-first, agentic workflow instead of a traditional file-first SDLC model
+- [How sbcl-agent Works](how-sbcl-agent-works.md): how the live image, conversations, governance, and evidence fit together as one operating environment
+- [sbcl-agent Concepts](sbcl-agent-concepts.md): the core concepts that make the environment understandable
+- [Transition Guide](transition-guide.md): how to move from conventional development habits into this model
 - [Getting Started](getting-started.md): installation, launch, and first-run expectations
 - [Desktop Tour](desktop-tour.md): the shell frame, navigation model, and workspace structure
 - [Browser](browser.md): systems, packages, symbols, variables, source, xref, and documentation

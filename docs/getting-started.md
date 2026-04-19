@@ -6,6 +6,17 @@ title: Getting Started
 
 This guide is for developers and engineers using the desktop application.
 
+If you are new to environment-first or agentic development, do not start here.
+
+Start with:
+
+1. [Development Model](development-model.md)
+2. [How sbcl-agent Works](how-sbcl-agent-works.md)
+3. [sbcl-agent Concepts](sbcl-agent-concepts.md)
+4. [Transition Guide](transition-guide.md)
+
+Then come back to this page for practical setup.
+
 ## What You Need
 
 - macOS
@@ -47,13 +58,17 @@ If you are unsure which one you are in, check the footer and the visible host/bi
 
 ## Recommended Reading Order
 
-1. [Desktop Tour](desktop-tour.md)
-2. [Browser](browser.md)
-3. [Conversations](conversations.md)
-4. [Execution](execution.md)
-5. [Recovery](recovery.md)
-6. [Evidence](evidence.md)
-7. [Configuration](configuration.md)
+1. [Development Model](development-model.md)
+2. [How sbcl-agent Works](how-sbcl-agent-works.md)
+3. [sbcl-agent Concepts](sbcl-agent-concepts.md)
+4. [Transition Guide](transition-guide.md)
+5. [Desktop Tour](desktop-tour.md)
+6. [Browser](browser.md)
+7. [Conversations](conversations.md)
+8. [Execution](execution.md)
+9. [Recovery](recovery.md)
+10. [Evidence](evidence.md)
+11. [Configuration](configuration.md)
 
 ## Common First Tasks
 

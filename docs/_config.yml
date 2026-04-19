@@ -9,6 +9,10 @@ relative_links:
   collections: false
 header_pages:
   - index.md
+  - development-model.md
+  - how-sbcl-agent-works.md
+  - sbcl-agent-concepts.md
+  - transition-guide.md
   - getting-started.md
   - desktop-tour.md
   - browser.md
