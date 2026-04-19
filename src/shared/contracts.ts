@@ -4,13 +4,14 @@ export type WorkspaceId =
   | "environment"
   | "conversations"
   | "browser"
-  | "configuration"
   | "runtime"
   | "work"
   | "incidents"
   | "artifacts"
   | "activity"
-  | "approvals";
+  | "approvals"
+  | "documentation"
+  | "configuration";
 
 export interface BindingDto {
   sessionId?: string | null;
@@ -482,6 +483,18 @@ export interface DesktopPreferencesDto {
   };
 }
 
+export interface DocumentationPageSummaryDto {
+  slug: string;
+  title: string;
+  category: string;
+  summary: string;
+}
+
+export interface DocumentationPageDto extends DocumentationPageSummaryDto {
+  sourcePath: string;
+  markdown: string;
+}
+
 export interface EntityRefDto {
   entityType: string;
   entityId: string;
@@ -580,6 +593,9 @@ export interface DesktopApi {
   getDesktopPreferences(): Promise<DesktopPreferencesDto>;
   setDesktopPreferences(patch: Partial<DesktopPreferencesDto>): Promise<DesktopPreferencesDto>;
   openEntityInNewWindow(ref: EntityRefDto): Promise<void>;
+  listDocumentationPages(): Promise<DocumentationPageSummaryDto[]>;
+  readDocumentationPage(slug: string): Promise<DocumentationPageDto>;
+  openExternalLink(url: string): Promise<void>;
 }
 
 export interface SbclAgentDesktopApi {

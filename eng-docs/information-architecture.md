@@ -23,14 +23,14 @@ The information architecture must:
 
 The application should be understood as four nested IA layers:
 
-1. environment shell
+1. environment frame
 2. workspace domains
 3. entity views
 4. inspectors and utility surfaces
 
-## Layer 1: Environment Shell
+## Layer 1: Environment Frame
 
-The environment shell is the persistent top-level structure of the application.
+The environment frame is the persistent top-level structure of the application.
 
 It contains:
 
@@ -41,7 +41,7 @@ It contains:
 - contextual inspector region
 - command surface entry
 
-The environment shell must persist across navigation so users remain grounded in one environment even as they move across domains.
+The environment frame must persist across navigation so users remain grounded in one environment even as they move across domains.
 
 ## Layer 2: Workspace Domains
 

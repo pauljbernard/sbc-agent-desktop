@@ -4,7 +4,7 @@ title: Development Model
 
 # Development Model
 
-This page explains the core shift behind `sbcl-agent` and `sbc-agent-desktop`.
+This page explains the core shift behind `sbcl-agent` and `sbcl-agent-ux`.
 
 Most developers today are still trained on a model that looks roughly like this:
 

@@ -27,9 +27,15 @@ Pipe-based launch:
 ```bash
 SBCL_AGENT_ADAPTER=live
 SBCL_AGENT_TRANSPORT=pipe
-SBCL_AGENT_PIPE_COMMAND=./bin/sbcl-agent
+SBCL_AGENT_PROJECT_DIR=../sbcl-agent
 npm run dev
 ```
+
+Optional live-adapter variables:
+
+- `SBCL_AGENT_PROJECT_DIR`: path to the `sbcl-agent` repository used by the pipe bridge
+- `SBCL_AGENT_ENVIRONMENT_STATE_PATH`: explicit path for the persisted live environment state file
+- `SBCL_AGENT_PIPE_COMMAND`: optional pipe command override when you are not using the default local bridge flow
 
 ## What To Check First
 

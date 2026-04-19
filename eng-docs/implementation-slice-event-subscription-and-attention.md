@@ -21,7 +21,7 @@ This slice includes:
 - cursor replay support
 - forwarding of app-safe event updates through preload
 - minimal global attention aggregation in the desktop app
-- visible attention updates in the shell
+- visible attention updates in the desktop frame
 
 This slice does **not** include:
 

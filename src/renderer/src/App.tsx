@@ -8,6 +8,8 @@ import type {
   ApprovalDecisionInput,
   BindingDto,
   CommandResultDto,
+  DocumentationPageDto,
+  DocumentationPageSummaryDto,
   EnvironmentEventDto,
   EventSubscriptionInput,
   EnvironmentStatusDto,
@@ -44,6 +46,7 @@ const workspaceOrder: Array<{ id: WorkspaceId; label: string; group: string; pri
   { id: "runtime", label: "Execution", group: "Journeys", primary: true },
   { id: "incidents", label: "Recovery", group: "Journeys", primary: true },
   { id: "artifacts", label: "Evidence", group: "Journeys", primary: true },
+  { id: "documentation", label: "Documentation", group: "Journeys", primary: true },
   { id: "configuration", label: "Configuration", group: "Journeys", primary: true },
   { id: "work", label: "Execution Detail", group: "Internal", primary: false },
   { id: "activity", label: "Evidence Detail", group: "Internal", primary: false },
@@ -91,6 +94,8 @@ const LISP_CONFIGURATION_SAMPLE = `(defun reconcile-runtime-state (work-item env
     (when (awaiting-approval-p result)
       (queue-approval work-item :policy :runtime-change))
     result))`;
+
+const PUBLISHED_DOCUMENTATION_URL = "https://pauljbernard.github.io/sbc-agent-desktop/";
 
 type OperateSection = "orientation" | "journeys" | "evidence";
 type ConversationSection = "threads" | "turns" | "draft";
@@ -644,6 +649,181 @@ function LispCodeBlock({
   );
 }
 
+function stripDocumentationFrontmatter(markdown: string): string {
+  if (!markdown.startsWith("---\n")) {
+    return markdown.trim();
+  }
+
+  const closingIndex = markdown.indexOf("\n---\n", 4);
+  if (closingIndex === -1) {
+    return markdown.trim();
+  }
+
+  return markdown.slice(closingIndex + 5).trim();
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function renderDocumentationInline(markdown: string): string {
+  return escapeHtml(markdown)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+}
+
+function renderDocumentationMarkdown(markdown: string): string {
+  const lines = stripDocumentationFrontmatter(markdown).split("\n");
+  const html: string[] = [];
+  let paragraph: string[] = [];
+  let listItems: string[] = [];
+  let listType: "ul" | "ol" | null = null;
+  let codeFence: string[] = [];
+  let inCodeFence = false;
+  let tableRows: string[][] = [];
+
+  function flushParagraph(): void {
+    if (paragraph.length === 0) {
+      return;
+    }
+
+    html.push(`<p>${renderDocumentationInline(paragraph.join(" "))}</p>`);
+    paragraph = [];
+  }
+
+  function flushList(): void {
+    if (!listType || listItems.length === 0) {
+      return;
+    }
+
+    html.push(
+      `<${listType}>${listItems.map((item) => `<li>${renderDocumentationInline(item)}</li>`).join("")}</${listType}>`
+    );
+    listItems = [];
+    listType = null;
+  }
+
+  function flushTable(): void {
+    if (tableRows.length < 2) {
+      tableRows = [];
+      return;
+    }
+
+    const [header, separator, ...body] = tableRows;
+    const isSeparator = separator.every((cell) => /^:?-{3,}:?$/.test(cell));
+    if (!isSeparator) {
+      tableRows = [];
+      return;
+    }
+
+    html.push(
+      `<table><thead><tr>${header
+        .map((cell) => `<th>${renderDocumentationInline(cell)}</th>`)
+        .join("")}</tr></thead><tbody>${body
+        .map(
+          (row) =>
+            `<tr>${row.map((cell) => `<td>${renderDocumentationInline(cell)}</td>`).join("")}</tr>`
+        )
+        .join("")}</tbody></table>`
+    );
+    tableRows = [];
+  }
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith("```")) {
+      flushParagraph();
+      flushList();
+      flushTable();
+      if (inCodeFence) {
+        html.push(`<pre><code>${escapeHtml(codeFence.join("\n"))}</code></pre>`);
+        codeFence = [];
+        inCodeFence = false;
+      } else {
+        inCodeFence = true;
+      }
+      continue;
+    }
+
+    if (inCodeFence) {
+      codeFence.push(line);
+      continue;
+    }
+
+    if (trimmed.length === 0) {
+      flushParagraph();
+      flushList();
+      flushTable();
+      continue;
+    }
+
+    if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
+      flushParagraph();
+      flushList();
+      tableRows.push(
+        trimmed
+          .slice(1, -1)
+          .split("|")
+          .map((cell) => cell.trim())
+      );
+      continue;
+    }
+
+    flushTable();
+
+    const headingMatch = trimmed.match(/^(#{1,3})\s+(.+)$/);
+    if (headingMatch) {
+      flushParagraph();
+      flushList();
+      const level = Math.min(headingMatch[1].length, 3);
+      html.push(`<h${level}>${renderDocumentationInline(headingMatch[2])}</h${level}>`);
+      continue;
+    }
+
+    const orderedMatch = trimmed.match(/^\d+\.\s+(.+)$/);
+    if (orderedMatch) {
+      flushParagraph();
+      if (listType && listType !== "ol") {
+        flushList();
+      }
+      listType = "ol";
+      listItems.push(orderedMatch[1]);
+      continue;
+    }
+
+    const bulletMatch = trimmed.match(/^-\s+(.+)$/);
+    if (bulletMatch) {
+      flushParagraph();
+      if (listType && listType !== "ul") {
+        flushList();
+      }
+      listType = "ul";
+      listItems.push(bulletMatch[1]);
+      continue;
+    }
+
+    flushList();
+    paragraph.push(trimmed);
+  }
+
+  flushParagraph();
+  flushList();
+  flushTable();
+
+  if (inCodeFence && codeFence.length > 0) {
+    html.push(`<pre><code>${escapeHtml(codeFence.join("\n"))}</code></pre>`);
+  }
+
+  return html.join("");
+}
+
 export function App() {
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceId>("environment");
   const [selectedOperateSection, setSelectedOperateSection] = useState<OperateSection>("orientation");
@@ -667,6 +847,7 @@ export function App() {
     incidents: true,
     artifacts: true,
     browser: true,
+    documentation: true,
     configuration: true
   });
   const [hostStatus, setHostStatus] = useState<HostStatusDto | null>(null);
@@ -725,6 +906,9 @@ export function App() {
   const [selectedEventCursor, setSelectedEventCursor] = useState<number | null>(null);
   const [eventFamilyFilter, setEventFamilyFilter] = useState<string>("all");
   const [eventVisibilityFilter, setEventVisibilityFilter] = useState<string>("all");
+  const [documentationPages, setDocumentationPages] = useState<DocumentationPageSummaryDto[]>([]);
+  const [selectedDocumentationSlug, setSelectedDocumentationSlug] = useState<string>("development-model");
+  const [selectedDocumentationPage, setSelectedDocumentationPage] = useState<DocumentationPageDto | null>(null);
 
   function updateRuntimeInspectorSymbol(value: string): void {
     runtimeInspectorSymbolRef.current = value;
@@ -747,6 +931,10 @@ export function App() {
 
   useEffect(() => {
     void loadInitialState();
+  }, []);
+
+  useEffect(() => {
+    void loadDocumentationPages();
   }, []);
 
   useEffect(() => {
@@ -845,6 +1033,8 @@ export function App() {
   useEffect(() => {
     if (activeWorkspace === "runtime" && effectiveEnvironmentId) {
       void loadRuntimeWorkspace(effectiveEnvironmentId);
+      void loadWorkWorkspace(effectiveEnvironmentId);
+      void loadApprovalWorkspace(effectiveEnvironmentId);
     }
   }, [activeWorkspace, effectiveEnvironmentId]);
 
@@ -965,6 +1155,21 @@ export function App() {
   }, [activeWorkspace, effectiveEnvironmentId]);
 
   useEffect(() => {
+    if (activeWorkspace !== "documentation") {
+      return;
+    }
+
+    if (documentationPages.length === 0) {
+      void loadDocumentationPages();
+      return;
+    }
+
+    if (!selectedDocumentationPage || selectedDocumentationPage.slug !== selectedDocumentationSlug) {
+      void loadDocumentationPage(selectedDocumentationSlug);
+    }
+  }, [activeWorkspace, documentationPages.length, selectedDocumentationPage, selectedDocumentationSlug]);
+
+  useEffect(() => {
     if (selectedArtifactId && effectiveEnvironmentId) {
       void loadArtifactDetail(selectedArtifactId, effectiveEnvironmentId);
     }
@@ -996,6 +1201,31 @@ export function App() {
       }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Failed to load desktop state.");
+    }
+  }
+
+  async function loadDocumentationPages(): Promise<void> {
+    try {
+      const pages = await window.sbclAgentDesktop.desktop.listDocumentationPages();
+      setDocumentationPages(pages);
+      setSelectedDocumentationSlug((current) => {
+        if (pages.some((page) => page.slug === current)) {
+          return current;
+        }
+
+        return pages[0]?.slug ?? "index";
+      });
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to load documentation pages.");
+    }
+  }
+
+  async function loadDocumentationPage(slug: string): Promise<void> {
+    try {
+      const page = await window.sbclAgentDesktop.desktop.readDocumentationPage(slug);
+      setSelectedDocumentationPage(page);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to load documentation page.");
     }
   }
 
@@ -1071,7 +1301,7 @@ export function App() {
       });
       setRuntimeEntityDetail(result);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Runtime entity detail failed.");
+      setRuntimeEntityDetail(null);
     }
   }
 
@@ -1472,6 +1702,12 @@ export function App() {
           title: "Desktop Preferences",
           summary: "Configuration should shape the desktop shell itself without turning into a buried afterthought beneath the operational journeys."
         };
+      case "documentation":
+        return {
+          eyebrow: "Documentation",
+          title: "User Documentation",
+          summary: "Documentation belongs in its own workspace so the user can deliberately enter guidance when needed, while the rest of the desktop stays focused on operating surfaces."
+        };
       case "runtime":
         return {
           eyebrow: "Execution",
@@ -1723,6 +1959,10 @@ export function App() {
                           void navigateToBrowserDomain(selectedBrowserDomain);
                           return;
                         }
+                        if (workspace.id === "documentation") {
+                          void navigateToWorkspace("documentation");
+                          return;
+                        }
                         if (workspace.id === "configuration") {
                           void navigateToConfigurationSection(selectedConfigurationSection);
                           return;
@@ -1731,7 +1971,9 @@ export function App() {
                       }}
                       type="button"
                     >
-                      <span>{workspace.label}</span>
+                      <span title={workspace.label === "Documentation" ? "Open the in-app user documentation workspace." : undefined}>
+                        {workspace.label}
+                      </span>
                     </button>
                     <div className="workspace-link-meta">
                       {workspace.id !== "environment" ? (
@@ -1743,6 +1985,7 @@ export function App() {
                       workspace.id === "incidents" ||
                       workspace.id === "artifacts" ||
                       workspace.id === "browser" ||
+                      workspace.id === "documentation" ||
                       workspace.id === "configuration" ? (
                         <button
                           aria-label={`${expandedWorkspaceMenus[workspace.id] ? "Collapse" : "Expand"} ${workspace.label}`}
@@ -1770,7 +2013,7 @@ export function App() {
                           }}
                           type="button"
                         >
-                          <span>{section.label}</span>
+                          <span title={section.summary}>{section.label}</span>
                         </button>
                       ))}
                     </div>
@@ -1790,7 +2033,7 @@ export function App() {
                           }}
                           type="button"
                         >
-                          <span>{section.label}</span>
+                          <span title={section.summary}>{section.label}</span>
                         </button>
                       ))}
                     </div>
@@ -1810,7 +2053,7 @@ export function App() {
                           }}
                           type="button"
                         >
-                          <span>{domain.label}</span>
+                          <span title={domain.summary}>{domain.label}</span>
                         </button>
                       ))}
                     </div>
@@ -1830,7 +2073,7 @@ export function App() {
                           }}
                           type="button"
                         >
-                          <span>{section.label}</span>
+                          <span title={section.summary}>{section.label}</span>
                         </button>
                       ))}
                     </div>
@@ -1850,7 +2093,7 @@ export function App() {
                           }}
                           type="button"
                         >
-                          <span>{section.label}</span>
+                          <span title={section.summary}>{section.label}</span>
                         </button>
                       ))}
                     </div>
@@ -1870,7 +2113,7 @@ export function App() {
                           }}
                           type="button"
                         >
-                          <span>{section.label}</span>
+                          <span title={section.summary}>{section.label}</span>
                         </button>
                       ))}
                     </div>
@@ -1890,7 +2133,7 @@ export function App() {
                           }}
                           type="button"
                         >
-                          <span>{section.label}</span>
+                          <span title={section.summary}>{section.label}</span>
                         </button>
                       ))}
                     </div>
@@ -1905,7 +2148,10 @@ export function App() {
       <main className="canvas">
         <header className="canvas-header">
           <div className="canvas-header-copy">
-            <p className="eyebrow">{workspaceDescriptor.eyebrow}</p>
+            <div className="canvas-header-eyebrow-row">
+              <p className="eyebrow">{workspaceDescriptor.eyebrow}</p>
+              <HelpHint text={workspaceDescriptor.summary} />
+            </div>
             <h2>{workspaceDescriptor.title}</h2>
             <p className="canvas-subtitle">{workspaceDescriptor.summary}</p>
           </div>
@@ -2015,6 +2261,17 @@ export function App() {
               reloadSourceFile={reloadSourceFile}
               workItems={workItems}
             />
+          ) : activeWorkspace === "documentation" ? (
+            <DocumentationWorkspace
+              documentationPages={documentationPages}
+              openPublishedDocumentation={() =>
+                window.sbclAgentDesktop.desktop.openExternalLink(PUBLISHED_DOCUMENTATION_URL)
+              }
+              selectedDocumentationPage={selectedDocumentationPage}
+              selectedDocumentationSlug={selectedDocumentationSlug}
+              setSelectedDocumentationSlug={setSelectedDocumentationSlug}
+              loadDocumentationPage={loadDocumentationPage}
+            />
           ) : activeWorkspace === "configuration" ? (
             <ConfigurationWorkspace
               lispParenColors={lispParenColors}
@@ -2022,8 +2279,8 @@ export function App() {
               selectedSection={selectedConfigurationSection}
               systemTheme={systemTheme}
               themePreference={themePreference}
-              updateLispParenColor={updateLispParenColor}
               updateThemePreference={applyThemePreference}
+              updateLispParenColor={updateLispParenColor}
             />
           ) : activeWorkspace === "runtime" ? (
             selectedExecutionSection === "approvals" ? (
@@ -2129,6 +2386,7 @@ export function App() {
           selectedApproval={selectedApproval}
           selectedArtifact={selectedArtifact}
           selectedConversationSection={selectedConversationSection}
+          selectedDocumentationPage={selectedDocumentationPage}
           selectedEvidenceSection={selectedEvidenceSection}
           selectedEvent={selectedEvent}
           selectedIncident={selectedIncident}
@@ -2210,6 +2468,7 @@ function WorkspaceInspector({
   selectedArtifact,
   selectedEvent,
   selectedOperateSection,
+  selectedDocumentationPage,
   selectedEvidenceSection,
   artifacts,
   environmentEvents,
@@ -2234,6 +2493,7 @@ function WorkspaceInspector({
   selectedArtifact: ArtifactDetailDto | null;
   selectedEvent: EnvironmentEventDto | null;
   selectedOperateSection: OperateSection;
+  selectedDocumentationPage: DocumentationPageDto | null;
   selectedEvidenceSection: EvidenceSection;
   artifacts: ArtifactSummaryDto[];
   environmentEvents: EnvironmentEventDto[];
@@ -2244,8 +2504,10 @@ function WorkspaceInspector({
       ? selectedTurn?.title ?? selectedThread?.title ?? "No conversation focus"
       : activeWorkspace === "browser"
         ? runtimeInspection?.data.symbol ?? sourcePreview?.data.path ?? runtimeSummary?.currentPackage ?? "No browser focus"
-        : activeWorkspace === "runtime"
+      : activeWorkspace === "runtime"
           ? selectedWorkItem?.title ?? selectedApproval?.title ?? runtimeSummary?.currentPackage ?? "Listener"
+          : activeWorkspace === "documentation"
+            ? selectedDocumentationPage?.title ?? "User Documentation"
           : activeWorkspace === "incidents"
             ? selectedIncident?.title ?? "No incident selected"
             : activeWorkspace === "artifacts"
@@ -2268,6 +2530,9 @@ function WorkspaceInspector({
             selectedApproval?.consequenceSummary ??
             runtimeSummary?.divergencePosture ??
             "Listener, approval, and work context should stay attached to one execution surface."
+          : activeWorkspace === "documentation"
+            ? selectedDocumentationPage?.summary ??
+              "Use the documentation workspace when you want the conceptual model, workflow guidance, or workspace reference without crowding the operating surfaces."
           : activeWorkspace === "incidents"
             ? selectedIncident?.recoverySummary ?? "Recovery context appears here once an incident is selected."
             : activeWorkspace === "artifacts"
@@ -2463,6 +2728,17 @@ function WorkspaceInspector({
           </p>
         </section>
       ) : null}
+
+      {activeWorkspace === "documentation" ? (
+        <section className="inspector-card">
+          <p className="eyebrow">Documentation Context</p>
+          <h3>{selectedDocumentationPage?.title ?? "User Documentation"}</h3>
+          <p className="inspector-copy">
+            {selectedDocumentationPage?.summary ??
+              "Documentation is deliberate and separate from the operational workspaces so learning material stays available without competing with active engineering surfaces."}
+          </p>
+        </section>
+      ) : null}
     </aside>
   );
 }
@@ -2504,6 +2780,7 @@ function ConfigurationWorkspace({
             <PanelHeader
               title="Theme"
               subtitle="The shell should support an extensible theme system and follow the operating system when System is selected."
+              helpText="Use this when the shell should follow macOS appearance or when you need to pin the desktop to a stable light or dark presentation."
             />
             <div className="configuration-theme-grid">
               <div className="signal-digest-card">
@@ -2527,6 +2804,7 @@ function ConfigurationWorkspace({
                 className={themePreference === "system" ? "starter-chip active" : "starter-chip"}
                 onClick={() => void updateThemePreference("system")}
                 type="button"
+                title="Follow the operating system appearance."
               >
                 System
               </button>
@@ -2534,6 +2812,7 @@ function ConfigurationWorkspace({
                 className={themePreference === "light" ? "starter-chip active" : "starter-chip"}
                 onClick={() => void updateThemePreference("light")}
                 type="button"
+                title="Keep the desktop in the light theme."
               >
                 Light
               </button>
@@ -2541,6 +2820,7 @@ function ConfigurationWorkspace({
                 className={themePreference === "dark" ? "starter-chip active" : "starter-chip"}
                 onClick={() => void updateThemePreference("dark")}
                 type="button"
+                title="Keep the desktop in the dark theme."
               >
                 Dark
               </button>
@@ -2558,8 +2838,8 @@ function ConfigurationWorkspace({
                 <p className="eyebrow">System Behavior</p>
                 <strong>System Theme follows `prefers-color-scheme`.</strong>
                 <p>
-                  On your current macOS setup that should resolve to the light theme whenever the OS appearance is set
-                  to light.
+                  On your current macOS setup that should resolve to the light theme whenever the OS appearance is
+                  set to light.
                 </p>
               </div>
             </div>
@@ -2569,6 +2849,7 @@ function ConfigurationWorkspace({
             <PanelHeader
               title="Lisp Code View"
               subtitle="Common Lisp source should render as structured code with depth-aware delimiter colorization rather than plain text."
+              helpText="These settings affect Lisp-aware source presentation in browser and execution surfaces. They do not change source formatting in the runtime itself."
             />
             <div className="configuration-theme-grid">
               <div className="signal-digest-card">
@@ -2619,6 +2900,113 @@ function PlannedWorkspace({ workspaceId }: { workspaceId: WorkspaceId }) {
         This workspace is intentionally present in navigation now so the shell is built around the full environment
         model, not around one temporary slice.
       </p>
+    </div>
+  );
+}
+
+function DocumentationWorkspace({
+  documentationPages,
+  selectedDocumentationSlug,
+  selectedDocumentationPage,
+  setSelectedDocumentationSlug,
+  loadDocumentationPage,
+  openPublishedDocumentation
+}: {
+  documentationPages: DocumentationPageSummaryDto[];
+  selectedDocumentationSlug: string;
+  selectedDocumentationPage: DocumentationPageDto | null;
+  setSelectedDocumentationSlug: (value: string) => void;
+  loadDocumentationPage: (slug: string) => Promise<void>;
+  openPublishedDocumentation: () => Promise<void>;
+}) {
+  const renderedDocumentationHtml = useMemo(
+    () => renderDocumentationMarkdown(selectedDocumentationPage?.markdown ?? ""),
+    [selectedDocumentationPage?.markdown]
+  );
+
+  return (
+    <div className="documentation-workspace">
+      <section className="panel documentation-table-panel">
+        <PanelHeader
+          title="Documentation Pages"
+          subtitle="Enter documentation deliberately here when you need conceptual guidance, workflow explanation, or workspace reference."
+          helpText="This workspace keeps user-facing guidance separate from the active engineering surfaces so documentation remains available without competing for attention."
+        />
+        <BrowserDataTable
+          key="desktop-documentation"
+          columnTemplate="minmax(0, 1fr) minmax(0, 0.72fr) minmax(0, 1.8fr)"
+          columns={[
+            {
+              id: "title",
+              label: "Title",
+              render: (row) => <strong>{row.title}</strong>,
+              sortValue: (row) => row.title
+            },
+            {
+              id: "category",
+              label: "Category",
+              render: (row) => <Badge tone="active">{row.category}</Badge>,
+              sortValue: (row) => row.category,
+              searchValue: (row) => row.category
+            },
+            {
+              id: "summary",
+              label: "Summary",
+              render: (row) => row.summary,
+              sortValue: (row) => row.summary,
+              searchValue: (row) => `${row.title} ${row.category} ${row.summary}`
+            }
+          ]}
+          emptyMessage="No documentation pages are available."
+          filterLabel="Category"
+          filterOptions={Array.from(new Set(documentationPages.map((page) => page.category))).map((value) => ({
+            label: value,
+            value
+          }))}
+          getFilterValue={(row) => row.category}
+          getRowKey={(row) => row.slug}
+          onSelect={(row) => {
+            setSelectedDocumentationSlug(row.slug);
+            void loadDocumentationPage(row.slug);
+          }}
+          rows={documentationPages}
+          searchPlaceholder="Search documentation"
+          selectedKey={selectedDocumentationSlug}
+        />
+      </section>
+
+      {selectedDocumentationPage ? (
+        <section className="panel documentation-detail-panel">
+          <PanelHeader
+            title={selectedDocumentationPage.title}
+            subtitle="Read the selected documentation below the page list so navigation stays dense and the reading surface stays deliberate."
+            helpText="Use the table above to move between conceptual guides, workspace references, and operational help without changing the rest of the desktop layout."
+          />
+          <div className="documentation-detail-topbar">
+            <Badge tone="active">{selectedDocumentationPage.category}</Badge>
+            <button
+              className="starter-chip"
+              onClick={() => void openPublishedDocumentation()}
+              type="button"
+              title="Open the published GitHub Pages version of the same documentation set."
+            >
+              Open Published Site
+            </button>
+          </div>
+          <article
+            className="documentation-markdown"
+            dangerouslySetInnerHTML={{ __html: renderedDocumentationHtml }}
+          />
+        </section>
+      ) : (
+        <section className="panel documentation-detail-panel">
+          <div className="empty-state">
+            <p className="eyebrow">Documentation</p>
+            <h3>No page selected</h3>
+            <p>Select a documentation page from the table to read it here.</p>
+          </div>
+        </section>
+      )}
     </div>
   );
 }
@@ -4120,6 +4508,8 @@ function BrowserWorkspace({
   const effectiveEntityKind =
     runtimeEntityDetail?.data.entityKind ??
     focusedPackageSymbol?.kind ??
+    (classBucket?.symbols.some((entry) => entry.symbol === focusedSymbol) ? "class" : null) ??
+    (genericFunctionBucket?.symbols.some((entry) => entry.symbol === focusedSymbol) ? "generic-function" : null) ??
     (runtimeInspection?.data.mode === "methods" ? "generic-function" : null) ??
     (runtimeInspection?.data.symbol ? "unknown" : focusedPackage ? "package" : null);
   const listenerHandoffForm = buildListenerForm({
@@ -6734,7 +7124,7 @@ function StatusDock({
         <strong>{status?.workflowState ?? "unknown"}</strong>
       </div>
       <div className="status-dock-actions">
-        <span className="status-dock-hint">1-5 quick header switch</span>
+        <span className="status-dock-hint">1-8 quick header switch</span>
         <button className="dock-button" onClick={onToggleInspector} type="button">
           {inspectorPinned ? "Collapse Inspector" : "Show Inspector"}
         </button>
@@ -6743,11 +7133,35 @@ function StatusDock({
   );
 }
 
-function PanelHeader({ title, subtitle }: { title: string; subtitle: string }) {
+function HelpHint({ text }: { text: string }) {
+  return (
+    <span className="help-hint" tabIndex={0}>
+      <span aria-hidden="true" className="help-hint-trigger" title={text}>
+        ?
+      </span>
+      <span className="help-hint-bubble" role="tooltip">
+        {text}
+      </span>
+    </span>
+  );
+}
+
+function PanelHeader({
+  title,
+  subtitle,
+  helpText
+}: {
+  title: string;
+  subtitle: string;
+  helpText?: string;
+}) {
   return (
     <div className="panel-header">
       <div>
-        <p className="eyebrow">{title}</p>
+        <div className="panel-header-title-row">
+          <p className="eyebrow">{title}</p>
+          {helpText ? <HelpHint text={helpText} /> : null}
+        </div>
         <p className="panel-subtitle">{subtitle}</p>
       </div>
     </div>

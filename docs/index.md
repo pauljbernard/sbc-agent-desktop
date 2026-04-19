@@ -2,9 +2,9 @@
 title: Home
 ---
 
-# sbc-agent-desktop
+# sbcl-agent-ux
 
-`sbc-agent-desktop` is a macOS desktop application for developers and engineers working inside an `sbcl-agent` environment.
+`sbcl-agent-ux` is a macOS desktop application for developers and engineers working inside an `sbcl-agent` environment.
 
 This site is the user-facing documentation for operating the desktop.
 
@@ -12,7 +12,7 @@ It is not the engineering specification set for building the application itself.
 
 ## What The Desktop Is
 
-The desktop is an environment shell, not a file browser with chat attached.
+The desktop is a service-backed environment workspace, not a file browser with chat attached.
 
 It is designed to help you work across:
 

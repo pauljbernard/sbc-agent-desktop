@@ -134,11 +134,12 @@ These specs are derived from the current `sbcl-agent` architecture and documenta
 
 ## Next Step
 
-The specification foundation is now broad enough to move into implementation planning and app skeleton work.
+The repository is now past pure specification and skeleton work.
 
-The immediate implementation sequence should be:
+The immediate implementation priorities are:
 
-- establish the Electron app skeleton and desktop shell
-- implement service-host connectivity and environment binding first
-- deliver the P0 implementation slices in dependency order
-- keep every implementation pass aligned to the constitution, thesis guardrails, and feature specs
+- keep live adapter contracts aligned with the evolving `sbcl-agent` service layer
+- preserve shell parity while moving more UX behavior onto stable service-backed surfaces
+- keep the service tier distinct from direct shell execution paths while preserving the shell as a peer operator surface
+- continue tightening documentation, naming, and metadata consistency across both repositories
+- keep implementation passes aligned to the constitution, thesis guardrails, and feature specs

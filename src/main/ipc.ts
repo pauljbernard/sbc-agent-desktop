@@ -1,5 +1,6 @@
-import { ipcMain } from "electron";
+import { ipcMain, shell } from "electron";
 import type { WorkspaceId } from "../shared/contracts";
+import { listDocumentationPages, readDocumentationPageBySlug } from "./documentation";
 import { hostAdapter } from "./host-adapter";
 
 export function registerIpcHandlers(): void {
@@ -85,6 +86,11 @@ export function registerIpcHandlers(): void {
     hostAdapter.setDesktopPreferences(patch)
   );
   ipcMain.handle("desktop:open-entity", (_event, ref) => hostAdapter.openEntityInNewWindow(ref));
+  ipcMain.handle("desktop:list-documentation-pages", () => listDocumentationPages());
+  ipcMain.handle("desktop:read-documentation-page", (_event, slug: string) =>
+    readDocumentationPageBySlug(slug)
+  );
+  ipcMain.handle("desktop:open-external-link", (_event, url: string) => shell.openExternal(url));
   ipcMain.handle("events:subscribe", () => ({ subscriptionId: "mock-subscription" }));
   ipcMain.handle("events:unsubscribe", () => undefined);
 }

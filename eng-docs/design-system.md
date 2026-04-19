@@ -295,7 +295,7 @@ The global shell header should be a reusable component spanning the full applica
 Its role is to:
 
 - anchor product identity
-- reinforce that the desktop is an environment shell rather than a document window
+- reinforce that the desktop is an environment workspace rather than a document window
 - remain visually stable while the active workspace changes below it
 
 The shell header should not absorb workspace-specific controls or verbose status content. That material belongs in the canvas workspace header or footer status dock.

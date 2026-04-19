@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
   DesktopPreferencesDto,
+  DocumentationPageDto,
+  DocumentationPageSummaryDto,
   EntityRefDto,
   EnvironmentEventDto,
   EventSubscriptionHandle,
@@ -70,7 +72,12 @@ const api: SbclAgentDesktopApi = {
       ipcRenderer.invoke("desktop:get-preferences"),
     setDesktopPreferences: (patch: Partial<DesktopPreferencesDto>): Promise<DesktopPreferencesDto> =>
       ipcRenderer.invoke("desktop:set-preferences", patch),
-    openEntityInNewWindow: (ref: EntityRefDto) => ipcRenderer.invoke("desktop:open-entity", ref)
+    openEntityInNewWindow: (ref: EntityRefDto) => ipcRenderer.invoke("desktop:open-entity", ref),
+    listDocumentationPages: (): Promise<DocumentationPageSummaryDto[]> =>
+      ipcRenderer.invoke("desktop:list-documentation-pages"),
+    readDocumentationPage: (slug: string): Promise<DocumentationPageDto> =>
+      ipcRenderer.invoke("desktop:read-documentation-page", slug),
+    openExternalLink: (url: string): Promise<void> => ipcRenderer.invoke("desktop:open-external-link", url)
   }
 };
 

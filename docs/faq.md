@@ -10,7 +10,7 @@ No. The intended product is a desktop application, initially on macOS.
 
 ## Is This Just A Chat Interface?
 
-No. Conversation is one control surface, but the product is an environment shell with runtime, workflow, evidence, and recovery surfaces.
+No. Conversation is one control surface, but the product is a service-backed environment workspace with runtime, workflow, evidence, and recovery surfaces.
 
 ## Is Browser Just A File Tree?
 

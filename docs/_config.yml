@@ -1,5 +1,5 @@
-title: sbc-agent-desktop User Documentation
-description: User-facing documentation for developers and engineers using sbc-agent Desktop.
+title: sbcl-agent-ux User Documentation
+description: An environment based agentic first development enviornment.
 theme: minima
 markdown: kramdown
 plugins:

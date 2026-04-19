@@ -2,7 +2,9 @@
   "name": "sbcl-agent-ux",
   "version": "0.1.0",
   "private": true,
-  "description": "Electron desktop frontend for sbcl-agent",
+  "description": "An environment based agentic first development enviornment",
+  "author": "Paul Bernard",
+  "license": "Software/source: PolyForm Noncommercial 1.0.0; docs/non-software: CC BY-NC 4.0",
   "main": "./out/main/index.js",
   "type": "module",
   "scripts": {

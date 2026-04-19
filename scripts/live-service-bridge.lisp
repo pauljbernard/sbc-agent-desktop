@@ -16,6 +16,9 @@
 (defun sbcl-agent-call (name &rest arguments)
   (apply (symbol-function (sbcl-agent-symbol name)) arguments))
 
+(defun service-data (response)
+  (getf response :data))
+
 (defun asdf-call (name &rest arguments)
   (let ((symbol (or (find-symbol name "ASDF")
                     (error "Unable to resolve ASDF symbol ~A" name))))
@@ -534,10 +537,11 @@
             (sbcl-agent-call "MAKE-SERVICE-QUERY-RESPONSE"
                              :runtime
                              :inspect-symbol
-                             (sbcl-agent-call "TOOL-RUNTIME-DESCRIBE-SYMBOL"
-                                              session
-                                              :symbol symbol
-                                              :package package)
+                             (service-data
+                              (sbcl-agent-call "QUERY-RUNTIME-DESCRIBE-SYMBOL-SERVICE"
+                                               session
+                                               symbol
+                                               :package package))
                              :metadata
                              (sbcl-agent-call "MAKE-SERVICE-METADATA"
                                               :authority :environment
@@ -548,10 +552,11 @@
             (sbcl-agent-call "MAKE-SERVICE-QUERY-RESPONSE"
                              :runtime
                              :inspect-symbol
-                             (sbcl-agent-call "TOOL-RUNTIME-FIND-DEFINITION"
-                                              session
-                                              :symbol symbol
-                                              :package package)
+                             (service-data
+                              (sbcl-agent-call "QUERY-RUNTIME-FIND-DEFINITION-SERVICE"
+                                               session
+                                               symbol
+                                               :package package))
                              :metadata
                              (sbcl-agent-call "MAKE-SERVICE-METADATA"
                                               :authority :environment
@@ -562,10 +567,11 @@
             (sbcl-agent-call "MAKE-SERVICE-QUERY-RESPONSE"
                              :runtime
                              :inspect-symbol
-                             (sbcl-agent-call "TOOL-RUNTIME-CALLERS"
-                                              session
-                                              :symbol symbol
-                                              :package package)
+                             (service-data
+                              (sbcl-agent-call "QUERY-RUNTIME-CALLERS-SERVICE"
+                                               session
+                                               symbol
+                                               :package package))
                              :metadata
                              (sbcl-agent-call "MAKE-SERVICE-METADATA"
                                               :authority :environment
@@ -576,10 +582,11 @@
             (sbcl-agent-call "MAKE-SERVICE-QUERY-RESPONSE"
                              :runtime
                              :inspect-symbol
-                             (sbcl-agent-call "TOOL-RUNTIME-METHODS"
-                                              session
-                                              :symbol symbol
-                                              :package package)
+                             (service-data
+                              (sbcl-agent-call "QUERY-RUNTIME-METHODS-SERVICE"
+                                               session
+                                               symbol
+                                               :package package))
                              :metadata
                              (sbcl-agent-call "MAKE-SERVICE-METADATA"
                                               :authority :environment
@@ -590,10 +597,11 @@
             (sbcl-agent-call "MAKE-SERVICE-QUERY-RESPONSE"
                              :runtime
                              :inspect-symbol
-                             (sbcl-agent-call "TOOL-RUNTIME-SOURCE-IMAGE-DIVERGENCE"
-                                              session
-                                              :symbol symbol
-                                              :package package)
+                             (service-data
+                              (sbcl-agent-call "QUERY-RUNTIME-SOURCE-IMAGE-DIVERGENCE-SERVICE"
+                                               session
+                                               symbol
+                                               :package package))
                              :metadata
                              (sbcl-agent-call "MAKE-SERVICE-METADATA"
                                               :authority :environment
@@ -638,12 +646,13 @@
            (error "source.stage-change requires a path payload"))
          (unless content
            (error "source.stage-change requires a content payload"))
-         (let* ((result (sbcl-agent-call "MAKE-SERVICE-COMMAND-RESPONSE"
+         (let* ((patch-response (sbcl-agent-call "COMMAND-APPLY-PATCH-SERVICE"
+                                                 session
+                                                 (list (list :write path content))))
+                (result (sbcl-agent-call "MAKE-SERVICE-COMMAND-RESPONSE"
                                          :source
                                          :stage-change
-                                         (sbcl-agent-call "APPLY-PATCH-OPERATIONS"
-                                                          session
-                                                          (list (list :write path content)))
+                                         (service-data patch-response)
                                          :metadata
                                          (sbcl-agent-call "MAKE-SERVICE-METADATA"
                                                           :authority :environment
@@ -684,7 +693,8 @@
          (sbcl-agent-call "MAKE-SERVICE-QUERY-RESPONSE"
                           :artifact
                           :list
-                          (sbcl-agent-call "ENVIRONMENT-RGP-ARTIFACT-SUMMARIES" environment)
+                          (service-data
+                           (sbcl-agent-call "QUERY-RGP-ARTIFACTS-SERVICE" session environment))
                           :metadata
                           (sbcl-agent-call "MAKE-SERVICE-METADATA"
                                            :authority :environment
@@ -720,7 +730,8 @@
                           (remove-if-not
                            (lambda (item)
                              (eq (getf item :wait-reason) :approval-required))
-                           (sbcl-agent-call "ENVIRONMENT-RGP-APPROVAL-SUMMARIES" environment))
+                           (service-data
+                            (sbcl-agent-call "QUERY-RGP-APPROVALS-SERVICE" session environment)))
                           :metadata
                           (sbcl-agent-call "MAKE-SERVICE-METADATA"
                                            :authority :environment
@@ -739,10 +750,16 @@
                           :approval
                           :detail
                           (list :id request-id
-                                :wait (sbcl-agent-call "WORK-ITEM-WAIT-REPORT" session work-item)
-                                :work-item (sbcl-agent-call "WORK-ITEM-DETAIL" work-item)
+                                :wait (service-data
+                                       (sbcl-agent-call "QUERY-WORK-ITEM-WAIT-SERVICE" session request-id))
+                                :work-item (service-data
+                                            (sbcl-agent-call "QUERY-WORK-ITEM-DETAIL-SERVICE" session request-id))
                                 :workflow-record (and workflow-record
-                                                      (sbcl-agent-call "WORKFLOW-RECORD-DETAIL" workflow-record)))
+                                                      (service-data
+                                                       (sbcl-agent-call "QUERY-WORKFLOW-RECORD-DETAIL-SERVICE"
+                                                                        session
+                                                                        (sbcl-agent-call "WORKFLOW-RECORD-ID"
+                                                                                         workflow-record)))))
                           :metadata
                           (sbcl-agent-call "MAKE-SERVICE-METADATA"
                                            :authority :environment
@@ -764,7 +781,10 @@
          (unless policy
            (error "Approval request ~A does not expose a policy requirement" request-id))
          (sbcl-agent-call "COMMAND-APPROVE-POLICY-SERVICE" session policy)
-         (sbcl-agent-call "RESUME-WORK-ITEM" session work-item :note "Resumed from desktop approval workspace.")
+         (sbcl-agent-call "COMMAND-WORK-ITEM-RESUME-SERVICE"
+                          session
+                          request-id
+                          :note "Resumed from desktop approval workspace.")
          (sbcl-agent-call "MAKE-SERVICE-COMMAND-RESPONSE"
                           :approval
                           :approve
@@ -789,9 +809,9 @@
                               (sbcl-agent-call "FIND-WORK-ITEM" session request-id))))
          (unless work-item
            (error "Unknown approval request ~A" request-id))
-         (sbcl-agent-call "QUARANTINE-WORK-ITEM"
+         (sbcl-agent-call "COMMAND-WORK-ITEM-QUARANTINE-SERVICE"
                           session
-                          work-item
+                          request-id
                           "Approval denied in desktop approval workspace.")
          (sbcl-agent-call "MAKE-SERVICE-COMMAND-RESPONSE"
                           :approval

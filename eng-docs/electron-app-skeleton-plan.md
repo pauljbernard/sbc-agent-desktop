@@ -17,7 +17,7 @@ Create the minimum Electron application skeleton that can:
 - launch
 - connect to a local `sbcl-agent` service host
 - expose a typed preload bridge
-- render the environment shell
+- render the environment frame
 - support the first P0 workspace milestones
 
 ## Recommended Top-Level Structure
@@ -146,7 +146,7 @@ Deliver:
 Deliver:
 
 - renderer loads environment summary through preload
-- environment shell shows real posture data
+- environment frame shows real posture data
 
 ### Milestone 4: Event Subscription Path
 

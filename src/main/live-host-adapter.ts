@@ -143,6 +143,76 @@ function asRecordArray(value: unknown): Array<Record<string, unknown>> {
   return Array.isArray(value) ? value.map((entry) => asRecord(entry)) : [];
 }
 
+function firstString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string" && value.length > 0) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeWaitReason(waitReason: unknown): string | null {
+  const raw = typeof waitReason === "string" ? waitReason : null;
+  if (!raw) {
+    return null;
+  }
+
+  switch (raw) {
+    case "approvalRequired":
+    case "approval_required":
+    case "awaitingApproval":
+      return "approvalRequired";
+    case "pendingValidation":
+    case "pending_validation":
+      return "pendingValidation";
+    case "coldValidationRequired":
+    case "cold_validation_required":
+      return "coldValidationRequired";
+    case "operatorReviewRequired":
+    case "operator_review_required":
+      return "operatorReviewRequired";
+    case "ready":
+      return "ready";
+    default:
+      return raw;
+  }
+}
+
+function normalizeWorkflowPhase(value: unknown): string | null {
+  const phase = typeof value === "string" ? value : null;
+  if (!phase) {
+    return null;
+  }
+
+  switch (phase) {
+    case "approval":
+    case "awaitingApproval":
+      return "approval";
+    case "operatorReview":
+    case "operator_review":
+      return "operatorReview";
+    default:
+      return phase;
+  }
+}
+
+function normalizeWorkStatus(status: unknown): string | null {
+  const raw = typeof status === "string" ? status : null;
+  if (!raw) {
+    return null;
+  }
+
+  switch (raw) {
+    case "awaitingApproval":
+    case "awaiting_approval":
+      return "awaitingApproval";
+    default:
+      return raw;
+  }
+}
+
 function linkedEntity(
   entityType: "artifact" | "approval" | "incident" | "work-item" | "operation",
   entityId: string | null | undefined,
@@ -726,7 +796,7 @@ function adaptEventStreamResponse(
 }
 
 function summarizeWaitReason(waitReason: string | null | undefined): string {
-  switch (waitReason) {
+  switch (normalizeWaitReason(waitReason)) {
     case "approvalRequired":
       return "Operator approval is required before the work can continue.";
     case "coldValidationRequired":
@@ -743,10 +813,11 @@ function summarizeWaitReason(waitReason: string | null | undefined): string {
 }
 
 function inferApprovalState(waitReason: string | null | undefined): ApprovalRequestSummaryDto["state"] {
-  if (waitReason === "approvalRequired") {
+  const normalized = normalizeWaitReason(waitReason);
+  if (normalized === "approvalRequired") {
     return "awaiting";
   }
-  if (waitReason === "operatorReviewRequired") {
+  if (normalized === "operatorReviewRequired") {
     return "denied";
   }
   return "approved";
@@ -766,10 +837,9 @@ function adaptApprovalListResponse(
       const requirements = (item.approvalRequirements as Array<Record<string, unknown>> | undefined) ?? [];
       const primaryRequirement = requirements[0] ?? {};
       const policyId =
-        (primaryRequirement.policy as string | undefined) ??
-        (item.waitingOn as string | undefined) ??
+        firstString(primaryRequirement.policy, item.approvalPolicy, item.policyId) ??
         "governed-action";
-      const waitReason = (item.waitReason as string | undefined) ?? null;
+      const waitReason = normalizeWaitReason(item.waitReason);
 
       return {
         requestId: String(item.id ?? "approval-request"),
@@ -791,7 +861,8 @@ function adaptApprovalDetailResponse(
   const workflowRecord = asRecord(data.workflowRecord);
   const approvalRequirements = (wait.approvalRequirements as Array<Record<string, unknown>> | undefined) ?? [];
   const primaryRequirement = approvalRequirements[0] ?? {};
-  const policyId = (primaryRequirement.policy as string | undefined) ?? null;
+  const waitReason = normalizeWaitReason(firstString(wait.why, wait.waitReason, workItem.waitReason));
+  const policyId = firstString(primaryRequirement.policy, workItem.approvalPolicy, workflowRecord.policyId) ?? null;
   const requestId = String(data.id ?? workItem.id ?? "approval-request");
   const linkedEntities = [
     linkedEntity("work-item", workItem.id as string | undefined, String(workItem.goal ?? "Work Item")),
@@ -816,8 +887,8 @@ function adaptApprovalDetailResponse(
     data: {
       requestId,
       title: String(workItem.goal ?? `Approval ${requestId}`),
-      summary: summarizeWaitReason(wait.why as string | undefined),
-      state: inferApprovalState(wait.why as string | undefined),
+      summary: summarizeWaitReason(waitReason),
+      state: inferApprovalState(waitReason),
       requestedAction:
         (policyId && `Grant ${policyId} and resume governed work`) || "Resume governed work after approval",
       scopeSummary: wait.waitingOn
@@ -828,7 +899,7 @@ function adaptApprovalDetailResponse(
         "This work item crossed a governed boundary and cannot continue without explicit operator authority.",
       policyId,
       consequenceSummary:
-        wait.why === "approvalRequired"
+        waitReason === "approvalRequired"
           ? "Approving this request clears the approval gate so the work item can be resumed."
           : "This request no longer appears to be blocked on approval.",
       createdAt: universalTimeToIso(primaryRequirement.requestedAt ?? workItem.updatedAt),
@@ -913,7 +984,7 @@ function adaptIncidentDetailResponse(
       recoveryState:
         recoveryPlan.status === "resolved"
           ? "resolved"
-          : recoveryPlan.waitReason === "approvalRequired"
+          : normalizeWaitReason(recoveryPlan.waitReason) === "approvalRequired"
             ? "awaiting_acknowledgement"
             : recoveryPlan.interruptedP
             ? "active_recovery"
@@ -932,7 +1003,7 @@ function adaptIncidentDetailResponse(
           : typeof recoveryNextAction.type === "string"
             ? String(recoveryNextAction.type)
             : "inspect-runtime-context"),
-      blockedReason: (wait.why as string | undefined) ?? null,
+      blockedReason: normalizeWaitReason(firstString(wait.why, wait.waitReason)),
       artifactIds: [],
       linkedEntities,
       updatedAt: universalTimeToIso(data.createdAt)
@@ -942,16 +1013,29 @@ function adaptIncidentDetailResponse(
 }
 
 function workStateFromStatus(status: string | undefined, waitingReason: string | undefined): WorkItemSummaryDto["state"] {
-  if (status === "quarantined") {
+  const normalizedStatus = normalizeWorkStatus(status);
+  const normalizedWaitReason = normalizeWaitReason(waitingReason);
+
+  if (normalizedStatus === "quarantined") {
     return "quarantined";
   }
-  if (waitingReason === "approvalRequired" || waitingReason === "pendingValidation" || waitingReason === "coldValidationRequired") {
+  if (
+    normalizedWaitReason === "approvalRequired" ||
+    normalizedWaitReason === "pendingValidation" ||
+    normalizedWaitReason === "coldValidationRequired"
+  ) {
     return "waiting";
   }
-  if (status === "resumed" || status === "open" || status === "mutating") {
+  if (
+    normalizedStatus === "resumed" ||
+    normalizedStatus === "open" ||
+    normalizedStatus === "mutating" ||
+    normalizedStatus === "created" ||
+    normalizedStatus === "awaitingApproval"
+  ) {
     return "active";
   }
-  if (status === "committed" || status === "completed") {
+  if (normalizedStatus === "committed" || normalizedStatus === "completed") {
     return "closable";
   }
   return "blocked";
@@ -970,12 +1054,13 @@ function adaptWorkItemListResponse(
     data: items.map((item) => {
       const pendingValidations = asStringArray(item.pendingValidations);
       const approvalRequirements = (item.approvalRequirements as Array<unknown> | undefined) ?? [];
+      const waitingReason = normalizeWaitReason(firstString(item.waitReason, item.waitingOn));
       const incidentCount = 0;
       return {
         workItemId: String(item.id ?? "work-item"),
         title: String(item.goal ?? "Work Item"),
-        state: workStateFromStatus(item.status as string | undefined, item.waitReason as string | undefined),
-        waitingReason: ((item.waitReason as string | undefined) ?? null) as string | null,
+        state: workStateFromStatus(item.status as string | undefined, waitingReason ?? undefined),
+        waitingReason,
         approvalCount: approvalRequirements.length,
         incidentCount,
         artifactCount: 0,
@@ -992,6 +1077,7 @@ function adaptWorkItemDetailResponse(
 ): QueryResultDto<WorkItemDetailDto> {
   const data = asRecord(response.data);
   const workflowRecord = asRecord(data.workflowRecord);
+  const waitingReason = normalizeWaitReason(firstString(data.waitReason, workflowRecord.waitingOn));
   const linkedEntities = [
     linkedEntity("operation", workflowRecord.id as string | undefined, `Workflow ${String(workflowRecord.id ?? "")}`),
     linkedEntity("work-item", data.id as string | undefined, String(data.goal ?? "Work Item"))
@@ -1006,8 +1092,8 @@ function adaptWorkItemDetailResponse(
     data: {
       workItemId: String(data.id ?? "work-item"),
       title: String(data.goal ?? "Work Item"),
-      state: workStateFromStatus(data.status as string | undefined, undefined),
-      waitingReason: (workflowRecord.waitingOn as string | undefined) ?? null,
+      state: workStateFromStatus(data.status as string | undefined, waitingReason ?? undefined),
+      waitingReason,
       workflowRecordId: String(workflowRecord.id ?? data.workflowRecordRef ?? "workflow-record"),
       runtimeSummary:
         (data.latestRuntimeObservation ? "Runtime observations captured for this work item." : "No runtime observation recorded yet."),
@@ -1027,8 +1113,9 @@ function adaptWorkflowRecordDetailResponse(
   const data = asRecord(response.data);
   const pendingValidations = asStringArray(data.pendingValidations);
   const approvalRequirements = (data.approvalRequirements as Array<Record<string, unknown>> | undefined) ?? [];
+  const workflowPhase = normalizeWorkflowPhase(data.waitingOn);
   const blockingItems = [
-    ...(data.waitingOn ? [String(data.waitingOn)] : []),
+    ...(workflowPhase ? [workflowPhase] : []),
     ...approvalRequirements.map((requirement) => String(requirement.policy ?? "approval")),
     ...pendingValidations
   ];
@@ -1042,7 +1129,7 @@ function adaptWorkflowRecordDetailResponse(
     data: {
       workflowRecordId: String(data.id ?? "workflow-record"),
       phase:
-        data.waitingOn === "approval"
+        workflowPhase === "approval"
           ? "execution"
           : pendingValidations.length > 0
             ? "validation"
@@ -1050,7 +1137,7 @@ function adaptWorkflowRecordDetailResponse(
               ? "reconciliation"
               : "closure",
       validationState: pendingValidations.length > 0 ? "pending" : "complete",
-      reconciliationState: data.quarantineReason || data.waitingOn === "operatorReview" ? "required" : "complete",
+      reconciliationState: data.quarantineReason || workflowPhase === "operatorReview" ? "required" : "complete",
       closureReadiness: blockingItems.length > 0 ? "not_closable" : "closable",
       closureSummary:
         blockingItems.length > 0

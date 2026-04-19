@@ -1,6 +1,6 @@
-# sbc-agent-desktop Licensing
+# sbcl-agent-ux Licensing
 
-Copyright (c) 2026 sbc-agent-desktop contributors.
+Copyright (c) 2026 sbcl-agent-ux contributors.
 
 This repository uses a split licensing model.
 

@@ -12,7 +12,7 @@ This slice includes:
 
 - environment summary query
 - environment status query
-- environment workspace shell
+- environment workspace frame
 - posture summary rendering
 - basic attention summary rendering
 
