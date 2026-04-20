@@ -1,7 +1,50 @@
-import { ipcMain, shell } from "electron";
-import type { WorkspaceId } from "../shared/contracts";
+import { ipcMain, shell, type WebContents } from "electron";
+import type { EnvironmentEventDto, EventSubscriptionInput, WorkspaceId } from "../shared/contracts";
 import { listDocumentationPages, readDocumentationPageBySlug } from "./documentation";
 import { hostAdapter } from "./host-adapter";
+
+interface EventSubscriptionRecord {
+  input: EventSubscriptionInput;
+  sender: WebContents;
+}
+
+const eventSubscriptions = new Map<string, EventSubscriptionRecord>();
+let nextSubscriptionId = 1;
+
+function eventMatchesSubscription(
+  event: EnvironmentEventDto,
+  input: EventSubscriptionInput
+): boolean {
+  if (input.families && input.families.length > 0 && !input.families.includes(event.family)) {
+    return false;
+  }
+
+  if (input.visibility && input.visibility.length > 0) {
+    const visibility = event.visibility ?? "operator";
+    if (!input.visibility.includes(visibility)) {
+      return false;
+    }
+  }
+
+  if (input.fromCursor !== undefined && event.cursor < input.fromCursor) {
+    return false;
+  }
+
+  return true;
+}
+
+function emitDesktopEvent(event: EnvironmentEventDto): void {
+  for (const [subscriptionId, record] of eventSubscriptions.entries()) {
+    if (!eventMatchesSubscription(event, record.input) || record.sender.isDestroyed()) {
+      continue;
+    }
+
+    record.sender.send("events:subscription-event", {
+      subscriptionId,
+      event
+    });
+  }
+}
 
 export function registerIpcHandlers(): void {
   ipcMain.handle("host:get-status", () => hostAdapter.getHostStatus());
@@ -69,6 +112,15 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("command:evaluate-in-context", (_event, input) =>
     hostAdapter.evaluateInContext(input)
   );
+  ipcMain.handle("command:create-conversation-thread", (_event, input) =>
+    hostAdapter.createConversationThread(input)
+  );
+  ipcMain.handle("command:send-conversation-message", (_event, input) =>
+    hostAdapter.sendConversationMessage(input, (streamEvent) => {
+      emitDesktopEvent(streamEvent);
+      _event.sender.send("conversation:stream-event", streamEvent);
+    })
+  );
   ipcMain.handle("command:stage-source-change", (_event, input) =>
     hostAdapter.stageSourceChange(input)
   );
@@ -91,6 +143,15 @@ export function registerIpcHandlers(): void {
     readDocumentationPageBySlug(slug)
   );
   ipcMain.handle("desktop:open-external-link", (_event, url: string) => shell.openExternal(url));
-  ipcMain.handle("events:subscribe", () => ({ subscriptionId: "mock-subscription" }));
-  ipcMain.handle("events:unsubscribe", () => undefined);
+  ipcMain.handle("events:subscribe", (event, input: EventSubscriptionInput) => {
+    const subscriptionId = `subscription-${nextSubscriptionId++}`;
+    eventSubscriptions.set(subscriptionId, {
+      input,
+      sender: event.sender
+    });
+    return { subscriptionId };
+  });
+  ipcMain.handle("events:unsubscribe", (_event, subscriptionId: string) => {
+    eventSubscriptions.delete(subscriptionId);
+  });
 }

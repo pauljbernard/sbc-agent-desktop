@@ -7,6 +7,7 @@ import type {
   AttentionSummaryDto,
   BindingDto,
   CommandResultDto,
+  CreateConversationThreadInput,
   EnvironmentEventDto,
   EventSubscriptionInput,
   EnvironmentStatusDto,
@@ -21,6 +22,8 @@ import type {
   RuntimeEntityDetailDto,
   RuntimeInspectionResultDto,
   RuntimeSummaryDto,
+  SendConversationMessageInput,
+  SendConversationMessageResultDto,
   SourceMutationResultDto,
   SourceReloadResultDto,
   ServiceMetadataDto,
@@ -1144,6 +1147,138 @@ export function queryThreadDetail(
     metadata: {
       ...metadata(binding, "thread-detail"),
       threadId
+    }
+  };
+}
+
+export function commandCreateConversationThread(
+  input: CreateConversationThreadInput
+): CommandResultDto<ThreadSummaryDto> {
+  const environmentId = input.environmentId;
+  const environment = environments[environmentId];
+  const binding = { environmentId };
+  const title = input.title.trim() || "New Conversation Session";
+  const threadId = `thread-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "session"}-${Date.now()}`;
+  const timestamp = new Date().toISOString();
+  const summary =
+    input.summary?.trim() || "Project-scoped conversation session created from the desktop shell.";
+  const thread: ThreadSummaryDto = {
+    threadId,
+    title,
+    summary,
+    state: "background",
+    latestActivityAt: timestamp,
+    latestTurnState: "background",
+    attentionFlags: ["new"]
+  };
+  const detail: ThreadDetailDto = {
+    threadId,
+    title,
+    summary,
+    state: "background",
+    messages: [],
+    turns: [],
+    linkedEntities: []
+  };
+
+  environment.threads = [thread, ...environment.threads];
+  environment.threadDetails[threadId] = detail;
+
+  return {
+    contractVersion: 1,
+    domain: "conversation",
+    operation: "conversation.create_thread",
+    kind: "command",
+    status: "ok",
+    data: thread,
+    metadata: {
+      ...metadata(binding, "thread-command"),
+      commandModel: "thread-command-v1",
+      threadId
+    }
+  };
+}
+
+export function commandSendConversationMessage(
+  input: SendConversationMessageInput
+): CommandResultDto<SendConversationMessageResultDto> {
+  const environment = environments[input.environmentId];
+  const binding = { environmentId: input.environmentId };
+  const detail = environment.threadDetails[input.threadId];
+  const thread = environment.threads.find((entry) => entry.threadId === input.threadId);
+  if (!detail || !thread) {
+    throw new Error(`Unknown thread ${input.threadId}`);
+  }
+
+  const timestamp = new Date().toISOString();
+  const turnId = `turn-${Date.now()}`;
+  const prompt = input.prompt.trim();
+  const assistantMessage = `Mock assistant response for ${detail.title}: ${prompt}`;
+
+  detail.messages = [
+    ...detail.messages,
+    {
+      messageId: `message-user-${Date.now()}`,
+      role: "user",
+      content: prompt,
+      createdAt: timestamp
+    },
+    {
+      messageId: `message-assistant-${Date.now()}`,
+      role: "assistant",
+      content: assistantMessage,
+      createdAt: timestamp
+    }
+  ];
+  detail.turns = [
+    ...detail.turns,
+    {
+      turnId,
+      title: prompt.slice(0, 72) || "Draft message",
+      state: "completed",
+      createdAt: timestamp
+    }
+  ];
+  detail.state = "active";
+  detail.summary = `Latest turn completed for ${detail.title}.`;
+
+  environment.turnDetails[turnId] = {
+    turnId,
+    threadId: input.threadId,
+    title: prompt.slice(0, 72) || "Draft message",
+    state: "completed",
+    summary: assistantMessage,
+    createdAt: timestamp,
+    operationIds: [],
+    artifactIds: [],
+    incidentIds: [],
+    approvalIds: [],
+    workItemIds: []
+  };
+
+  thread.latestActivityAt = timestamp;
+  thread.latestTurnState = "completed";
+  thread.state = "active";
+  thread.summary = detail.summary;
+  thread.attentionFlags = [`messages ${detail.messages.length}`, `turns ${detail.turns.length}`];
+
+  return {
+    contractVersion: 1,
+    domain: "execution",
+    operation: "conversation.send_message",
+    kind: "command",
+    status: "ok",
+    data: {
+      threadId: input.threadId,
+      turnId,
+      assistantMessage,
+      summary: detail.summary
+    },
+    metadata: {
+      ...metadata(binding, "conversation-execution"),
+      commandModel: "conversation-execution-v1",
+      threadId: input.threadId,
+      turnId
     }
   };
 }

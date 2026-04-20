@@ -11,6 +11,32 @@ import type {
   WorkspaceId
 } from "../shared/contracts";
 
+const eventHandlers = new Map<string, (event: EnvironmentEventDto) => void>();
+const pendingEvents = new Map<string, EnvironmentEventDto[]>();
+const conversationStreamHandlers = new Map<string, (event: EnvironmentEventDto) => void>();
+let nextConversationStreamSubscriptionId = 1;
+
+ipcRenderer.on(
+  "events:subscription-event",
+  (_event, payload: { subscriptionId: string; event: EnvironmentEventDto }) => {
+    const handler = eventHandlers.get(payload.subscriptionId);
+    if (handler) {
+      handler(payload.event);
+      return;
+    }
+
+    const queued = pendingEvents.get(payload.subscriptionId) ?? [];
+    queued.push(payload.event);
+    pendingEvents.set(payload.subscriptionId, queued);
+  }
+);
+
+ipcRenderer.on("conversation:stream-event", (_event, payload: EnvironmentEventDto) => {
+  for (const handler of conversationStreamHandlers.values()) {
+    handler(payload);
+  }
+});
+
 const api: SbclAgentDesktopApi = {
   host: {
     getHostStatus: () => ipcRenderer.invoke("host:get-status"),
@@ -51,6 +77,8 @@ const api: SbclAgentDesktopApi = {
       ipcRenderer.invoke("query:workflow-record-detail", workflowRecordId, environmentId)
   },
   command: {
+    createConversationThread: (input) => ipcRenderer.invoke("command:create-conversation-thread", input),
+    sendConversationMessage: (input) => ipcRenderer.invoke("command:send-conversation-message", input),
     evaluateInContext: (input) => ipcRenderer.invoke("command:evaluate-in-context", input),
     stageSourceChange: (input) => ipcRenderer.invoke("command:stage-source-change", input),
     reloadSourceFile: (input) => ipcRenderer.invoke("command:reload-source-file", input),
@@ -60,10 +88,32 @@ const api: SbclAgentDesktopApi = {
   events: {
     subscribeEnvironmentEvents: async (
       input: EventSubscriptionInput,
-      _handler: (event: EnvironmentEventDto) => void
-    ): Promise<EventSubscriptionHandle> => ipcRenderer.invoke("events:subscribe", input),
-    unsubscribe: async (subscriptionId: string): Promise<void> =>
-      ipcRenderer.invoke("events:unsubscribe", subscriptionId)
+      handler: (event: EnvironmentEventDto) => void
+    ): Promise<EventSubscriptionHandle> => {
+      const handle = (await ipcRenderer.invoke("events:subscribe", input)) as EventSubscriptionHandle;
+      eventHandlers.set(handle.subscriptionId, handler);
+      const queued = pendingEvents.get(handle.subscriptionId) ?? [];
+      for (const event of queued) {
+        handler(event);
+      }
+      pendingEvents.delete(handle.subscriptionId);
+      return handle;
+    },
+    subscribeConversationStream: async (
+      handler: (event: EnvironmentEventDto) => void
+    ): Promise<EventSubscriptionHandle> => {
+      const subscriptionId = `conversation-stream-${nextConversationStreamSubscriptionId++}`;
+      conversationStreamHandlers.set(subscriptionId, handler);
+      return { subscriptionId };
+    },
+    unsubscribe: async (subscriptionId: string): Promise<void> => {
+      eventHandlers.delete(subscriptionId);
+      pendingEvents.delete(subscriptionId);
+      if (conversationStreamHandlers.delete(subscriptionId)) {
+        return;
+      }
+      await ipcRenderer.invoke("events:unsubscribe", subscriptionId);
+    }
   },
   desktop: {
     focusWorkspace: (workspace: WorkspaceId) =>

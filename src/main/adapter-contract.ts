@@ -7,6 +7,7 @@ import type {
   ArtifactSummaryDto,
   BindingDto,
   CommandResultDto,
+  CreateConversationThreadInput,
   DesktopPreferencesDto,
   EnvironmentEventDto,
   EventSubscriptionInput,
@@ -21,6 +22,8 @@ import type {
   RuntimeEntityDetailDto,
   RuntimeInspectionResultDto,
   RuntimeSummaryDto,
+  SendConversationMessageInput,
+  SendConversationMessageResultDto,
   SourceMutationResultDto,
   SourceReloadResultDto,
   SourcePreviewDto,
@@ -48,6 +51,13 @@ export interface SbclAgentHostAdapter {
   threadList(environmentId?: string): Promise<QueryResultDto<ThreadSummaryDto[]>>;
   threadDetail(threadId: string, environmentId?: string): Promise<QueryResultDto<ThreadDetailDto>>;
   turnDetail(turnId: string, environmentId?: string): Promise<QueryResultDto<TurnDetailDto>>;
+  createConversationThread(
+    input: CreateConversationThreadInput
+  ): Promise<CommandResultDto<ThreadSummaryDto>>;
+  sendConversationMessage(
+    input: SendConversationMessageInput,
+    onEvent?: (event: EnvironmentEventDto) => void
+  ): Promise<CommandResultDto<SendConversationMessageResultDto>>;
   runtimeSummary(environmentId?: string): Promise<QueryResultDto<RuntimeSummaryDto>>;
   runtimeInspectSymbol(input: {
     environmentId: string;

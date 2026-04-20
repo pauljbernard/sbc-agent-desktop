@@ -13,6 +13,10 @@ const sbclAgentRoot = resolve(projectRoot, "../sbcl-agent");
 async function launchDesktop(): Promise<{
   app: ElectronApplication;
   page: Page;
+}>;
+async function launchDesktop(envOverrides: Record<string, string> = {}): Promise<{
+  app: ElectronApplication;
+  page: Page;
 }> {
   const stateDir = mkdtempSync(join(tmpdir(), "sbcl-agent-ux-ui-"));
   const environmentStatePath = join(stateDir, "live-environment.sexp");
@@ -27,15 +31,37 @@ async function launchDesktop(): Promise<{
       SBCL_AGENT_TRANSPORT: "pipe",
       SBCL_AGENT_PROJECT_DIR: sbclAgentRoot,
       SBCL_AGENT_ENVIRONMENT_STATE_PATH: environmentStatePath,
-      ELECTRON_DISABLE_SECURITY_WARNINGS: "true"
+      ELECTRON_DISABLE_SECURITY_WARNINGS: "true",
+      ...envOverrides
     }
   });
 
   const page = await app.firstWindow();
+  const pageErrors: string[] = [];
+  const consoleErrors: string[] = [];
+  page.on("pageerror", (error) => {
+    pageErrors.push(error.stack ?? String(error));
+  });
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      consoleErrors.push(message.text());
+    }
+  });
   await page.waitForLoadState("domcontentloaded");
-  await expect(page.getByText("Environment Shell")).toBeVisible();
-  await expect(page.getByText(/Live .* Adapter/i)).toBeVisible();
-  await expect(page.locator("body")).toContainText("Current Binding");
+  try {
+    await expect(page.locator("body")).toContainText("Environment Shell", { timeout: 15000 });
+    await expect(page.locator(".status-dock")).toContainText("Host", { timeout: 15000 });
+    await expect(page.locator(".status-dock")).toContainText("ready", { timeout: 15000 });
+    await expect(page.locator("body")).toContainText("Current Binding", { timeout: 15000 });
+  } catch (error) {
+    const bodyText = await page.locator("body").textContent();
+    const diagnostics = [
+      `body=${JSON.stringify(bodyText)}`,
+      `pageErrors=${JSON.stringify(pageErrors)}`,
+      `consoleErrors=${JSON.stringify(consoleErrors)}`
+    ].join("\n");
+    throw new Error(`${String(error)}\n${diagnostics}`);
+  }
 
   return { app, page };
 }
@@ -56,6 +82,24 @@ async function openWorkspaceSubpage(page: Page, parent: string, child: string): 
 }
 
 test.describe("live sbcl-agent desktop shell", () => {
+  test("exposes the conversation creation command on the desktop bridge", async () => {
+    const { app, page } = await launchDesktop();
+    try {
+      const bridgeShape = await page.evaluate(() => ({
+        hasDesktop: typeof window.sbclAgentDesktop === "object" && window.sbclAgentDesktop !== null,
+        hasCommand: typeof window.sbclAgentDesktop?.command === "object" && window.sbclAgentDesktop.command !== null,
+        hasCreateConversationThread:
+          typeof window.sbclAgentDesktop?.command?.createConversationThread === "function"
+      }));
+
+      expect(bridgeShape.hasDesktop).toBe(true);
+      expect(bridgeShape.hasCommand).toBe(true);
+      expect(bridgeShape.hasCreateConversationThread).toBe(true);
+    } finally {
+      await app.close();
+    }
+  });
+
   test("shows bound environment identity from the live adapter", async () => {
     const { app, page } = await launchDesktop();
     try {
@@ -76,13 +120,81 @@ test.describe("live sbcl-agent desktop shell", () => {
     try {
       await openWorkspace(page, "Conversations");
 
-      await expect(page.getByText("Environment Orientation")).toBeVisible();
-      await expect(page.getByText("Governed Mutation Review")).toBeVisible();
-      await expect(page.getByText("Runtime Recovery")).toBeVisible();
+      await expect(page.locator(".conversation-list-panel")).toContainText("New Conversation Session");
+      await expect(page.locator(".conversation-detail-panel")).toContainText("Draft Next Message");
+      await expect(page.getByRole("button", { name: "Send Message", exact: true })).toBeVisible();
+      await expect(page.locator(".conversation-detail-panel")).toContainText("Selected Thread");
+    } finally {
+      await app.close();
+    }
+  });
 
-      await page.getByRole("button", { name: /Runtime Recovery/i }).click();
-      await expect(page.locator("body")).toContainText("A runtime failure is preserved as durable recovery work.");
-      await expect(page.locator("body")).toContainText("failed");
+  test("streams assistant text into the selected conversation before final completion", async () => {
+    const { app, page } = await launchDesktop({
+      TUTOR_CODEX_PROVIDER: "mock",
+      TUTOR_CODEX_MOCK_STREAM_DELAY_MS: "600"
+    });
+    try {
+      const prompt = "stream verification prompt";
+      await openWorkspace(page, "Conversations");
+      await expect(page.locator(".conversation-thread-transcript-panel")).toContainText("Default Thread");
+      const composer = page.locator(".conversation-composer-panel .conversation-draft-editor");
+      await composer.fill(prompt);
+      await page.getByRole("button", { name: "Send Message", exact: true }).click();
+
+      const transcript = page.locator(".conversation-thread-transcript-panel");
+      await expect(page.getByRole("button", { name: "Sending...", exact: true })).toBeVisible();
+      await expect(transcript).toContainText(`Mock response: ${prompt}`, { timeout: 3000 });
+      const partialTranscript = await transcript.textContent();
+      expect(partialTranscript ?? "").not.toContain("Replace the mock provider with a real model adapter next.");
+      await expect(transcript).toContainText("Replace the mock provider with a real model adapter next.", {
+        timeout: 8000
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  test("anchors short transcript history against the composer instead of the top of the transcript panel", async () => {
+    const { app, page } = await launchDesktop();
+    try {
+      await openWorkspace(page, "Conversations");
+
+      await page.locator(".conversation-list-panel").getByRole("button", { name: /Environment Orientation/ }).click();
+
+      const transcript = page.locator(".conversation-thread-transcript-panel");
+      const lastBubble = transcript.locator(".message-bubble").last();
+
+      await expect(lastBubble).toBeVisible();
+
+      const transcriptBox = await transcript.boundingBox();
+      const lastBubbleBox = await lastBubble.boundingBox();
+
+      expect(transcriptBox).not.toBeNull();
+      expect(lastBubbleBox).not.toBeNull();
+
+      if (!transcriptBox || !lastBubbleBox) {
+        throw new Error("Transcript or last message bubble did not produce a bounding box.");
+      }
+
+      const bottomGap = transcriptBox.y + transcriptBox.height - (lastBubbleBox.y + lastBubbleBox.height);
+      expect(bottomGap).toBeLessThan(80);
+    } finally {
+      await app.close();
+    }
+  });
+
+  test("creates a new project conversation session from the desktop shell", async () => {
+    const { app, page } = await launchDesktop();
+    try {
+      const sessionTitle = "Desktop Session Alpha";
+      await openWorkspace(page, "Conversations");
+
+      await page.locator(".conversation-thread-actions .runtime-session-create input").fill(sessionTitle);
+      await page.getByRole("button", { name: "New Conversation Session", exact: true }).click();
+
+      await expect(page.locator("body")).toContainText(sessionTitle);
+      await expect(page.locator("body")).toContainText("Project-scoped conversation session created from the desktop shell.");
     } finally {
       await app.close();
     }

@@ -18,6 +18,32 @@ export interface BindingDto {
   environmentId: string;
 }
 
+export interface ProjectProfileDto {
+  projectId: string;
+  title: string;
+  environmentId: string;
+  summary?: string;
+}
+
+export interface ReplSessionProfileDto {
+  sessionId: string;
+  title: string;
+  environmentId: string;
+  draftForm: string;
+  packageName?: string;
+  lastSummary?: string;
+  history?: ReplSessionHistoryEntryDto[];
+}
+
+export interface ReplSessionHistoryEntryDto {
+  entryId: string;
+  timestamp: string;
+  form: string;
+  status: CommandResultDto<RuntimeEvalResultDto>["status"];
+  summary: string;
+  valuePreview?: string | null;
+}
+
 export interface HostStatusDto {
   hostState: HostState;
   supportedProtocolVersion: number;
@@ -182,6 +208,33 @@ export interface ApprovalDecisionDto {
 export interface ApprovalDecisionInput {
   environmentId: string;
   requestId: string;
+}
+
+export interface CreateConversationThreadInput {
+  environmentId: string;
+  title: string;
+  summary?: string;
+}
+
+export interface SendConversationMessageInput {
+  environmentId: string;
+  threadId: string;
+  prompt: string;
+}
+
+export interface SendConversationMessageResultDto {
+  threadId: string;
+  turnId: string;
+  assistantMessage: string;
+  summary: string;
+}
+
+export interface ConversationStreamEventDto {
+  phase: "started" | "delta" | "completed" | "error";
+  threadId?: string | null;
+  turnId?: string | null;
+  content?: string | null;
+  summary?: string | null;
 }
 
 export interface MessageDto {
@@ -476,8 +529,14 @@ export interface EnvironmentStatusDto {
 
 export interface DesktopPreferencesDto {
   lastWorkspace: WorkspaceId;
+  sidebarPinned: boolean;
   inspectorPinned: boolean;
   themePreference: "system" | "light" | "dark";
+  currentProjectId?: string | null;
+  projects?: ProjectProfileDto[];
+  selectedConversationThreadByProject?: Record<string, string>;
+  replSessionsByProject?: Record<string, ReplSessionProfileDto[]>;
+  currentReplSessionIdByProject?: Record<string, string>;
   lispCodeView: {
     parenDepthColors: string[];
   };
@@ -514,6 +573,8 @@ export interface EnvironmentEventDto {
   family: string;
   summary: string;
   entityId?: string | null;
+  threadId?: string | null;
+  turnId?: string | null;
   visibility?: string | null;
   payload: Record<string, unknown>;
 }
@@ -567,6 +628,12 @@ export interface QueryApi {
 }
 
 export interface CommandApi {
+  createConversationThread(
+    input: CreateConversationThreadInput
+  ): Promise<CommandResultDto<ThreadSummaryDto>>;
+  sendConversationMessage(
+    input: SendConversationMessageInput
+  ): Promise<CommandResultDto<SendConversationMessageResultDto>>;
   evaluateInContext(
     input: EvaluateInContextInput
   ): Promise<CommandResultDto<RuntimeEvalResultDto>>;
@@ -583,6 +650,9 @@ export interface CommandApi {
 export interface EventApi {
   subscribeEnvironmentEvents(
     input: EventSubscriptionInput,
+    handler: (event: EnvironmentEventDto) => void
+  ): Promise<EventSubscriptionHandle>;
+  subscribeConversationStream(
     handler: (event: EnvironmentEventDto) => void
   ): Promise<EventSubscriptionHandle>;
   unsubscribe(subscriptionId: string): Promise<void>;

@@ -1,6 +1,7 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
+import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import type {
@@ -12,6 +13,7 @@ import type {
   ArtifactSummaryDto,
   BindingDto,
   CommandResultDto,
+  CreateConversationThreadInput,
   DesktopPreferencesDto,
   EnvironmentEventDto,
   EventSubscriptionInput,
@@ -29,6 +31,8 @@ import type {
   RuntimeSystemEntryDto,
   RuntimeScopeSummaryDto,
   RuntimeSummaryDto,
+  SendConversationMessageInput,
+  SendConversationMessageResultDto,
   ServiceMetadataDto,
   SourceMutationResultDto,
   SourceReloadResultDto,
@@ -60,6 +64,11 @@ interface RawServiceResponse<TData = unknown> {
   status: "ok" | "error" | "awaiting-approval" | "rejected";
   data: TData;
   metadata: Record<string, unknown>;
+}
+
+interface StreamingBridgeFrame {
+  type: "event" | "result";
+  payload: unknown;
 }
 
 const DEFAULT_LIVE_BINDING: BindingDto = {
@@ -780,6 +789,8 @@ function adaptEventStreamResponse(
     family: String(event.family ?? "environment"),
     summary: `${String(event.family ?? "environment")} / ${String(event.kind ?? "event")}`,
     entityId: (event.entityId as string | null | undefined) ?? null,
+    threadId: (event.threadId as string | null | undefined) ?? null,
+    turnId: (event.turnId as string | null | undefined) ?? null,
     visibility: (event.visibility as string | null | undefined) ?? null,
     payload: (event.payload as Record<string, unknown> | undefined) ?? {}
   }));
@@ -792,6 +803,22 @@ function adaptEventStreamResponse(
     status: response.status === "error" ? "error" : "ok",
     data: events,
     metadata: normalizeMetadata(response.metadata)
+  };
+}
+
+function adaptStreamingEnvironmentEvent(payload: unknown): EnvironmentEventDto {
+  const event = asRecord(payload);
+  return {
+    cursor: Number(event.cursor ?? 0),
+    kind: String(event.kind ?? "provider-stream"),
+    timestamp: String(event.timestamp ?? new Date().toISOString()),
+    family: String(event.family ?? "provider"),
+    summary: String(event.summary ?? `${String(event.family ?? "provider")} / ${String(event.kind ?? "provider-stream")}`),
+    entityId: (event.entityId as string | null | undefined) ?? null,
+    threadId: (event.threadId as string | null | undefined) ?? null,
+    turnId: (event.turnId as string | null | undefined) ?? null,
+    visibility: (event.visibility as string | null | undefined) ?? null,
+    payload: asRecord(event.payload)
   };
 }
 
@@ -1366,6 +1393,67 @@ function adaptThreadDetailResponse(
   };
 }
 
+function adaptCreateConversationThreadResponse(
+  response: RawServiceResponse<Record<string, unknown>>
+): CommandResultDto<ThreadSummaryDto> {
+  const data = asRecord(response.data);
+  const latestTurnState = turnStateFromRawStatus(data.latestTurnState as string | undefined);
+
+  return {
+    contractVersion: response.contractVersion,
+    domain: "conversation",
+    operation: response.operation,
+    kind: "command",
+    status: response.status === "error" ? "error" : "ok",
+    data: {
+      threadId: String(data.id ?? data.threadId ?? "thread"),
+      title: String(data.title ?? "Thread"),
+      summary: String(data.summary ?? "Conversation thread in the live environment."),
+      state: threadStateFromRawStatus(data.status as string | undefined, latestTurnState),
+      latestActivityAt: universalTimeToIso(data.updatedAt ?? data.createdAt),
+      latestTurnState,
+      attentionFlags: asStringArray(data.attentionFlags)
+    },
+    metadata: normalizeMetadata(response.metadata)
+  };
+}
+
+function adaptSendConversationMessageResponse(
+  response: RawServiceResponse<Record<string, unknown>>
+): CommandResultDto<SendConversationMessageResultDto> {
+  const data = asRecord(response.data);
+  const thread = asRecord(data.thread);
+  const turn = asRecord(data.turn);
+  const assistantMessage = asRecord(data.assistantMessage);
+
+  return {
+    contractVersion: response.contractVersion,
+    domain: "execution",
+    operation: response.operation,
+    kind: "command",
+    status:
+      response.status === "awaiting-approval"
+        ? "awaiting_approval"
+        : response.status === "rejected"
+          ? "rejected"
+          : response.status === "error"
+            ? "error"
+            : "ok",
+    data: {
+      threadId: String(thread.id ?? data.threadId ?? "thread"),
+      turnId: String(turn.id ?? data.turnId ?? "turn"),
+      assistantMessage: String(assistantMessage.content ?? data.message ?? ""),
+      summary: String(
+        data.outcomeSummary ??
+          data.reasoningSummary ??
+          assistantMessage.content ??
+          "Conversation turn executed."
+      )
+    },
+    metadata: normalizeMetadata(response.metadata)
+  };
+}
+
 function adaptTurnDetailResponse(
   response: RawServiceResponse<Record<string, unknown>>
 ): QueryResultDto<TurnDetailDto> {
@@ -1430,8 +1518,35 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
 
   private preferences: DesktopPreferencesDto = {
     lastWorkspace: "environment",
+    sidebarPinned: true,
     inspectorPinned: true,
     themePreference: "system",
+    currentProjectId: "project-live-environment",
+    projects: [
+      {
+        projectId: "project-live-environment",
+        title: "Live Environment",
+        environmentId: DEFAULT_LIVE_BINDING.environmentId,
+        summary: "Primary desktop project bound to the active live sbcl-agent environment."
+      }
+    ],
+    selectedConversationThreadByProject: {},
+    replSessionsByProject: {
+      "project-live-environment": [
+        {
+          sessionId: "repl-live-main",
+          title: "Live Listener",
+          environmentId: DEFAULT_LIVE_BINDING.environmentId,
+          draftForm: '(describe "sbcl-agent")',
+          packageName: "CL-USER",
+          lastSummary: "Primary live listener session.",
+          history: []
+        }
+      ]
+    },
+    currentReplSessionIdByProject: {
+      "project-live-environment": "repl-live-main"
+    },
     lispCodeView: {
       parenDepthColors: ["#6ec0c2", "#f4b267", "#9f8cff", "#7bc47f", "#f07c9b", "#56a3ff"]
     }
@@ -1573,6 +1688,36 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
       { turnId }
     );
     return adaptTurnDetailResponse(response);
+  }
+
+  async createConversationThread(
+    input: CreateConversationThreadInput
+  ): Promise<CommandResultDto<ThreadSummaryDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "conversation.create-thread",
+      input.environmentId,
+      {
+        title: input.title,
+        summary: input.summary
+      }
+    );
+    return adaptCreateConversationThreadResponse(response);
+  }
+
+  async sendConversationMessage(
+    input: SendConversationMessageInput,
+    onEvent?: (event: EnvironmentEventDto) => void
+  ): Promise<CommandResultDto<SendConversationMessageResultDto>> {
+    const response = await this.invokeStreamingService<RawServiceResponse<Record<string, unknown>>>(
+      "conversation.send-message-stream",
+      input.environmentId,
+      {
+        threadId: input.threadId,
+        prompt: input.prompt
+      },
+      onEvent
+    );
+    return adaptSendConversationMessageResponse(response);
   }
 
   async runtimeSummary(environmentId?: string): Promise<QueryResultDto<RuntimeSummaryDto>> {
@@ -1959,6 +2104,96 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
 
       return parsed as T;
     });
+  }
+
+  private async invokeStreamingService<T>(
+    operation: string,
+    environmentId: string | undefined,
+    request: Record<string, unknown>,
+    onEvent?: (event: EnvironmentEventDto) => void
+  ): Promise<T> {
+    if (this.options.transport !== "pipe") {
+      throw new Error(
+        `Live adapter transport '${this.options.transport}' is configured, but only the initial pipe bridge is implemented.`
+      );
+    }
+
+    const bridgePath = resolve(__dirname, "../../scripts/live-service-bridge.lisp");
+    const args = [
+      "--script",
+      bridgePath,
+      this.options.projectDir,
+      this.options.environmentStatePath,
+      operation,
+      environmentId ?? "",
+      JSON.stringify(request)
+    ];
+
+    return this.enqueueBridgeCall(
+      () =>
+        new Promise<T>((resolvePromise, rejectPromise) => {
+          const child = spawn("sbcl", args, {
+            cwd: this.options.projectDir,
+            stdio: ["ignore", "pipe", "pipe"]
+          });
+          const stdoutLines = createInterface({ input: child.stdout });
+          let stderr = "";
+          let resolved = false;
+
+          stdoutLines.on("line", (line) => {
+            const trimmed = line.trim();
+            if (!trimmed) {
+              return;
+            }
+
+            let frame: StreamingBridgeFrame;
+            try {
+              frame = camelizeKeys(JSON.parse(trimmed)) as StreamingBridgeFrame;
+            } catch (error) {
+              rejectPromise(error);
+              child.kill();
+              return;
+            }
+
+            if (frame.type === "event") {
+              if (onEvent) {
+                onEvent(adaptStreamingEnvironmentEvent(frame.payload));
+              }
+              return;
+            }
+
+            if (frame.type === "result") {
+              const parsed = camelizeKeys(frame.payload) as RawServiceResponse<unknown>;
+              const binding = parsed.metadata?.binding as BindingDto | null | undefined;
+              if (binding?.environmentId) {
+                this.currentBinding = {
+                  environmentId: binding.environmentId,
+                  sessionId:
+                    binding.sessionId ?? this.currentBinding?.sessionId ?? DEFAULT_LIVE_BINDING.sessionId
+                };
+              }
+              resolved = true;
+              resolvePromise(parsed as T);
+            }
+          });
+
+          child.stderr.on("data", (chunk) => {
+            stderr += chunk.toString();
+          });
+
+          child.on("error", (error) => rejectPromise(error));
+          child.on("close", (code) => {
+            if (resolved) {
+              return;
+            }
+            rejectPromise(
+              new Error(
+                stderr.trim() || `Streaming bridge exited before returning a result (exit code ${code ?? "unknown"}).`
+              )
+            );
+          });
+        })
+    );
   }
 
   private enqueueBridgeCall<T>(task: () => Promise<T>): Promise<T> {

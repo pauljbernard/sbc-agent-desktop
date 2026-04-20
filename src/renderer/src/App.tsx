@@ -27,6 +27,10 @@ import type {
   RuntimeInspectionMode,
   RuntimeInspectionResultDto,
   RuntimeSummaryDto,
+  ConversationStreamEventDto,
+  ProjectProfileDto,
+  ReplSessionHistoryEntryDto,
+  ReplSessionProfileDto,
   SourceMutationResultDto,
   SourceReloadResultDto,
   SourcePreviewDto,
@@ -85,6 +89,7 @@ interface WorkspaceResolutionState {
 
 interface CommandCenterEntry {
   id: string;
+  group: "workspace" | "thread" | "work" | "approval" | "incident" | "artifact";
   label: string;
   summary: string;
   badge: string;
@@ -834,6 +839,72 @@ function renderDocumentationMarkdown(markdown: string): string {
   return html.join("");
 }
 
+function slugifyProjectLabel(value: string): string {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized || "project";
+}
+
+function ensureDesktopProjects(
+  projects: ProjectProfileDto[] | undefined,
+  binding: BindingDto | null,
+  summary: EnvironmentSummaryDto | null
+): ProjectProfileDto[] {
+  const normalized = [...(projects ?? [])];
+  const environmentId = summary?.environmentId ?? binding?.environmentId ?? null;
+  if (!environmentId) {
+    return normalized;
+  }
+
+  if (normalized.some((project) => project.environmentId === environmentId)) {
+    return normalized;
+  }
+
+  normalized.unshift({
+    projectId: `project-${slugifyProjectLabel(environmentId)}`,
+    title: summary?.environmentLabel ?? environmentId,
+    environmentId,
+    summary: summary?.activeContext.focusSummary ?? "Current bound environment."
+  });
+  return normalized;
+}
+
+function makeUniqueProjectIdentity(
+  projects: ProjectProfileDto[],
+  requestedTitle: string
+): { projectId: string; title: string } {
+  const normalizedTitle = requestedTitle.trim() || "Untitled Project";
+  let title = normalizedTitle;
+  let suffix = 2;
+  while (projects.some((project) => project.title === title)) {
+    title = `${normalizedTitle} ${suffix}`;
+    suffix += 1;
+  }
+
+  let projectId = `project-${slugifyProjectLabel(title)}`;
+  while (projects.some((project) => project.projectId === projectId)) {
+    projectId = `project-${slugifyProjectLabel(`${title}-${suffix}`)}`;
+    suffix += 1;
+  }
+
+  return { projectId, title };
+}
+
+function buildDefaultReplSession(environmentId: string, runtimeSummary: RuntimeSummaryDto | null): ReplSessionProfileDto {
+  return {
+    sessionId: `repl-${slugifyProjectLabel(environmentId)}`,
+    title: "Primary Listener",
+    environmentId,
+    draftForm: '(describe "sbcl-agent")',
+    packageName: runtimeSummary?.currentPackage,
+    lastSummary: runtimeSummary?.divergencePosture ?? "Primary project listener session.",
+    history: []
+  };
+}
+
 export function App() {
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceId>("environment");
   const [selectedOperateSection, setSelectedOperateSection] = useState<OperateSection>("orientation");
@@ -846,6 +917,7 @@ export function App() {
   const [selectedRecoverySection, setSelectedRecoverySection] = useState<RecoverySection>("incidents");
   const [selectedEvidenceSection, setSelectedEvidenceSection] = useState<EvidenceSection>("artifacts");
   const [isWorkspaceTransitioning, setIsWorkspaceTransitioning] = useState(false);
+  const [sidebarPinned, setSidebarPinned] = useState(true);
   const [inspectorPinned, setInspectorPinned] = useState(true);
   const [themePreference, setThemePreference] = useState<ThemePreference>("system");
   const [lispParenColors, setLispParenColors] = useState<string[]>(DEFAULT_LISP_PAREN_COLORS);
@@ -862,17 +934,34 @@ export function App() {
   });
   const [hostStatus, setHostStatus] = useState<HostStatusDto | null>(null);
   const [binding, setBinding] = useState<BindingDto | null>(null);
+  const [projects, setProjects] = useState<ProjectProfileDto[]>([]);
+  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+  const [selectedConversationThreadByProject, setSelectedConversationThreadByProject] = useState<Record<string, string>>({});
+  const [replSessionsByProject, setReplSessionsByProject] = useState<Record<string, ReplSessionProfileDto[]>>({});
+  const [currentReplSessionIdByProject, setCurrentReplSessionIdByProject] = useState<Record<string, string>>({});
+  const [projectTitleDraft, setProjectTitleDraft] = useState("");
+  const [projectEnvironmentDraft, setProjectEnvironmentDraft] = useState("");
+  const [replSessionTitleDraft, setReplSessionTitleDraft] = useState("New Listener Session");
   const [summary, setSummary] = useState<EnvironmentSummaryDto | null>(null);
   const [status, setStatus] = useState<EnvironmentStatusDto | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [threads, setThreads] = useState<ThreadSummaryDto[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [selectedThread, setSelectedThread] = useState<ThreadDetailDto | null>(null);
+  const [selectedConversationMessageId, setSelectedConversationMessageId] = useState<string | null>(null);
   const [selectedTurnId, setSelectedTurnId] = useState<string | null>(null);
   const [selectedTurn, setSelectedTurn] = useState<TurnDetailDto | null>(null);
+  const [conversationSessionTitleDraft, setConversationSessionTitleDraft] = useState("New Conversation Session");
   const [conversationDraft, setConversationDraft] = useState(
     "Start from the live environment focus and keep runtime, source, and governance context attached."
   );
+  const [conversationSendError, setConversationSendError] = useState<string | null>(null);
+  const [isSendingConversation, setIsSendingConversation] = useState(false);
+  const [conversationStream, setConversationStream] = useState<{
+    threadId: string;
+    turnId: string | null;
+    content: string;
+  } | null>(null);
   const [runtimeSummary, setRuntimeSummary] = useState<RuntimeSummaryDto | null>(null);
   const [runtimeForm, setRuntimeForm] = useState('(describe "sbcl-agent")');
   const [runtimeResult, setRuntimeResult] = useState<CommandResultDto<RuntimeEvalResultDto> | null>(null);
@@ -883,6 +972,7 @@ export function App() {
   const runtimeInspectorSymbolRef = useRef(runtimeInspectorSymbol);
   const runtimeInspectorPackageRef = useRef(runtimeInspectorPackage);
   const runtimeInspectionModeRef = useRef<RuntimeInspectionMode>(runtimeInspectionMode);
+  const selectedThreadIdRef = useRef<string | null>(selectedThreadId);
   const [runtimeInspection, setRuntimeInspection] =
     useState<QueryResultDto<RuntimeInspectionResultDto> | null>(null);
   const [runtimeEntityDetail, setRuntimeEntityDetail] =
@@ -921,6 +1011,8 @@ export function App() {
   const [selectedDocumentationPage, setSelectedDocumentationPage] = useState<DocumentationPageDto | null>(null);
   const [isCommandCenterOpen, setIsCommandCenterOpen] = useState(false);
   const [commandCenterQuery, setCommandCenterQuery] = useState("");
+  const [commandCenterHistory, setCommandCenterHistory] = useState<Record<string, number>>({});
+  const effectiveEnvironmentId = summary?.environmentId ?? binding?.environmentId ?? null;
 
   function updateRuntimeInspectorSymbol(value: string): void {
     runtimeInspectorSymbolRef.current = value;
@@ -932,6 +1024,96 @@ export function App() {
     setRuntimeInspectorPackage(value);
   }
 
+  useEffect(() => {
+    selectedThreadIdRef.current = selectedThreadId;
+  }, [selectedThreadId]);
+
+  useEffect(() => {
+    if (!effectiveEnvironmentId) {
+      setConversationStream(null);
+      return;
+    }
+
+    let active = true;
+    let environmentSubscriptionId: string | null = null;
+    let conversationStreamSubscriptionId: string | null = null;
+
+    const handleStreamEvent = (event: EnvironmentEventDto) => {
+      if (!active) {
+        return;
+      }
+
+      const payload = event.payload as Record<string, unknown>;
+      const streamEvent = payload as unknown as ConversationStreamEventDto & {
+        canonicalType?: string;
+        payload?: unknown;
+      };
+      const threadId =
+        event.threadId ??
+        (typeof payload.threadId === "string" ? payload.threadId : null) ??
+        selectedThreadIdRef.current;
+      const turnId =
+        event.turnId ?? (typeof payload.turnId === "string" ? payload.turnId : null) ?? null;
+      const delta =
+        typeof streamEvent.payload === "string"
+          ? streamEvent.payload
+          : typeof streamEvent.content === "string"
+            ? streamEvent.content
+            : "";
+      const canonicalType =
+        typeof streamEvent.canonicalType === "string"
+          ? streamEvent.canonicalType.replaceAll("_", "-")
+          : null;
+
+      if (!threadId) {
+        return;
+      }
+
+      if (canonicalType === "text-delta") {
+        setConversationStream((current) => {
+          if (current && current.threadId !== threadId) {
+            return current;
+          }
+          return {
+            threadId,
+            turnId: turnId ?? current?.turnId ?? null,
+            content: `${current?.content ?? ""}${delta}`
+          };
+        });
+      }
+    };
+
+    void window.sbclAgentDesktop.events
+      .subscribeEnvironmentEvents(
+        {
+          environmentId: effectiveEnvironmentId,
+          families: ["provider"]
+        },
+        handleStreamEvent
+      )
+      .then((handle) => {
+        environmentSubscriptionId = handle.subscriptionId;
+      })
+      .catch(() => undefined);
+
+    void window.sbclAgentDesktop.events
+      .subscribeConversationStream(handleStreamEvent)
+      .then((handle) => {
+        conversationStreamSubscriptionId = handle.subscriptionId;
+      })
+      .catch(() => undefined);
+
+    return () => {
+      active = false;
+      if (environmentSubscriptionId) {
+        void window.sbclAgentDesktop.events.unsubscribe(environmentSubscriptionId);
+      }
+      if (conversationStreamSubscriptionId) {
+        void window.sbclAgentDesktop.events.unsubscribe(conversationStreamSubscriptionId);
+      }
+    };
+  }, [effectiveEnvironmentId]);
+
   function updateRuntimeInspectionMode(value: RuntimeInspectionMode): void {
     runtimeInspectionModeRef.current = value;
     setRuntimeInspectionMode(value);
@@ -939,12 +1121,42 @@ export function App() {
   const [artifacts, setArtifacts] = useState<ArtifactSummaryDto[]>([]);
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
   const [selectedArtifact, setSelectedArtifact] = useState<ArtifactDetailDto | null>(null);
-  const effectiveEnvironmentId = summary?.environmentId ?? binding?.environmentId ?? null;
+  const currentProjectReplSessions = currentProjectId ? replSessionsByProject[currentProjectId] ?? [] : [];
+  const currentReplSessionId = currentProjectId ? currentReplSessionIdByProject[currentProjectId] ?? currentProjectReplSessions[0]?.sessionId ?? null : null;
+  const currentProjectConversationSessionCount = currentProjectId
+    ? threads.length
+    : 0;
+  const currentProjectConversationFocus =
+    (currentProjectId ? threads.find((thread) => thread.threadId === selectedConversationThreadByProject[currentProjectId]) : null) ??
+    threads[0] ??
+    null;
+  const selectedConversationMessage =
+    selectedThread?.messages.find((message) => message.messageId === selectedConversationMessageId) ??
+    (selectedThread &&
+    conversationStream &&
+    conversationStream.threadId === selectedThread.threadId &&
+    selectedConversationMessageId === `streaming-${conversationStream.turnId ?? selectedThread.threadId}` &&
+    conversationStream.content.length > 0
+      ? {
+          messageId: `streaming-${conversationStream.turnId ?? selectedThread.threadId}`,
+          role: "assistant" as const,
+          content: conversationStream.content,
+          createdAt: new Date().toISOString()
+        }
+      : null);
+  const currentProjectReplFocus =
+    currentProjectReplSessions.find((session) => session.sessionId === currentReplSessionId) ??
+    currentProjectReplSessions[0] ??
+    null;
   const deferredCommandCenterQuery = useDeferredValue(commandCenterQuery.trim().toLowerCase());
 
   useEffect(() => {
     void loadInitialState();
   }, []);
+
+  useEffect(() => {
+    setSelectedConversationMessageId(null);
+  }, [selectedThreadId]);
 
   useEffect(() => {
     void loadDocumentationPages();
@@ -1213,6 +1425,58 @@ export function App() {
     }
   }, [selectedArtifactId, effectiveEnvironmentId]);
 
+  useEffect(() => {
+    if (!currentProjectId || !selectedThreadId) {
+      return;
+    }
+
+    void persistConversationThreadSelection(currentProjectId, selectedThreadId);
+  }, [currentProjectId, selectedThreadId]);
+
+  useEffect(() => {
+    if (!currentProjectId) {
+      return;
+    }
+
+    const sessions = replSessionsByProject[currentProjectId];
+    if (!sessions || sessions.length === 0) {
+      return;
+    }
+
+    const currentSessionId = currentReplSessionIdByProject[currentProjectId] ?? sessions[0]?.sessionId;
+    let changed = false;
+    const nextSessions = sessions.map((session) => {
+      if (session.sessionId !== currentSessionId) {
+        return session;
+      }
+
+      const nextPackageName = runtimeSummary?.currentPackage ?? session.packageName;
+      const nextLastSummary = runtimeResult?.data.summary ?? runtimeSummary?.divergencePosture ?? session.lastSummary;
+      if (
+        session.draftForm === runtimeForm &&
+        session.packageName === nextPackageName &&
+        session.lastSummary === nextLastSummary
+      ) {
+        return session;
+      }
+
+      changed = true;
+      return {
+        ...session,
+        draftForm: runtimeForm,
+        packageName: nextPackageName,
+        lastSummary: nextLastSummary
+      };
+    });
+    if (!changed) {
+      return;
+    }
+    setReplSessionsByProject((current) => ({
+      ...current,
+      [currentProjectId]: nextSessions
+    }));
+  }, [currentProjectId, currentReplSessionIdByProject, replSessionsByProject, runtimeForm, runtimeResult, runtimeSummary?.currentPackage, runtimeSummary?.divergencePosture]);
+
   async function loadInitialState(): Promise<void> {
     try {
       const [nextHostStatus, nextBinding, desktopPreferences] = await Promise.all([
@@ -1224,9 +1488,16 @@ export function App() {
       setHostStatus(nextHostStatus);
       setBinding(nextBinding);
       setActiveWorkspace(desktopPreferences.lastWorkspace);
+      setSidebarPinned(desktopPreferences.sidebarPinned ?? true);
       setInspectorPinned(desktopPreferences.inspectorPinned);
       setThemePreference(desktopPreferences.themePreference);
       setLispParenColors(normalizeParenDepthColors(desktopPreferences.lispCodeView?.parenDepthColors));
+      setProjects(ensureDesktopProjects(desktopPreferences.projects, nextBinding, null));
+      setCurrentProjectId(desktopPreferences.currentProjectId ?? desktopPreferences.projects?.[0]?.projectId ?? null);
+      setSelectedConversationThreadByProject(desktopPreferences.selectedConversationThreadByProject ?? {});
+      setReplSessionsByProject(desktopPreferences.replSessionsByProject ?? {});
+      setCurrentReplSessionIdByProject(desktopPreferences.currentReplSessionIdByProject ?? {});
+      setProjectEnvironmentDraft(nextBinding?.environmentId ?? "");
 
       if (nextBinding?.environmentId) {
         const [summaryResult, statusResult] = await Promise.all([
@@ -1236,6 +1507,15 @@ export function App() {
         setSummary(summaryResult.data);
         setStatus(statusResult.data);
         setBinding(statusResult.metadata.binding ?? summaryResult.metadata.binding ?? nextBinding);
+        const nextProjects = ensureDesktopProjects(
+          desktopPreferences.projects,
+          statusResult.metadata.binding ?? summaryResult.metadata.binding ?? nextBinding,
+          summaryResult.data
+        );
+        setProjects(nextProjects);
+        setCurrentProjectId((current) => current ?? desktopPreferences.currentProjectId ?? nextProjects[0]?.projectId ?? null);
+        setProjectTitleDraft(summaryResult.data.environmentLabel ?? summaryResult.data.environmentId);
+        setProjectEnvironmentDraft(summaryResult.data.environmentId);
       }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Failed to load desktop state.");
@@ -1258,6 +1538,308 @@ export function App() {
     }
   }
 
+  async function persistProjectRegistry(
+    nextProjects: ProjectProfileDto[],
+    nextCurrentProjectId: string | null
+  ): Promise<void> {
+    setProjects(nextProjects);
+    setCurrentProjectId(nextCurrentProjectId);
+    await window.sbclAgentDesktop.desktop.setDesktopPreferences({
+      projects: nextProjects,
+      currentProjectId: nextCurrentProjectId
+    });
+  }
+
+  async function persistConversationThreadSelection(projectId: string, threadId: string): Promise<void> {
+    const nextSelections = {
+      ...selectedConversationThreadByProject,
+      [projectId]: threadId
+    };
+    setSelectedConversationThreadByProject(nextSelections);
+    await window.sbclAgentDesktop.desktop.setDesktopPreferences({
+      selectedConversationThreadByProject: nextSelections
+    });
+  }
+
+  async function persistReplSessions(
+    nextSessionsByProject: Record<string, ReplSessionProfileDto[]>,
+    nextCurrentSessionIds: Record<string, string>
+  ): Promise<void> {
+    setReplSessionsByProject(nextSessionsByProject);
+    setCurrentReplSessionIdByProject(nextCurrentSessionIds);
+    await window.sbclAgentDesktop.desktop.setDesktopPreferences({
+      replSessionsByProject: nextSessionsByProject,
+      currentReplSessionIdByProject: nextCurrentSessionIds
+    });
+  }
+
+  async function appendReplSessionHistoryEntry(
+    projectId: string,
+    sessionId: string,
+    form: string,
+    result: CommandResultDto<RuntimeEvalResultDto>
+  ): Promise<void> {
+    const sessions = replSessionsByProject[projectId] ?? [];
+    const entry: ReplSessionHistoryEntryDto = {
+      entryId: `${sessionId}-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      form,
+      status: result.status,
+      summary: result.data.summary,
+      valuePreview: result.data.valuePreview ?? null
+    };
+    const nextSessions = sessions.map((session) =>
+      session.sessionId === sessionId
+        ? {
+            ...session,
+            lastSummary: result.data.summary,
+            packageName: runtimeSummary?.currentPackage ?? session.packageName,
+            history: [entry, ...(session.history ?? [])].slice(0, 8)
+          }
+        : session
+    );
+    await persistReplSessions(
+      {
+        ...replSessionsByProject,
+        [projectId]: nextSessions
+      },
+      currentReplSessionIdByProject
+    );
+  }
+
+  async function loadEnvironmentBinding(environmentId: string): Promise<void> {
+    const bindingResult = await window.sbclAgentDesktop.host.setEnvironmentBinding(environmentId);
+    const nextBinding = bindingResult.metadata.binding ?? bindingResult.data;
+    setBinding(nextBinding);
+    const [summaryResult, statusResult] = await Promise.all([
+      window.sbclAgentDesktop.query.environmentSummary(environmentId),
+      window.sbclAgentDesktop.query.environmentStatus(environmentId)
+    ]);
+    setSummary(summaryResult.data);
+    setStatus(statusResult.data);
+    setBinding(statusResult.metadata.binding ?? summaryResult.metadata.binding ?? nextBinding);
+  }
+
+  async function handleProjectSwitch(projectId: string): Promise<void> {
+    const project = projects.find((entry) => entry.projectId === projectId);
+    if (!project) {
+      return;
+    }
+
+    try {
+      await persistProjectRegistry(projects, project.projectId);
+      await loadEnvironmentBinding(project.environmentId);
+      setProjectTitleDraft(project.title);
+      setProjectEnvironmentDraft(project.environmentId);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to switch projects.");
+    }
+  }
+
+  async function handleSaveCurrentProject(): Promise<void> {
+    const environmentId = summary?.environmentId ?? binding?.environmentId;
+    if (!environmentId) {
+      setErrorMessage("Bind an environment before saving a project.");
+      return;
+    }
+
+    const title = projectTitleDraft.trim() || summary?.environmentLabel || environmentId;
+    if (!title) {
+      return;
+    }
+
+    const existingCurrentProject = projects.find((project) => project.projectId === currentProjectId) ?? null;
+    const projectId = existingCurrentProject?.projectId ?? `project-${slugifyProjectLabel(title)}`;
+    const nextProject: ProjectProfileDto = {
+      projectId,
+      title,
+      environmentId,
+      summary: summary?.activeContext.focusSummary ?? "Desktop project bound to a governed environment."
+    };
+    const nextProjects = [nextProject, ...projects.filter((project) => project.projectId !== projectId)];
+
+    try {
+      await persistProjectRegistry(nextProjects, projectId);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to save the current project.");
+    }
+  }
+
+  async function handleCreateProjectFromEnvironment(): Promise<void> {
+    const environmentId = projectEnvironmentDraft.trim() || summary?.environmentId || binding?.environmentId || "";
+    if (!environmentId) {
+      setErrorMessage("Enter an environment id or bind an environment before creating a project.");
+      return;
+    }
+
+    const requestedTitle = projectTitleDraft.trim() || summary?.environmentLabel || environmentId;
+    const { projectId, title } = makeUniqueProjectIdentity(projects, requestedTitle);
+    if (!title) {
+      return;
+    }
+
+    const nextProject: ProjectProfileDto = {
+      projectId,
+      title,
+      environmentId,
+      summary: "Desktop project profile awaiting or reusing governed environment binding."
+    };
+    const nextProjects = [nextProject, ...projects.filter((project) => project.projectId !== projectId)];
+
+    try {
+      await persistProjectRegistry(nextProjects, projectId);
+      await loadEnvironmentBinding(environmentId);
+      setProjectTitleDraft(title);
+      setProjectEnvironmentDraft(environmentId);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to create the project.");
+    }
+  }
+
+  async function handleSwitchReplSession(sessionId: string): Promise<void> {
+    if (!currentProjectId) {
+      return;
+    }
+
+    const sessions = replSessionsByProject[currentProjectId] ?? [];
+    const selectedSession = sessions.find((session) => session.sessionId === sessionId);
+    if (!selectedSession) {
+      return;
+    }
+
+    setRuntimeForm(selectedSession.draftForm);
+    setRuntimeResult(null);
+    await persistReplSessions(replSessionsByProject, {
+      ...currentReplSessionIdByProject,
+      [currentProjectId]: sessionId
+    });
+  }
+
+  async function handleCreateReplSession(): Promise<void> {
+    if (!currentProjectId || !effectiveEnvironmentId) {
+      return;
+    }
+
+    const title = replSessionTitleDraft.trim();
+    if (!title) {
+      return;
+    }
+
+    const nextSession: ReplSessionProfileDto = {
+      sessionId: `repl-${slugifyProjectLabel(title)}-${Date.now()}`,
+      title,
+      environmentId: effectiveEnvironmentId,
+      draftForm: runtimeForm,
+      packageName: runtimeSummary?.currentPackage,
+      lastSummary: runtimeResult?.data.summary ?? runtimeSummary?.divergencePosture ?? "New project-scoped listener session."
+    };
+    const nextSessionsByProject = {
+      ...replSessionsByProject,
+      [currentProjectId]: [nextSession, ...(replSessionsByProject[currentProjectId] ?? [])]
+    };
+
+    await persistReplSessions(nextSessionsByProject, {
+      ...currentReplSessionIdByProject,
+      [currentProjectId]: nextSession.sessionId
+    });
+    setRuntimeForm(nextSession.draftForm);
+    setRuntimeResult(null);
+    setReplSessionTitleDraft("New Listener Session");
+  }
+
+  async function handleCreateConversationSession(): Promise<void> {
+    if (!currentProjectId || !effectiveEnvironmentId) {
+      return;
+    }
+
+    const title = conversationSessionTitleDraft.trim();
+    if (!title) {
+      return;
+    }
+
+    try {
+      setErrorMessage(null);
+      const createConversationThread = window.sbclAgentDesktop.command.createConversationThread;
+      if (typeof createConversationThread !== "function") {
+        throw new Error(
+          "The desktop preload bridge does not expose createConversationThread yet. Restart sbcl-agent desktop so the updated preload bundle is loaded."
+        );
+      }
+      const result = await createConversationThread({
+        environmentId: effectiveEnvironmentId,
+        title,
+        summary: "Project-scoped conversation session created from the desktop shell."
+      });
+      await loadConversationWorkspace(effectiveEnvironmentId);
+      setSelectedThreadId(result.data.threadId);
+      setSelectedThread(null);
+      setSelectedTurnId(null);
+      setSelectedTurn(null);
+      setConversationSessionTitleDraft("New Conversation Session");
+      await persistConversationThreadSelection(currentProjectId, result.data.threadId);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to create the conversation session.");
+    }
+  }
+
+  async function handleSendConversationMessage(): Promise<void> {
+    if (!effectiveEnvironmentId || !selectedThreadId || conversationDraft.trim().length === 0) {
+      return;
+    }
+
+    try {
+      setIsSendingConversation(true);
+      setErrorMessage(null);
+      setConversationSendError(null);
+      setConversationStream({
+        threadId: selectedThreadId,
+        turnId: null,
+        content: ""
+      });
+      const sendConversationMessage = window.sbclAgentDesktop.command.sendConversationMessage;
+      if (typeof sendConversationMessage !== "function") {
+        throw new Error(
+          "The desktop preload bridge does not expose sendConversationMessage yet. Restart sbcl-agent desktop so the updated preload bundle is loaded."
+        );
+      }
+
+      const result = await sendConversationMessage({
+        environmentId: effectiveEnvironmentId,
+        threadId: selectedThreadId,
+        prompt: conversationDraft.trim()
+      });
+
+      await loadConversationWorkspace(effectiveEnvironmentId);
+      const nextThreadId =
+        result.data.threadId && result.data.threadId !== "thread" ? result.data.threadId : selectedThreadId;
+      await loadThreadDetail(nextThreadId, effectiveEnvironmentId);
+      setSelectedThreadId(nextThreadId);
+      setSelectedTurnId(result.data.turnId && result.data.turnId !== "turn" ? result.data.turnId : null);
+      if (result.status === "error" || result.status === "rejected") {
+        const failureSummary =
+          result.data.summary || "The live provider could not complete this conversation turn.";
+        setConversationStream(null);
+        setConversationSendError(failureSummary);
+        setErrorMessage(failureSummary);
+        return;
+      }
+      setConversationDraft("");
+      setConversationStream(null);
+      setConversationSendError(null);
+    } catch (error) {
+      setConversationStream(null);
+      setConversationSendError(
+        error instanceof Error ? error.message : "Failed to send the conversation message."
+      );
+      setErrorMessage(error instanceof Error ? error.message : "Failed to send the conversation message.");
+    } finally {
+      setIsSendingConversation(false);
+    }
+  }
+
   async function loadDocumentationPage(slug: string): Promise<void> {
     try {
       const page = await window.sbclAgentDesktop.desktop.readDocumentationPage(slug);
@@ -1272,7 +1854,12 @@ export function App() {
       const threadResult = await window.sbclAgentDesktop.query.threadList(environmentId);
       setThreads(threadResult.data);
 
-      const nextThreadId = selectedThreadId ?? threadResult.data[0]?.threadId ?? null;
+      const preferredThreadId =
+        (currentProjectId ? selectedConversationThreadByProject[currentProjectId] : null) ?? selectedThreadId;
+      const nextThreadId =
+        preferredThreadId && threadResult.data.some((thread) => thread.threadId === preferredThreadId)
+          ? preferredThreadId
+          : threadResult.data[0]?.threadId ?? null;
       setSelectedThreadId(nextThreadId);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Failed to load conversation workspace.");
@@ -1305,6 +1892,21 @@ export function App() {
       const result = await window.sbclAgentDesktop.query.runtimeSummary(environmentId);
       setRuntimeSummary(result.data);
       setSelectedPackageName((current) => current || result.data.currentPackage);
+      if (currentProjectId) {
+        const existingSessions = replSessionsByProject[currentProjectId] ?? [];
+        if (existingSessions.length === 0) {
+          const defaultSession = buildDefaultReplSession(environmentId, result.data);
+          setReplSessionsByProject((current) => ({ ...current, [currentProjectId]: [defaultSession] }));
+          setCurrentReplSessionIdByProject((current) => ({ ...current, [currentProjectId]: defaultSession.sessionId }));
+          setRuntimeForm(defaultSession.draftForm);
+        } else {
+          const currentSessionId = currentReplSessionIdByProject[currentProjectId] ?? existingSessions[0]?.sessionId ?? null;
+          const selectedSession = existingSessions.find((session) => session.sessionId === currentSessionId) ?? existingSessions[0] ?? null;
+          if (selectedSession) {
+            setRuntimeForm(selectedSession.draftForm);
+          }
+        }
+      }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Failed to load runtime workspace.");
     }
@@ -1358,6 +1960,9 @@ export function App() {
         packageName: runtimeSummary?.currentPackage
       });
       setRuntimeResult(result);
+      if (currentProjectId && currentReplSessionId) {
+        await appendReplSessionHistoryEntry(currentProjectId, currentReplSessionId, runtimeForm, result);
+      }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Runtime evaluation failed.");
     } finally {
@@ -1719,6 +2324,7 @@ export function App() {
       .filter((workspace) => workspace.primary)
       .map((workspace) => ({
         id: `workspace:${workspace.id}`,
+        group: "workspace",
         label: workspace.label,
         summary: `Open the ${workspace.label} workspace.`,
         badge: "workspace",
@@ -1759,6 +2365,7 @@ export function App() {
 
     const threadEntries: CommandCenterEntry[] = threads.slice(0, 8).map((thread) => ({
       id: `thread:${thread.threadId}`,
+      group: "thread",
       label: thread.title,
       summary: thread.summary,
       badge: "thread",
@@ -1772,6 +2379,7 @@ export function App() {
 
     const workEntries: CommandCenterEntry[] = workItems.slice(0, 8).map((item) => ({
       id: `work:${item.workItemId}`,
+      group: "work",
       label: item.title,
       summary: item.summary,
       badge: "work",
@@ -1785,6 +2393,7 @@ export function App() {
 
     const approvalEntries: CommandCenterEntry[] = approvalRequests.slice(0, 6).map((request) => ({
       id: `approval:${request.requestId}`,
+      group: "approval",
       label: request.title,
       summary: request.summary,
       badge: "approval",
@@ -1798,6 +2407,7 @@ export function App() {
 
     const incidentEntries: CommandCenterEntry[] = incidents.slice(0, 6).map((incident) => ({
       id: `incident:${incident.incidentId}`,
+      group: "incident",
       label: incident.title,
       summary: `Severity ${incident.severity}. ${incident.state}.`,
       badge: "incident",
@@ -1811,6 +2421,7 @@ export function App() {
 
     const artifactEntries: CommandCenterEntry[] = artifacts.slice(0, 6).map((artifact) => ({
       id: `artifact:${artifact.artifactId}`,
+      group: "artifact",
       label: artifact.title,
       summary: artifact.summary,
       badge: artifact.kind,
@@ -1854,18 +2465,60 @@ export function App() {
   ]);
 
   const filteredCommandCenterEntries = useMemo(() => {
+    const groupWeight: Record<CommandCenterEntry["group"], number> = {
+      work: 6,
+      approval: 5,
+      incident: 4,
+      thread: 3,
+      workspace: 2,
+      artifact: 1
+    };
+
     if (!deferredCommandCenterQuery) {
-      return commandCenterEntries.slice(0, 18);
+      return [...commandCenterEntries]
+        .sort((left, right) => {
+          const historyDelta = (commandCenterHistory[right.id] ?? 0) - (commandCenterHistory[left.id] ?? 0);
+          if (historyDelta !== 0) {
+            return historyDelta;
+          }
+
+          const groupDelta = groupWeight[right.group] - groupWeight[left.group];
+          if (groupDelta !== 0) {
+            return groupDelta;
+          }
+
+          return left.label.localeCompare(right.label);
+        })
+        .slice(0, 20);
     }
 
-    return commandCenterEntries
-      .filter((entry) =>
-        `${entry.label} ${entry.summary} ${entry.badge} ${labelForWorkspace(entry.workspace)}`
-          .toLowerCase()
-          .includes(deferredCommandCenterQuery)
-      )
-      .slice(0, 18);
-  }, [commandCenterEntries, deferredCommandCenterQuery]);
+    return [...commandCenterEntries]
+      .map((entry) => {
+        const haystack = `${entry.label} ${entry.summary} ${entry.badge} ${labelForWorkspace(entry.workspace)} ${entry.group}`.toLowerCase();
+        const matchIndex = haystack.indexOf(deferredCommandCenterQuery);
+        return { entry, matchIndex };
+      })
+      .filter((candidate) => candidate.matchIndex >= 0)
+      .sort((left, right) => {
+        if (left.matchIndex !== right.matchIndex) {
+          return left.matchIndex - right.matchIndex;
+        }
+
+        const historyDelta = (commandCenterHistory[right.entry.id] ?? 0) - (commandCenterHistory[left.entry.id] ?? 0);
+        if (historyDelta !== 0) {
+          return historyDelta;
+        }
+
+        const groupDelta = groupWeight[right.entry.group] - groupWeight[left.entry.group];
+        if (groupDelta !== 0) {
+          return groupDelta;
+        }
+
+        return left.entry.label.localeCompare(right.entry.label);
+      })
+      .map((candidate) => candidate.entry)
+      .slice(0, 20);
+  }, [commandCenterEntries, commandCenterHistory, deferredCommandCenterQuery]);
 
   const workspaceDescriptor = useMemo<WorkspaceDescriptor>(() => {
     switch (activeWorkspace) {
@@ -2012,6 +2665,55 @@ export function App() {
     workItems.length
   ]);
 
+  const headerAttentionSummary = useMemo(() => {
+    const approvalsAwaiting = summary?.attention.approvalsAwaiting ?? 0;
+    const openIncidents = summary?.attention.openIncidents ?? 0;
+    const blockedWork = summary?.attention.blockedWork ?? 0;
+
+    if (openIncidents > 0) {
+      return {
+        label: "Recovery",
+        value: `${openIncidents}`,
+        tone: "danger" as const,
+        action: () => navigateToRecoverySection("incidents")
+      };
+    }
+
+    if (approvalsAwaiting > 0) {
+      return {
+        label: "Approvals",
+        value: `${approvalsAwaiting}`,
+        tone: "warning" as const,
+        action: () => navigateToExecutionSection("approvals")
+      };
+    }
+
+    if (blockedWork > 0) {
+      return {
+        label: "Blocked Work",
+        value: `${blockedWork}`,
+        tone: "warning" as const,
+        action: () => navigateToExecutionSection("work")
+      };
+    }
+
+    return {
+      label: "Clear",
+      value: "0",
+      tone: "active" as const,
+      action: () => navigateToOperateSection("orientation")
+    };
+  }, [summary, navigateToExecutionSection, navigateToOperateSection, navigateToRecoverySection]);
+
+  const headerContinuationSummary =
+    summary?.activeContext.currentThreadTitle ??
+    selectedWorkItem?.title ??
+    "No dominant continuation";
+
+  const headerContinuationMeta =
+    summary?.activeContext.focusSummary ??
+    "Use the command center to jump directly into the next active thread, blocker, or recovery path.";
+
   async function navigateToWorkspace(workspace: WorkspaceId): Promise<void> {
     const nextWorkspace = canonicalWorkspace(workspace);
     setActiveWorkspace(nextWorkspace);
@@ -2025,6 +2727,12 @@ export function App() {
     const nextPinned = !inspectorPinned;
     setInspectorPinned(nextPinned);
     await window.sbclAgentDesktop.desktop.setDesktopPreferences({ inspectorPinned: nextPinned });
+  }
+
+  async function toggleSidebarPinned(): Promise<void> {
+    const nextPinned = !sidebarPinned;
+    setSidebarPinned(nextPinned);
+    await window.sbclAgentDesktop.desktop.setDesktopPreferences({ sidebarPinned: nextPinned });
   }
 
   async function applyThemePreference(nextThemePreference: ThemePreference): Promise<void> {
@@ -2096,7 +2804,9 @@ export function App() {
   }
 
   return (
-    <div className={inspectorPinned ? "desktop-shell" : "desktop-shell inspector-collapsed"}>
+    <div
+      className={`desktop-shell${sidebarPinned ? "" : " sidebar-collapsed"}${inspectorPinned ? "" : " inspector-collapsed"}`}
+    >
       <div className="window-drag-strip" aria-hidden="true">
         <div className="window-drag-label">sbcl-agent Desktop</div>
       </div>
@@ -2107,33 +2817,76 @@ export function App() {
       <header className="shell-header">
         <div className="shell-header-brand">
           <div className="brand-mark">SA</div>
-          <div className="shell-header-copy">
-            <p className="eyebrow">sbcl-agent Desktop</p>
-            <strong>Environment Shell</strong>
+          <div className="shell-header-brand-stack">
+            <div className="shell-header-copy">
+              <p className="eyebrow">sbcl-agent Desktop</p>
+              <strong>Environment Shell</strong>
+            </div>
+            <div className="shell-header-brand-meta">
+              <Badge tone="active">Governed Runtime</Badge>
+              <span>Kernel-first engineering cockpit</span>
+            </div>
           </div>
+        </div>
+        <div className="shell-header-projects">
+          <label className="project-switcher">
+            <span className="context-label">Project</span>
+            <select onChange={(event) => void handleProjectSwitch(event.target.value)} value={currentProjectId ?? ""}>
+              {projects.length > 0 ? (
+                projects.map((project) => (
+                  <option key={project.projectId} value={project.projectId}>
+                    {project.title}
+                  </option>
+                ))
+              ) : (
+                <option value="">No projects</option>
+              )}
+            </select>
+          </label>
+          <label className="project-input">
+            <span className="context-label">Title</span>
+            <input onChange={(event) => setProjectTitleDraft(event.target.value)} value={projectTitleDraft} />
+          </label>
+          <label className="project-input">
+            <span className="context-label">Environment</span>
+            <input onChange={(event) => setProjectEnvironmentDraft(event.target.value)} value={projectEnvironmentDraft} />
+          </label>
+          <button className="project-action-button" onClick={() => void handleSaveCurrentProject()} type="button">
+            Save Project
+          </button>
+          <button className="project-action-button" onClick={() => void handleCreateProjectFromEnvironment()} type="button">
+            New Project
+          </button>
         </div>
         <div className="shell-header-supervision">
           <div className="shell-header-supervision-copy">
             <span className="context-label">Current continuation</span>
-            <strong>{summary?.activeContext.currentThreadTitle ?? selectedWorkItem?.title ?? "No dominant continuation"}</strong>
-            <p>{summary?.activeContext.focusSummary ?? "Use the command center to jump directly into the next active thread, blocker, or recovery path."}</p>
+            <strong>{headerContinuationSummary}</strong>
+            <p>{headerContinuationMeta}</p>
           </div>
           <div className="shell-header-supervision-metrics">
-            <button className="header-metric-chip" onClick={() => void navigateToExecutionSection("approvals")} type="button">
-              <span>Approvals</span>
-              <strong>{summary?.attention.approvalsAwaiting ?? 0}</strong>
+            <button
+              className={`header-metric-chip header-metric-chip-${headerAttentionSummary.tone}`}
+              onClick={() => void headerAttentionSummary.action()}
+              type="button"
+            >
+              <span>{headerAttentionSummary.label}</span>
+              <strong>{headerAttentionSummary.value}</strong>
             </button>
-            <button className="header-metric-chip" onClick={() => void navigateToRecoverySection("incidents")} type="button">
-              <span>Incidents</span>
-              <strong>{summary?.attention.openIncidents ?? 0}</strong>
+            <button className="header-metric-chip header-metric-chip-steady" onClick={() => void navigateToExecutionSection("work")} type="button">
+              <span>Runtime</span>
+              <strong>{summary?.activeContext.runtimePackage ?? status?.runtimeState ?? "unknown"}</strong>
             </button>
-            <button className="header-metric-chip" onClick={() => void navigateToExecutionSection("work")} type="button">
-              <span>Blocked Work</span>
-              <strong>{summary?.attention.blockedWork ?? 0}</strong>
+            <button className="header-metric-chip header-metric-chip-steady" onClick={() => void navigateToConversationSection("threads")} type="button">
+              <span>Thread</span>
+              <strong>{summary?.activeContext.currentThreadTitle ? "Active" : "None"}</strong>
             </button>
           </div>
         </div>
         <div className="shell-header-actions">
+          <button className="shell-chrome-button" onClick={() => void toggleSidebarPinned()} type="button">
+            {sidebarPinned ? "Hide Navigation" : "Show Navigation"}
+          </button>
           <button
             aria-expanded={isCommandCenterOpen}
             aria-haspopup="dialog"
@@ -2152,247 +2905,292 @@ export function App() {
           entries={filteredCommandCenterEntries}
           onClose={() => setIsCommandCenterOpen(false)}
           onQueryChange={setCommandCenterQuery}
+          onSelectEntry={(entryId) =>
+            setCommandCenterHistory((current) => ({
+              ...current,
+              [entryId]: Date.now()
+            }))
+          }
           query={commandCenterQuery}
         />
       ) : null}
 
-      <aside className="sidebar">
-        <nav className="workspace-nav" aria-label="Workspace navigation">
-          {groupWorkspaces().map(([group, items]) => (
-            <section className="workspace-group" key={group}>
-              <p className="workspace-group-label">{group}</p>
-              {items.map((workspace) => (
-                <div className="workspace-tree-node" key={workspace.id}>
-                  <div className={workspace.id === activeWorkspace ? "workspace-link active" : "workspace-link"}>
-                    <button
-                      className="workspace-link-main"
-                      aria-keyshortcuts={workspace.primary ? String(keyboardWorkspaceOrder.indexOf(workspace.id) + 1) : undefined}
-                      onClick={() => {
-                        if (workspace.id === "environment") {
-                          void navigateToOperateSection(selectedOperateSection);
-                          return;
-                        }
-                        if (workspace.id === "conversations") {
-                          void navigateToConversationSection(selectedConversationSection);
-                          return;
-                        }
-                        if (workspace.id === "runtime") {
-                          void navigateToExecutionSection(selectedExecutionSection);
-                          return;
-                        }
-                        if (workspace.id === "incidents") {
-                          void navigateToRecoverySection(selectedRecoverySection);
-                          return;
-                        }
-                        if (workspace.id === "artifacts") {
-                          void navigateToEvidenceSection(selectedEvidenceSection);
-                          return;
-                        }
-                        if (workspace.id === "browser") {
-                          void navigateToBrowserDomain(selectedBrowserDomain);
-                          return;
-                        }
-                        if (workspace.id === "documentation") {
-                          void navigateToWorkspace("documentation");
-                          return;
-                        }
-                        if (workspace.id === "configuration") {
-                          void navigateToConfigurationSection(selectedConfigurationSection);
-                          return;
-                        }
-                        void navigateToWorkspace(workspace.id);
-                      }}
-                      type="button"
-                    >
-                      <span title={workspace.label === "Documentation" ? "Open the in-app user documentation workspace." : undefined}>
-                        {workspace.label}
-                      </span>
-                    </button>
-                    <div className="workspace-link-meta">
-                      {workspace.id !== "environment" ? (
-                        <WorkspaceSignal signal={workspaceAttention.get(workspace.id)} />
-                      ) : null}
-                      {workspace.id === "environment" ||
-                      workspace.id === "conversations" ||
-                      workspace.id === "runtime" ||
-                      workspace.id === "incidents" ||
-                      workspace.id === "artifacts" ||
-                      workspace.id === "browser" ||
-                      workspace.id === "documentation" ||
-                      workspace.id === "configuration" ? (
-                        <button
-                          aria-label={`${expandedWorkspaceMenus[workspace.id] ? "Collapse" : "Expand"} ${workspace.label}`}
-                          className="workspace-disclosure"
-                          onClick={() => toggleWorkspaceMenu(workspace.id)}
-                          type="button"
-                        >
-                          {expandedWorkspaceMenus[workspace.id] ? "▾" : "▸"}
-                        </button>
-                      ) : null}
+      {sidebarPinned ? (
+        <aside className="sidebar">
+          <nav className="workspace-nav" aria-label="Workspace navigation">
+            {groupWorkspaces().map(([group, items]) => (
+              <section className="workspace-group" key={group}>
+                <p className="workspace-group-label">{group}</p>
+                {items.map((workspace) => (
+                  <div className="workspace-tree-node" key={workspace.id}>
+                    <div className={workspace.id === activeWorkspace ? "workspace-link active" : "workspace-link"}>
+                      <button
+                        className="workspace-link-main"
+                        aria-keyshortcuts={workspace.primary ? String(keyboardWorkspaceOrder.indexOf(workspace.id) + 1) : undefined}
+                        onClick={() => {
+                          if (workspace.id === "environment") {
+                            void navigateToOperateSection(selectedOperateSection);
+                            return;
+                          }
+                          if (workspace.id === "conversations") {
+                            void navigateToConversationSection(selectedConversationSection);
+                            return;
+                          }
+                          if (workspace.id === "runtime") {
+                            void navigateToExecutionSection(selectedExecutionSection);
+                            return;
+                          }
+                          if (workspace.id === "incidents") {
+                            void navigateToRecoverySection(selectedRecoverySection);
+                            return;
+                          }
+                          if (workspace.id === "artifacts") {
+                            void navigateToEvidenceSection(selectedEvidenceSection);
+                            return;
+                          }
+                          if (workspace.id === "browser") {
+                            void navigateToBrowserDomain(selectedBrowserDomain);
+                            return;
+                          }
+                          if (workspace.id === "documentation") {
+                            void navigateToWorkspace("documentation");
+                            return;
+                          }
+                          if (workspace.id === "configuration") {
+                            void navigateToConfigurationSection(selectedConfigurationSection);
+                            return;
+                          }
+                          void navigateToWorkspace(workspace.id);
+                        }}
+                        type="button"
+                      >
+                        <span title={workspace.label === "Documentation" ? "Open the in-app user documentation workspace." : undefined}>
+                          {workspace.label}
+                        </span>
+                      </button>
+                      <div className="workspace-link-meta">
+                        {workspace.id !== "environment" ? (
+                          <WorkspaceSignal signal={workspaceAttention.get(workspace.id)} />
+                        ) : null}
+                        {workspace.id === "environment" ||
+                        workspace.id === "conversations" ||
+                        workspace.id === "runtime" ||
+                        workspace.id === "incidents" ||
+                        workspace.id === "artifacts" ||
+                        workspace.id === "browser" ||
+                        workspace.id === "documentation" ||
+                        workspace.id === "configuration" ? (
+                          <button
+                            aria-label={`${expandedWorkspaceMenus[workspace.id] ? "Collapse" : "Expand"} ${workspace.label}`}
+                            className="workspace-disclosure"
+                            onClick={() => toggleWorkspaceMenu(workspace.id)}
+                            type="button"
+                          >
+                            {expandedWorkspaceMenus[workspace.id] ? "▾" : "▸"}
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
+                    {workspace.id === "environment" && expandedWorkspaceMenus.environment ? (
+                      <div className="workspace-child-list">
+                        {operateSections.map((section) => (
+                          <button
+                            className={
+                              activeWorkspace === "environment" && selectedOperateSection === section.id
+                                ? "workspace-child-link active"
+                                : "workspace-child-link"
+                            }
+                            key={section.id}
+                            onClick={() => {
+                              void navigateToOperateSection(section.id);
+                            }}
+                            type="button"
+                          >
+                            <span title={section.summary}>{section.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                    {workspace.id === "conversations" && expandedWorkspaceMenus.conversations ? (
+                      <div className="workspace-child-list">
+                        {conversationSections.map((section) => (
+                          <button
+                            className={
+                              activeWorkspace === "conversations" && selectedConversationSection === section.id
+                                ? "workspace-child-link active"
+                                : "workspace-child-link"
+                            }
+                            key={section.id}
+                            onClick={() => {
+                              void navigateToConversationSection(section.id);
+                            }}
+                            type="button"
+                          >
+                            <span title={section.summary}>{section.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                    {workspace.id === "browser" && expandedWorkspaceMenus.browser ? (
+                      <div className="workspace-child-list">
+                        {browserDomains.map((domain) => (
+                          <button
+                            className={
+                              activeWorkspace === "browser" && selectedBrowserDomain === domain.id
+                                ? "workspace-child-link active"
+                                : "workspace-child-link"
+                            }
+                            key={domain.id}
+                            onClick={() => {
+                              void navigateToBrowserDomain(domain.id);
+                            }}
+                            type="button"
+                          >
+                            <span title={domain.summary}>{domain.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                    {workspace.id === "runtime" && expandedWorkspaceMenus.runtime ? (
+                      <div className="workspace-child-list">
+                        {executionSections.map((section) => (
+                          <button
+                            className={
+                              activeWorkspace === "runtime" && selectedExecutionSection === section.id
+                                ? "workspace-child-link active"
+                                : "workspace-child-link"
+                            }
+                            key={section.id}
+                            onClick={() => {
+                              void navigateToExecutionSection(section.id);
+                            }}
+                            type="button"
+                          >
+                            <span title={section.summary}>{section.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                    {workspace.id === "incidents" && expandedWorkspaceMenus.incidents ? (
+                      <div className="workspace-child-list">
+                        {recoverySections.map((section) => (
+                          <button
+                            className={
+                              activeWorkspace === "incidents" && selectedRecoverySection === section.id
+                                ? "workspace-child-link active"
+                                : "workspace-child-link"
+                            }
+                            key={section.id}
+                            onClick={() => {
+                              void navigateToRecoverySection(section.id);
+                            }}
+                            type="button"
+                          >
+                            <span title={section.summary}>{section.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                    {workspace.id === "artifacts" && expandedWorkspaceMenus.artifacts ? (
+                      <div className="workspace-child-list">
+                        {evidenceSections.map((section) => (
+                          <button
+                            className={
+                              activeWorkspace === "artifacts" && selectedEvidenceSection === section.id
+                                ? "workspace-child-link active"
+                                : "workspace-child-link"
+                            }
+                            key={section.id}
+                            onClick={() => {
+                              void navigateToEvidenceSection(section.id);
+                            }}
+                            type="button"
+                          >
+                            <span title={section.summary}>{section.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                    {workspace.id === "configuration" && expandedWorkspaceMenus.configuration ? (
+                      <div className="workspace-child-list">
+                        {configurationSections.map((section) => (
+                          <button
+                            className={
+                              activeWorkspace === "configuration" && selectedConfigurationSection === section.id
+                                ? "workspace-child-link active"
+                                : "workspace-child-link"
+                            }
+                            key={section.id}
+                            onClick={() => {
+                              void navigateToConfigurationSection(section.id);
+                            }}
+                            type="button"
+                          >
+                            <span title={section.summary}>{section.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
-                  {workspace.id === "environment" && expandedWorkspaceMenus.environment ? (
-                    <div className="workspace-child-list">
-                      {operateSections.map((section) => (
-                        <button
-                          className={
-                            activeWorkspace === "environment" && selectedOperateSection === section.id
-                              ? "workspace-child-link active"
-                              : "workspace-child-link"
-                          }
-                          key={section.id}
-                          onClick={() => {
-                            void navigateToOperateSection(section.id);
-                          }}
-                          type="button"
-                        >
-                          <span title={section.summary}>{section.label}</span>
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                  {workspace.id === "conversations" && expandedWorkspaceMenus.conversations ? (
-                    <div className="workspace-child-list">
-                      {conversationSections.map((section) => (
-                        <button
-                          className={
-                            activeWorkspace === "conversations" && selectedConversationSection === section.id
-                              ? "workspace-child-link active"
-                              : "workspace-child-link"
-                          }
-                          key={section.id}
-                          onClick={() => {
-                            void navigateToConversationSection(section.id);
-                          }}
-                          type="button"
-                        >
-                          <span title={section.summary}>{section.label}</span>
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                  {workspace.id === "browser" && expandedWorkspaceMenus.browser ? (
-                    <div className="workspace-child-list">
-                      {browserDomains.map((domain) => (
-                        <button
-                          className={
-                            activeWorkspace === "browser" && selectedBrowserDomain === domain.id
-                              ? "workspace-child-link active"
-                              : "workspace-child-link"
-                          }
-                          key={domain.id}
-                          onClick={() => {
-                            void navigateToBrowserDomain(domain.id);
-                          }}
-                          type="button"
-                        >
-                          <span title={domain.summary}>{domain.label}</span>
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                  {workspace.id === "runtime" && expandedWorkspaceMenus.runtime ? (
-                    <div className="workspace-child-list">
-                      {executionSections.map((section) => (
-                        <button
-                          className={
-                            activeWorkspace === "runtime" && selectedExecutionSection === section.id
-                              ? "workspace-child-link active"
-                              : "workspace-child-link"
-                          }
-                          key={section.id}
-                          onClick={() => {
-                            void navigateToExecutionSection(section.id);
-                          }}
-                          type="button"
-                        >
-                          <span title={section.summary}>{section.label}</span>
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                  {workspace.id === "incidents" && expandedWorkspaceMenus.incidents ? (
-                    <div className="workspace-child-list">
-                      {recoverySections.map((section) => (
-                        <button
-                          className={
-                            activeWorkspace === "incidents" && selectedRecoverySection === section.id
-                              ? "workspace-child-link active"
-                              : "workspace-child-link"
-                          }
-                          key={section.id}
-                          onClick={() => {
-                            void navigateToRecoverySection(section.id);
-                          }}
-                          type="button"
-                        >
-                          <span title={section.summary}>{section.label}</span>
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                  {workspace.id === "artifacts" && expandedWorkspaceMenus.artifacts ? (
-                    <div className="workspace-child-list">
-                      {evidenceSections.map((section) => (
-                        <button
-                          className={
-                            activeWorkspace === "artifacts" && selectedEvidenceSection === section.id
-                              ? "workspace-child-link active"
-                              : "workspace-child-link"
-                          }
-                          key={section.id}
-                          onClick={() => {
-                            void navigateToEvidenceSection(section.id);
-                          }}
-                          type="button"
-                        >
-                          <span title={section.summary}>{section.label}</span>
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                  {workspace.id === "configuration" && expandedWorkspaceMenus.configuration ? (
-                    <div className="workspace-child-list">
-                      {configurationSections.map((section) => (
-                        <button
-                          className={
-                            activeWorkspace === "configuration" && selectedConfigurationSection === section.id
-                              ? "workspace-child-link active"
-                              : "workspace-child-link"
-                          }
-                          key={section.id}
-                          onClick={() => {
-                            void navigateToConfigurationSection(section.id);
-                          }}
-                          type="button"
-                        >
-                          <span title={section.summary}>{section.label}</span>
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              ))}
-            </section>
-          ))}
-        </nav>
-
-      </aside>
+                ))}
+              </section>
+            ))}
+          </nav>
+        </aside>
+      ) : (
+        <aside className="sidebar sidebar-collapsed-rail" aria-label="Collapsed workspace navigation">
+          <button className="collapsed-sidebar-toggle" onClick={() => void toggleSidebarPinned()} type="button">
+            <span>Show Navigation</span>
+          </button>
+        </aside>
+      )}
       <main className="canvas">
-        <header className="canvas-header">
-          <div className="canvas-header-copy">
-            <div className="canvas-header-eyebrow-row">
-              <p className="eyebrow">{workspaceDescriptor.eyebrow}</p>
-              <HelpHint text={workspaceDescriptor.summary} />
+        {activeWorkspace === "conversations" ? null : (
+          <header className="canvas-header">
+            <div className="canvas-header-copy">
+              <div className="canvas-header-eyebrow-row">
+                <p className="eyebrow">{workspaceDescriptor.eyebrow}</p>
+                <HelpHint text={workspaceDescriptor.summary} />
+              </div>
+              <h2>{workspaceDescriptor.title}</h2>
+              <p className="canvas-subtitle">{workspaceDescriptor.summary}</p>
             </div>
-            <h2>{workspaceDescriptor.title}</h2>
-            <p className="canvas-subtitle">{workspaceDescriptor.summary}</p>
-          </div>
-        </header>
+          </header>
+        )}
 
-        {activeWorkspace === "environment" || activeWorkspace === "browser" || activeWorkspace === "configuration" || activeWorkspace === "runtime" ? null : (
+        {activeWorkspace === "environment" ||
+        activeWorkspace === "browser" ||
+        activeWorkspace === "configuration" ||
+        activeWorkspace === "runtime" ||
+        activeWorkspace === "conversations" ? null : (
           <section className="panel workspace-context-brief">
             <div className="signal-digest-grid execution-objective-digest">
+              <div className="signal-digest-card">
+                <span className="context-label">Project</span>
+                <strong>{projects.find((project) => project.projectId === currentProjectId)?.title ?? "Current Environment"}</strong>
+                <p>
+                  {projects.find((project) => project.projectId === currentProjectId)?.summary ??
+                    "Project scope is still implicit until the bound environment is saved into the desktop registry."}
+                </p>
+              </div>
+              <button className="signal-digest-card project-session-card" onClick={() => void navigateToConversationSection("threads")} type="button">
+                <span className="context-label">Conversation Sessions</span>
+                <strong>{currentProjectConversationSessionCount}</strong>
+                <p>
+                  {currentProjectConversationFocus
+                    ? `${currentProjectConversationFocus.title} is the retained conversation focus for this project.`
+                    : "No retained conversation session is currently selected for this project."}
+                </p>
+              </button>
+              <button className="signal-digest-card project-session-card" onClick={() => void navigateToExecutionSection("listener")} type="button">
+                <span className="context-label">REPL Sessions</span>
+                <strong>{currentProjectReplSessions.length}</strong>
+                <p>
+                  {currentProjectReplFocus
+                    ? `${currentProjectReplFocus.title} is the active project listener session.`
+                    : "No retained REPL session is currently selected for this project."}
+                </p>
+              </button>
               <div className="signal-digest-card">
                 <span className="context-label">Environment</span>
                 <strong>{summary?.environmentLabel ?? "Unbound"}</strong>
@@ -2414,12 +3212,18 @@ export function App() {
 
         {errorMessage ? <div className="error-banner">{errorMessage}</div> : null}
 
-        <section className={isWorkspaceTransitioning ? "workspace-frame transitioning" : "workspace-frame"}>
-          <WorkspaceTransitionBanner
-            activeWorkspace={canonicalWorkspace(activeWorkspace)}
-            isTransitioning={isWorkspaceTransitioning}
-            resolution={workspaceResolution}
-          />
+        <section
+          className={`${isWorkspaceTransitioning ? "workspace-frame transitioning" : "workspace-frame"}${
+            activeWorkspace === "conversations" ? " workspace-frame-conversations" : ""
+          }`}
+        >
+          {activeWorkspace === "conversations" ? null : (
+            <WorkspaceTransitionBanner
+              activeWorkspace={canonicalWorkspace(activeWorkspace)}
+              isTransitioning={isWorkspaceTransitioning}
+              resolution={workspaceResolution}
+            />
+          )}
           {activeWorkspace === "environment" ? (
             <OperateWorkspace
               artifacts={artifacts}
@@ -2438,13 +3242,22 @@ export function App() {
             />
           ) : activeWorkspace === "conversations" ? (
             <ConversationsWorkspace
+              conversationSessionTitleDraft={conversationSessionTitleDraft}
               conversationDraft={conversationDraft}
+              conversationSendError={conversationSendError}
+              conversationStream={conversationStream}
+              createConversationSession={handleCreateConversationSession}
+              sendConversationMessage={handleSendConversationMessage}
+              isSendingConversation={isSendingConversation}
               selectedSection={selectedConversationSection}
+              selectedConversationMessageId={selectedConversationMessageId}
               selectedThread={selectedThread}
               selectedThreadId={selectedThreadId}
               selectedTurn={selectedTurn}
               selectedTurnId={selectedTurnId}
               setConversationDraft={setConversationDraft}
+              setSelectedConversationMessageId={setSelectedConversationMessageId}
+              setConversationSessionTitleDraft={setConversationSessionTitleDraft}
               setSelectedThreadId={setSelectedThreadId}
               setSelectedTurnId={setSelectedTurnId}
               threads={threads}
@@ -2537,7 +3350,13 @@ export function App() {
             ) : (
               <ExecutionWorkspace
                 approvalRequests={approvalRequests}
+                currentReplSessionId={currentReplSessionId}
+                replSessions={currentProjectReplSessions}
+                createReplSession={handleCreateReplSession}
                 evaluateRuntimeForm={evaluateRuntimeForm}
+                replSessionTitleDraft={replSessionTitleDraft}
+                setReplSessionTitleDraft={setReplSessionTitleDraft}
+                switchReplSession={handleSwitchReplSession}
                 isEvaluating={isEvaluating}
                 inspectRuntimeSymbol={inspectRuntimeSymbol}
                 isInspectingRuntime={isInspectingRuntime}
@@ -2618,6 +3437,7 @@ export function App() {
           runtimeSummary={runtimeSummary}
           selectedApproval={selectedApproval}
           selectedArtifact={selectedArtifact}
+          selectedConversationMessage={selectedConversationMessage}
           selectedConversationSection={selectedConversationSection}
           selectedDocumentationPage={selectedDocumentationPage}
           selectedEvidenceSection={selectedEvidenceSection}
@@ -2633,13 +3453,22 @@ export function App() {
           summary={summary}
           workItems={workItems}
         />
-      ) : null}
+      ) : (
+        <aside className="inspector inspector-collapsed-rail" aria-label="Collapsed workspace inspector">
+          <button className="collapsed-inspector-toggle" onClick={() => void toggleInspectorPinned()} type="button">
+            Show Inspector
+          </button>
+        </aside>
+      )}
 
       <StatusDock
         activeWorkspace={activeWorkspace}
         binding={binding}
+        currentProject={projects.find((project) => project.projectId === currentProjectId) ?? null}
         hostStatus={hostStatus}
+        sidebarPinned={sidebarPinned}
         inspectorPinned={inspectorPinned}
+        onToggleSidebar={() => void toggleSidebarPinned()}
         onToggleInspector={() => void toggleInspectorPinned()}
         status={status}
       />
@@ -2685,24 +3514,88 @@ function CommandCenter({
   entries,
   onClose,
   onQueryChange,
+  onSelectEntry,
   query
 }: {
   entries: CommandCenterEntry[];
   onClose: () => void;
   onQueryChange: (value: string) => void;
+  onSelectEntry: (entryId: string) => void;
   query: string;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const previousActiveElementRef = useRef<HTMLElement | null>(null);
+  const [activeIndex, setActiveIndex] = useState(0);
 
   useEffect(() => {
+    previousActiveElementRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
     inputRef.current?.focus();
     inputRef.current?.select();
   }, []);
 
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [query, entries]);
+
+  useEffect(() => {
+    return () => {
+      previousActiveElementRef.current?.focus();
+    };
+  }, []);
+
   async function handleSelect(entry: CommandCenterEntry): Promise<void> {
+    onSelectEntry(entry.id);
     await entry.onSelect();
     onClose();
   }
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLInputElement>): void {
+    if (entries.length === 0) {
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActiveIndex((current) => (current + 1) % entries.length);
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex((current) => (current - 1 + entries.length) % entries.length);
+      return;
+    }
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const entry = entries[activeIndex] ?? entries[0];
+      if (entry) {
+        void handleSelect(entry);
+      }
+    }
+  }
+
+  const groupedEntries = entries.reduce(
+    (groups, entry, index) => {
+      const items = groups.get(entry.group) ?? [];
+      items.push({ entry, index });
+      groups.set(entry.group, items);
+      return groups;
+    },
+    new Map<CommandCenterEntry["group"], Array<{ entry: CommandCenterEntry; index: number }>>()
+  );
+
+  const groupLabels: Record<CommandCenterEntry["group"], string> = {
+    workspace: "Workspaces",
+    thread: "Threads",
+    work: "Governed Work",
+    approval: "Approvals",
+    incident: "Incidents",
+    artifact: "Artifacts"
+  };
+
+  const groupOrder: CommandCenterEntry["group"][] = ["work", "approval", "incident", "thread", "workspace", "artifact"];
 
   return (
     <div className="command-center-overlay" role="presentation" onClick={onClose}>
@@ -2726,6 +3619,7 @@ function CommandCenter({
           <span className="context-label">Search threads, work, approvals, incidents, artifacts, and workspaces</span>
           <input
             onChange={(event) => onQueryChange(event.target.value)}
+            onKeyDown={handleKeyDown}
             placeholder="Search current work surfaces"
             ref={inputRef}
             value={query}
@@ -2733,18 +3627,37 @@ function CommandCenter({
         </label>
         <div className="command-center-list">
           {entries.length > 0 ? (
-            entries.map((entry) => (
-              <button className="command-center-item" key={entry.id} onClick={() => void handleSelect(entry)} type="button">
-                <div className="command-center-item-copy">
-                  <div className="command-center-item-top">
-                    <strong>{entry.label}</strong>
-                    <Badge tone={entry.tone}>{entry.badge}</Badge>
-                  </div>
-                  <p>{entry.summary}</p>
-                </div>
-                <span className="command-center-item-target">{labelForWorkspace(entry.workspace)}</span>
-              </button>
-            ))
+            groupOrder.map((group) => {
+              const items = groupedEntries.get(group);
+              if (!items || items.length === 0) {
+                return null;
+              }
+
+              return (
+                <section className="command-center-group" key={group}>
+                  <div className="command-center-group-label">{groupLabels[group]}</div>
+                  {items.map(({ entry, index }) => (
+                    <button
+                      aria-selected={index === activeIndex}
+                      className={index === activeIndex ? "command-center-item active" : "command-center-item"}
+                      key={entry.id}
+                      onClick={() => void handleSelect(entry)}
+                      onMouseEnter={() => setActiveIndex(index)}
+                      type="button"
+                    >
+                      <div className="command-center-item-copy">
+                        <div className="command-center-item-top">
+                          <strong>{entry.label}</strong>
+                          <Badge tone={entry.tone}>{entry.badge}</Badge>
+                        </div>
+                        <p>{entry.summary}</p>
+                      </div>
+                      <span className="command-center-item-target">{labelForWorkspace(entry.workspace)}</span>
+                    </button>
+                  ))}
+                </section>
+              );
+            })
           ) : (
             <div className="empty-state command-center-empty">
               <p className="eyebrow">No Matches</p>
@@ -2775,6 +3688,7 @@ function WorkspaceInspector({
   selectedWorkflowRecord,
   selectedIncident,
   selectedArtifact,
+  selectedConversationMessage,
   selectedEvent,
   selectedOperateSection,
   selectedDocumentationPage,
@@ -2800,6 +3714,7 @@ function WorkspaceInspector({
   selectedWorkflowRecord: WorkflowRecordDto | null;
   selectedIncident: IncidentDetailDto | null;
   selectedArtifact: ArtifactDetailDto | null;
+  selectedConversationMessage: MessageDto | null;
   selectedEvent: EnvironmentEventDto | null;
   selectedOperateSection: OperateSection;
   selectedDocumentationPage: DocumentationPageDto | null;
@@ -2923,6 +3838,31 @@ function WorkspaceInspector({
                 <DetailRow label="Artifacts" value={String(selectedTurn?.artifactIds.length ?? 0)} />
                 <DetailRow label="Approvals" value={String(selectedTurn?.approvalIds.length ?? 0)} />
               </dl>
+            )}
+          </section>
+          <section className="inspector-card">
+            <p className="eyebrow">Selected Entry</p>
+            <h3>{selectedConversationMessage ? "Transcript Metadata" : "No message selected"}</h3>
+            {selectedConversationMessage ? (
+              <dl className="detail-list">
+                <DetailRow label="Source" value={selectedConversationMessage.role} />
+                <DetailRow label="Timestamp" value={selectedConversationMessage.createdAt} />
+              </dl>
+            ) : (
+              <p className="inspector-copy">
+                Select a transcript entry to inspect its source and timestamp without repeating that metadata on every bubble.
+              </p>
+            )}
+          </section>
+          <section className="inspector-card">
+            <p className="eyebrow">Linked Entities</p>
+            <h3>{selectedThread ? `${selectedThread.linkedEntities.length} attached references` : "No thread selected"}</h3>
+            {selectedThread ? (
+              <LinkedEntityList entities={selectedThread.linkedEntities} />
+            ) : (
+              <p className="inspector-copy">
+                Select a conversation session to inspect the artifacts, approvals, incidents, and work attached to it.
+              </p>
             )}
           </section>
         </>
@@ -3478,6 +4418,14 @@ function OperateWorkspace({
     return state === "blocked" || state === "quarantined" ? "warning" : state === "active" ? "active" : "steady";
   }
 
+  function toneForTaskState(state: EnvironmentSummaryDto["activeTasks"][number]["state"]): "active" | "warning" | "danger" | "steady" {
+    return state === "blocked" ? "danger" : state === "active" ? "active" : state === "waiting" ? "warning" : "steady";
+  }
+
+  function toneForWorkerState(state: EnvironmentSummaryDto["activeWorkers"][number]["state"]): "active" | "warning" | "danger" | "steady" {
+    return state === "active" ? "active" : state === "waiting" ? "warning" : "steady";
+  }
+
   const orientationRows = [
     {
       key: "binding",
@@ -3644,6 +4592,25 @@ function OperateWorkspace({
       ["Workspace", "Evidence"]
     ]
   }));
+  const taskRows = summary.activeTasks.map((task) => ({
+    key: task.taskId,
+    title: task.title,
+    state: task.state,
+    summary: task.summary,
+    tone: toneForTaskState(task.state)
+  }));
+  const workerRows = summary.activeWorkers.map((worker) => ({
+    key: worker.workerId,
+    title: worker.label,
+    state: worker.state,
+    summary: worker.responsibility,
+    tone: toneForWorkerState(worker.state)
+  }));
+  const parallelSnapshot = {
+    activeTasks: taskRows.filter((task) => task.state === "active").length,
+    blockedTasks: taskRows.filter((task) => task.state === "blocked").length,
+    waitingWorkers: workerRows.filter((worker) => worker.state === "waiting").length
+  };
 
   const [selectedOrientationKey, setSelectedOrientationKey] = useState<string | null>(orientationRows[0]?.key ?? null);
   const [selectedJourneyKey, setSelectedJourneyKey] = useState<string | null>(journeyRows[0]?.key ?? null);
@@ -3675,6 +4642,32 @@ function OperateWorkspace({
     active: journeyRows.filter((row) => row.tone === "active").slice(0, 4),
     background: journeyRows.filter((row) => row.tone === "steady" || row.tone === "warning").slice(0, 4)
   };
+  const operateSnapshotCards = [
+    {
+      key: "continuation",
+      label: "Continuation",
+      value: summary.activeContext.currentThreadTitle ?? summary.environmentLabel,
+      detail: summary.activeContext.currentTurnSummary ?? summary.activeContext.focusSummary
+    },
+    {
+      key: "pressure",
+      label: "Pressure",
+      value: `${summary.attention.approvalsAwaiting + summary.attention.openIncidents + summary.attention.blockedWork}`,
+      detail: `${summary.attention.approvalsAwaiting} approvals, ${summary.attention.openIncidents} incidents, ${summary.attention.blockedWork} blocked`
+    },
+    {
+      key: "runtime",
+      label: "Runtime",
+      value: summary.activeContext.runtimePackage ?? summary.activeContext.runtimeLabel,
+      detail: `${status.runtimeState} image posture inside ${summary.environmentLabel}`
+    },
+    {
+      key: "evidence",
+      label: "Evidence",
+      value: `${evidenceRows.length} artifacts`,
+      detail: evidenceRows[0]?.artifact ?? "No recent artifact is currently foregrounded."
+    }
+  ];
 
   async function openOrientationPrimary(row: (typeof orientationRows)[number]): Promise<void> {
     if (row.key === "binding") {
@@ -3710,6 +4703,39 @@ function OperateWorkspace({
 
   return (
     <div className="environment-grid">
+      <section className="panel operate-overview-panel">
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">Operate Snapshot</p>
+            <h3>{selectedSection === "journeys" ? "Supervised Journeys" : selectedSection === "evidence" ? "Proof And Closure" : "Environment Orientation"}</h3>
+          </div>
+          <Badge tone={status.workflowState === "attention_required" ? "warning" : "active"}>{status.workflowState}</Badge>
+        </div>
+        <div className="signal-digest-grid operate-overview-digest">
+          {operateSnapshotCards.map((card) => (
+            <div className="signal-digest-card" key={card.key}>
+              <span className="context-label">{card.label}</span>
+              <strong>{card.value}</strong>
+              <p>{card.detail}</p>
+            </div>
+          ))}
+        </div>
+        <div className="browser-action-strip">
+          <button className="starter-chip" onClick={() => void navigateToConversationSection("threads")} type="button">
+            Open Threads
+          </button>
+          <button className="starter-chip" onClick={() => void navigateToExecutionSection("work")} type="button">
+            Open Work
+          </button>
+          <button className="starter-chip" onClick={() => void navigateToEvidenceSection("artifacts")} type="button">
+            Open Artifacts
+          </button>
+          <button className="starter-chip" onClick={() => void navigateToExecutionSection("listener")} type="button">
+            Open Listener
+          </button>
+        </div>
+      </section>
+
       {selectedSection === "orientation" ? (
         <>
           <section className="panel operate-table-panel">
@@ -3807,53 +4833,106 @@ function OperateWorkspace({
             </section>
           ) : null}
 
-          <section className="panel operate-objective-panel">
-            <div className="panel-header">
-              <div>
-                <p className="eyebrow">Operate Orientation</p>
-                <h3>{summary.activeContext.currentThreadTitle ?? summary.environmentLabel}</h3>
-              </div>
-              <Badge tone={status.workflowState === "attention_required" ? "warning" : "active"}>
-                {status.workflowState}
-              </Badge>
-            </div>
-            <div className="signal-digest-grid execution-objective-digest">
-              <div className="signal-digest-card">
-                <span className="context-label">Environment</span>
-                <strong>{summary.environmentLabel}</strong>
-                <p>{summary.environmentId}</p>
-              </div>
-              <div className="signal-digest-card">
-                <span className="context-label">Runtime</span>
-                <strong>{summary.activeContext.runtimePackage ?? summary.activeContext.runtimeLabel}</strong>
-                <p>{status.runtimeState}</p>
-              </div>
-              <div className="signal-digest-card">
-                <span className="context-label">Attention</span>
-                <strong>{summary.attention.approvalsAwaiting + summary.attention.openIncidents + summary.attention.blockedWork}</strong>
-                <p>{summary.activeContext.focusSummary}</p>
-              </div>
-            </div>
-            <div className="browser-action-strip">
-              <button className="starter-chip" onClick={() => void navigateToBrowserDomain("systems")} type="button">
-                Open Systems
-              </button>
-              <button className="starter-chip" onClick={() => void navigateToExecutionSection("listener")} type="button">
-                Open Listener
-              </button>
-              <button className="starter-chip" onClick={() => void navigateToConversationSection("threads")} type="button">
-                Open Threads
-              </button>
-              <button className="starter-chip" onClick={() => void navigateToEvidenceSection("artifacts")} type="button">
-                Open Artifacts
-              </button>
-            </div>
-          </section>
         </>
       ) : null}
 
       {selectedSection === "journeys" ? (
         <>
+          <section className="panel operate-parallel-panel">
+            <PanelHeader
+              title="Parallel Supervision"
+              subtitle="Long-running and branching work should stay visible as coordinated continuations, not hidden inside secondary summaries."
+            />
+            <div className="signal-digest-grid operate-parallel-digest">
+              <div className="signal-digest-card">
+                <span className="context-label">Active Tasks</span>
+                <strong>{parallelSnapshot.activeTasks}</strong>
+                <p>{taskRows[0]?.title ?? "No active task branch is currently running."}</p>
+              </div>
+              <div className="signal-digest-card">
+                <span className="context-label">Blocked Tasks</span>
+                <strong>{parallelSnapshot.blockedTasks}</strong>
+                <p>{taskRows.find((task) => task.state === "blocked")?.title ?? "No blocked branch is currently foregrounded."}</p>
+              </div>
+              <div className="signal-digest-card">
+                <span className="context-label">Waiting Workers</span>
+                <strong>{parallelSnapshot.waitingWorkers}</strong>
+                <p>{workerRows.find((worker) => worker.state === "waiting")?.title ?? "No waiting worker is currently stalled."}</p>
+              </div>
+            </div>
+            <div className="operate-parallel-grid">
+              <section className="parallel-lane">
+                <div className="parallel-lane-header">
+                  <div>
+                    <p className="eyebrow">Task Branches</p>
+                    <h4>Governed tasks in flight</h4>
+                  </div>
+                  <Badge tone={taskRows.some((task) => task.state === "blocked") ? "danger" : taskRows.some((task) => task.state === "active") ? "active" : "steady"}>
+                    {`${taskRows.length} visible`}
+                  </Badge>
+                </div>
+                <div className="parallel-card-list">
+                  {taskRows.length > 0 ? (
+                    taskRows.slice(0, 4).map((task) => (
+                      <button className="parallel-card" key={task.key} onClick={() => void navigateToExecutionSection("work")} type="button">
+                        <div className="parallel-card-top">
+                          <strong>{task.title}</strong>
+                          <Badge tone={task.tone}>{task.state}</Badge>
+                        </div>
+                        <p>{task.summary}</p>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="parallel-card parallel-card-empty">
+                      <strong>No governed task branches</strong>
+                      <p>Tasks appear here when the environment exposes long-running work beyond the current turn.</p>
+                    </div>
+                  )}
+                </div>
+              </section>
+              <section className="parallel-lane">
+                <div className="parallel-lane-header">
+                  <div>
+                    <p className="eyebrow">Workers</p>
+                    <h4>Actors carrying execution</h4>
+                  </div>
+                  <Badge tone={workerRows.some((worker) => worker.state === "active") ? "active" : "steady"}>
+                    {`${workerRows.length} visible`}
+                  </Badge>
+                </div>
+                <div className="parallel-card-list">
+                  {workerRows.length > 0 ? (
+                    workerRows.slice(0, 4).map((worker) => (
+                      <button className="parallel-card" key={worker.key} onClick={() => void navigateToConversationSection("threads")} type="button">
+                        <div className="parallel-card-top">
+                          <strong>{worker.title}</strong>
+                          <Badge tone={worker.tone}>{worker.state}</Badge>
+                        </div>
+                        <p>{worker.summary}</p>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="parallel-card parallel-card-empty">
+                      <strong>No active workers</strong>
+                      <p>Worker posture appears here once execution is delegated across visible actors.</p>
+                    </div>
+                  )}
+                </div>
+              </section>
+            </div>
+            <div className="browser-action-strip">
+              <button className="starter-chip" onClick={() => void navigateToExecutionSection("work")} type="button">
+                Open Work Queue
+              </button>
+              <button className="starter-chip" onClick={() => void navigateToConversationSection("threads")} type="button">
+                Resume Threads
+              </button>
+              <button className="starter-chip" onClick={() => void navigateToExecutionSection("listener")} type="button">
+                Open Listener
+              </button>
+            </div>
+          </section>
+
           <section className="panel operate-table-panel">
             <PanelHeader
               title="Journey Queue"
@@ -3974,48 +5053,6 @@ function OperateWorkspace({
             onPrimaryAction={openJourneyPrimary}
           />
 
-          <section className="panel operate-objective-panel">
-            <div className="panel-header">
-              <div>
-                <p className="eyebrow">Operate Journeys</p>
-                <h3>Active Continuations</h3>
-              </div>
-              <Badge tone={journeyRows.some((row) => row.tone === "danger" || row.tone === "warning") ? "warning" : "active"}>
-                {`${journeyRows.length} open`}
-              </Badge>
-            </div>
-            <div className="signal-digest-grid execution-objective-digest">
-              <div className="signal-digest-card">
-                <span className="context-label">Work Items</span>
-                <strong>{workItems.length}</strong>
-                <p>{workItems[0]?.title ?? "No governed work item is active."}</p>
-              </div>
-              <div className="signal-digest-card">
-                <span className="context-label">Approvals</span>
-                <strong>{approvalRequests.length}</strong>
-                <p>{approvalRequests[0]?.title ?? "No approval gate is dominating continuation."}</p>
-              </div>
-              <div className="signal-digest-card">
-                <span className="context-label">Incidents</span>
-                <strong>{incidents.length}</strong>
-                <p>{incidents[0]?.title ?? "No recovery journey is currently open."}</p>
-              </div>
-            </div>
-            <div className="browser-action-strip">
-              <button className="starter-chip" onClick={() => void navigateToExecutionSection("work")} type="button">
-                Open Work
-              </button>
-              <button className="starter-chip" onClick={() => void navigateToExecutionSection("approvals")} type="button">
-                Open Approvals
-              </button>
-              <button className="starter-chip" onClick={() => void navigateToRecoverySection("incidents")} type="button">
-                Open Recovery
-              </button>
-              <button className="starter-chip" onClick={() => void navigateToConversationSection("threads")} type="button">
-                Open Threads
-              </button>
-            </div>
-          </section>
         </>
       ) : null}
 
@@ -4104,46 +5141,6 @@ function OperateWorkspace({
             </section>
           ) : null}
 
-          <section className="panel operate-objective-panel">
-            <div className="panel-header">
-              <div>
-                <p className="eyebrow">Operate Evidence</p>
-                <h3>Proof And Closure Readiness</h3>
-              </div>
-              <Badge tone={evidenceRows.length > 0 ? "active" : "steady"}>{`${evidenceRows.length} artifacts`}</Badge>
-            </div>
-            <div className="signal-digest-grid execution-objective-digest">
-              <div className="signal-digest-card">
-                <span className="context-label">Recent Artifacts</span>
-                <strong>{evidenceRows.length}</strong>
-                <p>{evidenceRows[0]?.artifact ?? "No artifact is currently foregrounded."}</p>
-              </div>
-              <div className="signal-digest-card">
-                <span className="context-label">Approval Pressure</span>
-                <strong>{summary.attention.approvalsAwaiting}</strong>
-                <p>{summary.approvals[0]?.title ?? "No approval gate is waiting on proof."}</p>
-              </div>
-              <div className="signal-digest-card">
-                <span className="context-label">Recovery Pressure</span>
-                <strong>{summary.incidents.length}</strong>
-                <p>{summary.incidents[0]?.title ?? "No recovery evidence loop is open."}</p>
-              </div>
-            </div>
-            <div className="browser-action-strip">
-              <button className="starter-chip" onClick={() => void navigateToEvidenceSection("artifacts")} type="button">
-                Open Artifacts
-              </button>
-              <button className="starter-chip" onClick={() => void navigateToBrowserDomain("source")} type="button">
-                Open Source
-              </button>
-              <button className="starter-chip" onClick={() => void navigateToExecutionSection("listener")} type="button">
-                Open Listener
-              </button>
-              <button className="starter-chip" onClick={() => void navigateToRecoverySection("incidents")} type="button">
-                Open Recovery
-              </button>
-            </div>
-          </section>
         </>
       ) : null}
     </div>
@@ -4156,6 +5153,12 @@ function ExecutionWorkspace(
     runtimeForm: string;
     setRuntimeForm: (value: string) => void;
     evaluateRuntimeForm: () => Promise<void>;
+    replSessions: ReplSessionProfileDto[];
+    currentReplSessionId: string | null;
+    switchReplSession: (sessionId: string) => Promise<void>;
+    createReplSession: () => Promise<void>;
+    replSessionTitleDraft: string;
+    setReplSessionTitleDraft: (value: string) => void;
     runtimeInspection: QueryResultDto<RuntimeInspectionResultDto> | null;
     runtimeInspectionMode: RuntimeInspectionMode;
     runtimeInspectorSymbol: string;
@@ -4184,10 +5187,14 @@ function ExecutionWorkspace(
   return (
     <div className="execution-journey">
       <RuntimeWorkspace
+        createReplSession={props.createReplSession}
+        currentReplSessionId={props.currentReplSessionId}
         evaluateRuntimeForm={props.evaluateRuntimeForm}
         isEvaluating={props.isEvaluating}
         inspectRuntimeSymbol={props.inspectRuntimeSymbol}
         isInspectingRuntime={props.isInspectingRuntime}
+        replSessions={props.replSessions}
+        replSessionTitleDraft={props.replSessionTitleDraft}
         runtimeInspection={props.runtimeInspection}
         runtimeInspectionMode={props.runtimeInspectionMode}
         runtimeInspectorPackage={props.runtimeInspectorPackage}
@@ -4195,10 +5202,12 @@ function ExecutionWorkspace(
         runtimeForm={props.runtimeForm}
         runtimeResult={props.runtimeResult}
         runtimeSummary={props.runtimeSummary}
+        setReplSessionTitleDraft={props.setReplSessionTitleDraft}
         setRuntimeInspectionMode={props.setRuntimeInspectionMode}
         setRuntimeInspectorPackage={props.setRuntimeInspectorPackage}
         setRuntimeInspectorSymbol={props.setRuntimeInspectorSymbol}
         setRuntimeForm={props.setRuntimeForm}
+        switchReplSession={props.switchReplSession}
       />
 
       <JourneyStageStrip
@@ -6099,34 +7108,53 @@ function BrowserWorkspace({
 }
 
 function ConversationsWorkspace({
+  conversationSessionTitleDraft,
   selectedSection,
   conversationDraft,
+  conversationSendError,
+  conversationStream,
+  createConversationSession,
+  sendConversationMessage,
+  isSendingConversation,
   threads,
+  selectedConversationMessageId,
   selectedThreadId,
   selectedThread,
   selectedTurnId,
   selectedTurn,
   setConversationDraft,
+  setSelectedConversationMessageId,
+  setConversationSessionTitleDraft,
   setSelectedThreadId,
   setSelectedTurnId
 }: {
+  conversationSessionTitleDraft: string;
   selectedSection: ConversationSection;
   conversationDraft: string;
+  conversationSendError: string | null;
+  conversationStream: {
+    threadId: string;
+    turnId: string | null;
+    content: string;
+  } | null;
+  createConversationSession: () => Promise<void>;
+  sendConversationMessage: () => Promise<void>;
+  isSendingConversation: boolean;
   threads: ThreadSummaryDto[];
+  selectedConversationMessageId: string | null;
   selectedThreadId: string | null;
   selectedThread: ThreadDetailDto | null;
   selectedTurnId: string | null;
   selectedTurn: TurnDetailDto | null;
   setConversationDraft: (value: string) => void;
+  setSelectedConversationMessageId: (messageId: string | null) => void;
+  setConversationSessionTitleDraft: (value: string) => void;
   setSelectedThreadId: (threadId: string) => void;
   setSelectedTurnId: (turnId: string) => void;
 }) {
-  const conversationObjective =
-    selectedTurn?.summary ??
-    selectedThread?.summary ??
-    threads[0]?.summary ??
-    "Select the active thread, inspect the current turn, and keep linked entities attached to the same conversation continuation.";
-
+  const [threadTableExpanded, setThreadTableExpanded] = useState(true);
+  const messageStackRef = useRef<HTMLDivElement | null>(null);
+  const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const threadRows = threads.map((thread) => ({
     key: thread.threadId,
     title: thread.title,
@@ -6136,7 +7164,34 @@ function ConversationsWorkspace({
     summary: thread.summary,
     flags: thread.attentionFlags
   }));
-
+  const attentionThreadRows = useMemo(
+    () =>
+      threadRows.filter(
+        (thread) =>
+          thread.flags.length > 0 ||
+          thread.state === "waiting" ||
+          thread.state === "blocked" ||
+          thread.latestTurnState === "awaiting_approval" ||
+          thread.latestTurnState === "interrupted" ||
+          thread.latestTurnState === "failed"
+      ),
+    [threadRows]
+  );
+  const primaryAttentionThread = attentionThreadRows[0] ?? null;
+  const collapsedThreadSummary = primaryAttentionThread
+    ? attentionThreadRows.length > 1
+      ? `${attentionThreadRows.length} threads require attention. ${primaryAttentionThread.title} is the first surfaced thread.`
+      : `${primaryAttentionThread.title} requires attention.`
+    : `${threadRows.length} conversation sessions available.${selectedThread ? ` ${selectedThread.title} is selected.` : ""}`;
+  const collapsedThreadMeta = primaryAttentionThread
+    ? [
+        primaryAttentionThread.state,
+        primaryAttentionThread.latestTurnState,
+        primaryAttentionThread.flags[0]
+      ]
+        .filter((value): value is string => Boolean(value))
+        .join(" · ")
+    : selectedThread?.summary ?? "Collapse the thread frame to preserve working space without losing navigation context.";
   const turnRows =
     selectedThread?.turns.map((turn) => ({
       key: turn.turnId,
@@ -6144,114 +7199,273 @@ function ConversationsWorkspace({
       state: turn.state,
       createdAt: turn.createdAt
     })) ?? [];
+  const displayedMessages =
+    selectedThread &&
+    conversationStream &&
+    conversationStream.threadId === selectedThread.threadId &&
+    conversationStream.content.length > 0
+      ? [
+          ...selectedThread.messages,
+          {
+            messageId: `streaming-${conversationStream.turnId ?? selectedThread.threadId}`,
+            role: "assistant" as const,
+            content: conversationStream.content,
+            createdAt: new Date().toISOString()
+          }
+        ]
+      : selectedThread?.messages ?? [];
+
+  useEffect(() => {
+    if (selectedSection !== "threads") {
+      return;
+    }
+    const messageStack = messageStackRef.current;
+    if (!messageStack) {
+      return;
+    }
+    messageStack.scrollTop = messageStack.scrollHeight;
+  }, [
+    selectedSection,
+    selectedThread?.threadId,
+    displayedMessages.length,
+    conversationStream?.content,
+    conversationStream?.turnId,
+    isSendingConversation
+  ]);
+
+  useEffect(() => {
+    if (selectedSection !== "threads") {
+      return;
+    }
+    const textarea = composerTextareaRef.current;
+    if (!textarea) {
+      return;
+    }
+    const computedStyle = window.getComputedStyle(textarea);
+    const lineHeight = Number.parseFloat(computedStyle.lineHeight) || 20;
+    const paddingTop = Number.parseFloat(computedStyle.paddingTop) || 0;
+    const paddingBottom = Number.parseFloat(computedStyle.paddingBottom) || 0;
+    const borderTop = Number.parseFloat(computedStyle.borderTopWidth) || 0;
+    const borderBottom = Number.parseFloat(computedStyle.borderBottomWidth) || 0;
+    const frameHeight = paddingTop + paddingBottom + borderTop + borderBottom;
+    const minHeight = lineHeight * 5 + frameHeight;
+    const maxHeight = lineHeight * 15 + frameHeight;
+
+    textarea.style.height = "auto";
+    const nextHeight = Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight);
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
+  }, [selectedSection, conversationDraft, selectedThread?.threadId]);
 
   return (
     <div className="conversations-journey">
       <div className="conversation-layout">
         {selectedSection === "threads" ? (
-          <>
-            <section className="panel conversation-list-panel">
-              <PanelHeader
-                title="Conversation Threads"
-                subtitle="Structured threads stay visible as runtime work, not transcript tabs."
-              />
-              <BrowserDataTable
-                key="conversation-threads"
-                columnTemplate="minmax(0, 1.15fr) minmax(0, 0.72fr) minmax(0, 0.78fr) minmax(0, 0.92fr) minmax(0, 1.35fr)"
-                columns={[
-                  {
-                    id: "thread",
-                    label: "Thread",
-                    render: (row) => <strong>{row.title}</strong>,
-                    sortValue: (row) => row.title,
-                    searchValue: (row) => `${row.title} ${row.summary} ${row.flags.join(" ")}`
-                  },
-                  {
-                    id: "state",
-                    label: "State",
-                    render: (row) => <Badge tone={toneForThreadState(row.state)}>{row.state}</Badge>,
-                    sortValue: (row) => row.state
-                  },
-                  {
-                    id: "turn",
-                    label: "Latest Turn",
-                    render: (row) => row.latestTurnState,
-                    sortValue: (row) => row.latestTurnState
-                  },
-                  {
-                    id: "updated",
-                    label: "Updated",
-                    render: (row) => row.latestActivityAt,
-                    sortValue: (row) => row.latestActivityAt
-                  },
-                  {
-                    id: "summary",
-                    label: "Summary",
-                    render: (row) => row.summary,
-                    sortValue: (row) => row.summary,
-                    searchValue: (row) => row.summary
-                  }
-                ]}
-                emptyMessage="No structured conversation threads are available."
-                filterLabel="State"
-                filterOptions={Array.from(new Set(threadRows.map((row) => row.state))).map((value) => ({ label: value, value }))}
-                getFilterValue={(row) => row.state}
-                getRowKey={(row) => row.key}
-                onSelect={(row) => setSelectedThreadId(row.key)}
-                rows={threadRows}
-                searchPlaceholder="Search conversation threads"
-                selectedKey={selectedThreadId}
-              />
+          <div className="conversation-threads-shell">
+            <section
+              className={`panel conversation-list-panel${threadTableExpanded ? "" : " conversation-list-panel-collapsed"}`}
+            >
+              {threadTableExpanded ? (
+                <div className="conversation-frame-header">
+                  <div>
+                    <p className="eyebrow">Thread Navigation</p>
+                    <h3>Conversation Sessions</h3>
+                  </div>
+                  <div className="conversation-frame-header-actions">
+                    {attentionThreadRows.length > 0 ? (
+                      <button
+                        className="thread-attention-pill"
+                        onClick={() => {
+                          if (primaryAttentionThread) {
+                            setSelectedThreadId(primaryAttentionThread.key);
+                          }
+                        }}
+                        type="button"
+                      >
+                        <span>Attention</span>
+                        <strong>{attentionThreadRows.length}</strong>
+                      </button>
+                    ) : (
+                      <Badge tone="steady">{`${threadRows.length} threads`}</Badge>
+                    )}
+                    <button
+                      className="shell-chrome-button"
+                      onClick={() => setThreadTableExpanded((current) => !current)}
+                      type="button"
+                    >
+                      Collapse Thread Table
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="conversation-frame-inline">
+                  <div className="conversation-frame-inline-title">
+                    <span className="conversation-frame-inline-eyebrow">Thread Navigation</span>
+                    <strong>Conversation Sessions</strong>
+                  </div>
+                  <div className="conversation-frame-inline-summary" title={`${collapsedThreadSummary} ${collapsedThreadMeta}`}>
+                    <strong>{collapsedThreadSummary}</strong>
+                    <span>{collapsedThreadMeta}</span>
+                  </div>
+                  <div className="conversation-frame-inline-actions">
+                    {attentionThreadRows.length > 0 ? (
+                      <button
+                        className="thread-attention-pill"
+                        onClick={() => {
+                          if (primaryAttentionThread) {
+                            setSelectedThreadId(primaryAttentionThread.key);
+                          }
+                        }}
+                        type="button"
+                      >
+                        <span>Attention</span>
+                        <strong>{attentionThreadRows.length}</strong>
+                      </button>
+                    ) : (
+                      <Badge tone="steady">{`${threadRows.length} threads`}</Badge>
+                    )}
+                    {primaryAttentionThread ? (
+                      <button
+                        className="thread-collapsed-focus-button"
+                        onClick={() => setSelectedThreadId(primaryAttentionThread.key)}
+                        type="button"
+                      >
+                        Focus {primaryAttentionThread.title}
+                      </button>
+                    ) : null}
+                    <button
+                      className="shell-chrome-button"
+                      onClick={() => setThreadTableExpanded(true)}
+                      type="button"
+                    >
+                      Expand Thread Table
+                    </button>
+                  </div>
+                </div>
+              )}
+              {threadTableExpanded ? (
+                <>
+                  <div className="conversation-thread-toolbar">
+                    <div className="conversation-thread-actions">
+                      <label className="runtime-session-create">
+                        <span className="context-label">New Session</span>
+                        <input
+                          onChange={(event) => setConversationSessionTitleDraft(event.target.value)}
+                          value={conversationSessionTitleDraft}
+                        />
+                      </label>
+                      <button className="starter-chip" onClick={() => void createConversationSession()} type="button">
+                        New Conversation Session
+                      </button>
+                    </div>
+                  </div>
+                  <BrowserDataTable
+                    key="conversation-threads"
+                    columnTemplate="minmax(0, 1.15fr) minmax(0, 0.72fr) minmax(0, 0.78fr) minmax(0, 0.92fr) minmax(0, 1.35fr)"
+                    columns={[
+                      {
+                        id: "thread",
+                        label: "Thread",
+                        render: (row) => <strong>{row.title}</strong>,
+                        sortValue: (row) => row.title,
+                        searchValue: (row) => `${row.title} ${row.summary} ${row.flags.join(" ")}`
+                      },
+                      {
+                        id: "state",
+                        label: "State",
+                        render: (row) => <Badge tone={toneForThreadState(row.state)}>{row.state}</Badge>,
+                        sortValue: (row) => row.state
+                      },
+                      {
+                        id: "turn",
+                        label: "Latest Turn",
+                        render: (row) => row.latestTurnState,
+                        sortValue: (row) => row.latestTurnState
+                      },
+                      {
+                        id: "updated",
+                        label: "Updated",
+                        render: (row) => row.latestActivityAt,
+                        sortValue: (row) => row.latestActivityAt
+                      },
+                      {
+                        id: "summary",
+                        label: "Summary",
+                        render: (row) => row.summary,
+                        sortValue: (row) => row.summary,
+                        searchValue: (row) => row.summary
+                      }
+                    ]}
+                    emptyMessage="No structured conversation threads are available."
+                    filterLabel="State"
+                    filterOptions={Array.from(new Set(threadRows.map((row) => row.state))).map((value) => ({ label: value, value }))}
+                    getFilterValue={(row) => row.state}
+                    getRowKey={(row) => row.key}
+                    onSelect={(row) => setSelectedThreadId(row.key)}
+                    rows={threadRows}
+                    searchPlaceholder="Search conversation threads"
+                    selectedKey={selectedThreadId}
+                  />
+                </>
+              ) : null}
             </section>
 
             {selectedThread ? (
-              <section className="conversation-detail-panel">
-                <section className="panel conversation-thread-panel">
-                  <div className="panel-header">
-                    <div>
-                      <p className="eyebrow">Selected Thread</p>
-                      <h3>{selectedThread.title}</h3>
+              <>
+                <section className="panel conversation-thread-panel conversation-thread-transcript-panel">
+                  {displayedMessages.length > 0 ? (
+                    <div className="message-stack" ref={messageStackRef}>
+                      {displayedMessages.map((message) => (
+                        <MessageBubble
+                          key={message.messageId}
+                          isSelected={selectedConversationMessageId === message.messageId}
+                          message={message}
+                          onSelect={() => setSelectedConversationMessageId(message.messageId)}
+                        />
+                      ))}
                     </div>
-                    <Badge tone={toneForThreadState(selectedThread.state)}>{selectedThread.state}</Badge>
-                  </div>
-                  <div className="browser-focus-card">
-                    <div>
-                      <p className="context-label">Conversation Focus</p>
-                      <strong>{selectedThread.title}</strong>
-                      <p>{selectedThread.summary}</p>
+                  ) : (
+                    <div className="empty-state conversation-inline-empty">
+                      <p className="eyebrow">No Messages Yet</p>
+                      <h3>This session exists, but it does not have a retained transcript yet.</h3>
                     </div>
-                    <Badge tone="steady">{`${selectedThread.turns.length} turns`}</Badge>
-                  </div>
-                  <div className="signal-digest-grid conversation-detail-digest">
-                    <div className="signal-digest-card">
-                      <span className="context-label">Messages</span>
-                      <strong>{selectedThread.messages.length}</strong>
-                      <p>Conversation state remains inspectable as structured messages, not hidden transcript state.</p>
-                    </div>
-                    <div className="signal-digest-card">
-                      <span className="context-label">Linked Entities</span>
-                      <strong>{selectedThread.linkedEntities.length}</strong>
-                      <p>References stay durable and attached to the selected thread.</p>
-                    </div>
-                  </div>
-                  <div className="message-stack">
-                    {selectedThread.messages.map((message) => (
-                      <MessageBubble key={message.messageId} message={message} />
-                    ))}
-                  </div>
-                  <section className="linked-entities-panel">
-                    <PanelHeader title="Linked Entities" subtitle="Governed references remain explicit, not hidden in transcript." />
-                    <LinkedEntityList entities={selectedThread.linkedEntities} />
-                  </section>
+                  )}
                 </section>
-              </section>
+
+                <section className="panel conversation-thread-panel conversation-composer-panel conversation-composer-dock">
+                  {conversationSendError ? (
+                    <div className="conversation-composer-error" role="alert">
+                      {conversationSendError}
+                    </div>
+                  ) : null}
+                  <textarea
+                    className="runtime-editor conversation-draft-editor"
+                    ref={composerTextareaRef}
+                    onChange={(event) => setConversationDraft(event.target.value)}
+                    rows={5}
+                    value={conversationDraft}
+                  />
+                  <div className="conversation-composer-actions">
+                    <button
+                      aria-label={isSendingConversation ? "Sending message" : "Send message"}
+                      className="action-button conversation-send-button"
+                      disabled={isSendingConversation || conversationDraft.trim().length === 0}
+                      onClick={() => void sendConversationMessage()}
+                      title={isSendingConversation ? "Sending..." : "Send message"}
+                      type="button"
+                    >
+                      <span aria-hidden="true">{isSendingConversation ? "…" : "↵"}</span>
+                    </button>
+                  </div>
+                </section>
+              </>
             ) : (
-              <div className="empty-state">
+              <div className="empty-state conversation-thread-empty">
                 <p className="eyebrow">No Thread Selected</p>
                 <h3>Select a thread from the table to inspect structured conversation state.</h3>
               </div>
             )}
-          </>
+          </div>
         ) : null}
 
         {selectedSection === "turns" ? (
@@ -6416,41 +7630,18 @@ function ConversationsWorkspace({
           </>
         ) : null}
 
-        <section className="panel conversation-objective-panel">
-          <div className="panel-header">
-            <div>
-              <p className="eyebrow">Conversation Context</p>
-              <h3>{selectedTurn?.title ?? selectedThread?.title ?? threads[0]?.title ?? "No conversation selected"}</h3>
-            </div>
-            <Badge tone={selectedTurn ? toneForTurnState(selectedTurn.state) : selectedThread ? toneForThreadState(selectedThread.state) : "steady"}>
-              {selectedTurn?.state ?? selectedThread?.state ?? "idle"}
-            </Badge>
-          </div>
-          <p className="lead-copy">{conversationObjective}</p>
-          <div className="signal-digest-grid execution-objective-digest">
-            <div className="signal-digest-card">
-              <span className="context-label">Threads</span>
-              <strong>{threads.length}</strong>
-              <p>{threads[0]?.title ?? "No structured thread is available."}</p>
-            </div>
-            <div className="signal-digest-card">
-              <span className="context-label">Turns</span>
-              <strong>{selectedThread?.turns.length ?? 0}</strong>
-              <p>{selectedTurn?.title ?? "No turn is selected."}</p>
-            </div>
-            <div className="signal-digest-card">
-              <span className="context-label">References</span>
-              <strong>{selectedThread?.linkedEntities.length ?? 0}</strong>
-              <p>{selectedThread ? "Linked entities remain explicit within the conversation continuation." : "Linked context appears once a thread is selected."}</p>
-            </div>
-          </div>
-        </section>
       </div>
     </div>
   );
 }
 
 function RuntimeWorkspace({
+  replSessions,
+  currentReplSessionId,
+  switchReplSession,
+  createReplSession,
+  replSessionTitleDraft,
+  setReplSessionTitleDraft,
   runtimeSummary,
   runtimeForm,
   setRuntimeForm,
@@ -6467,6 +7658,12 @@ function RuntimeWorkspace({
   isEvaluating,
   isInspectingRuntime
 }: {
+  replSessions: ReplSessionProfileDto[];
+  currentReplSessionId: string | null;
+  switchReplSession: (sessionId: string) => Promise<void>;
+  createReplSession: () => Promise<void>;
+  replSessionTitleDraft: string;
+  setReplSessionTitleDraft: (value: string) => void;
   runtimeSummary: RuntimeSummaryDto | null;
   runtimeForm: string;
   setRuntimeForm: (value: string) => void;
@@ -6499,6 +7696,7 @@ function RuntimeWorkspace({
   }, [scopeRows, selectedScopeKey]);
 
   const selectedScope = scopeRows.find((scope) => scope.key === selectedScopeKey) ?? scopeRows[0] ?? null;
+  const activeReplSession = replSessions.find((session) => session.sessionId === currentReplSessionId) ?? replSessions[0] ?? null;
 
   if (!runtimeSummary) {
     return (
@@ -6511,6 +7709,64 @@ function RuntimeWorkspace({
 
   return (
     <div className="runtime-grid">
+      <section className="panel runtime-session-panel">
+        <PanelHeader
+          title="Project REPL Sessions"
+          subtitle="Listener work should retain named project-scoped sessions rather than collapsing into one ambient editor state."
+        />
+        <div className="signal-digest-grid runtime-session-digest">
+          <div className="signal-digest-card">
+            <span className="context-label">Sessions</span>
+            <strong>{replSessions.length}</strong>
+            <p>{replSessions[0]?.title ?? "No retained REPL session is currently available."}</p>
+          </div>
+          <div className="signal-digest-card">
+            <span className="context-label">Active Session</span>
+            <strong>{activeReplSession?.title ?? "Primary Listener"}</strong>
+            <p>{activeReplSession?.lastSummary ?? "The listener keeps the current package and latest runtime result attached to the active session."}</p>
+          </div>
+          <div className="signal-digest-card">
+            <span className="context-label">Package</span>
+            <strong>{activeReplSession?.packageName ?? runtimeSummary.currentPackage}</strong>
+            <p>{runtimeSummary.divergencePosture}</p>
+          </div>
+        </div>
+        <div className="runtime-session-strip">
+          {replSessions.length > 0 ? (
+            replSessions.slice(0, 6).map((session) => (
+              <button
+                className={session.sessionId === currentReplSessionId ? "runtime-session-card active" : "runtime-session-card"}
+                key={session.sessionId}
+                onClick={() => void switchReplSession(session.sessionId)}
+                type="button"
+              >
+                <div className="runtime-session-card-top">
+                  <strong>{session.title}</strong>
+                  <Badge tone={session.sessionId === currentReplSessionId ? "active" : "steady"}>
+                    {session.packageName ?? "listener"}
+                  </Badge>
+                </div>
+                <p>{session.lastSummary ?? "No runtime result has been retained for this session yet."}</p>
+              </button>
+            ))
+          ) : (
+            <div className="runtime-session-card runtime-session-card-empty">
+              <strong>No retained REPL sessions</strong>
+              <p>Create a listener session to keep separate runtime explorations and form history inside the same project.</p>
+            </div>
+          )}
+        </div>
+        <div className="browser-action-strip">
+          <label className="runtime-session-create">
+            <span className="context-label">New Session</span>
+            <input onChange={(event) => setReplSessionTitleDraft(event.target.value)} value={replSessionTitleDraft} />
+          </label>
+          <button className="starter-chip" onClick={() => void createReplSession()} type="button">
+            New REPL Session
+          </button>
+        </div>
+      </section>
+
       <section className="panel runtime-scope-panel">
         <PanelHeader
           title="Inspection Scopes"
@@ -6701,6 +7957,30 @@ function RuntimeWorkspace({
           </div>
         ) : (
           <p className="list-empty">Run a form to see governed runtime results here.</p>
+        )}
+      </section>
+
+      <section className="panel runtime-history-panel">
+        <PanelHeader
+          title="Session History"
+          subtitle="Each project REPL session now retains its recent evaluation trail instead of collapsing everything into the current editor state."
+        />
+        {activeReplSession && (activeReplSession.history?.length ?? 0) > 0 ? (
+          <div className="runtime-history-list">
+            {(activeReplSession.history ?? []).map((entry) => (
+              <div className="runtime-history-entry" key={entry.entryId}>
+                <div className="runtime-history-entry-top">
+                  <Badge tone={toneForCommandStatus(entry.status)}>{entry.status}</Badge>
+                  <span className="runtime-result-op">{entry.timestamp}</span>
+                </div>
+                <pre className="runtime-history-form">{entry.form}</pre>
+                <p>{entry.summary}</p>
+                {entry.valuePreview ? <pre className="runtime-preview">{entry.valuePreview}</pre> : null}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="list-empty">Run forms in this session to build a retained listener history here.</p>
         )}
       </section>
 
@@ -7508,16 +8788,22 @@ function ArtifactsWorkspace({
 function StatusDock({
   activeWorkspace,
   binding,
+  currentProject,
   hostStatus,
+  sidebarPinned,
   status,
   inspectorPinned,
+  onToggleSidebar,
   onToggleInspector
 }: {
   activeWorkspace: WorkspaceId;
   binding: BindingDto | null;
+  currentProject: ProjectProfileDto | null;
   hostStatus: HostStatusDto | null;
+  sidebarPinned: boolean;
   status: EnvironmentStatusDto | null;
   inspectorPinned: boolean;
+  onToggleSidebar: () => void;
   onToggleInspector: () => void;
 }) {
   return (
@@ -7525,6 +8811,10 @@ function StatusDock({
       <div className="status-dock-group">
         <span className="status-dock-label">Host</span>
         <strong>{hostStatus?.hostState ?? "starting"}</strong>
+      </div>
+      <div className="status-dock-group">
+        <span className="status-dock-label">Project</span>
+        <strong>{currentProject?.title ?? "implicit"}</strong>
       </div>
       <div className="status-dock-group">
         <span className="status-dock-label">Binding</span>
@@ -7544,6 +8834,9 @@ function StatusDock({
       </div>
       <div className="status-dock-actions">
         <span className="status-dock-hint">1-8 quick header switch</span>
+        <button className="dock-button" onClick={onToggleSidebar} type="button">
+          {sidebarPinned ? "Hide Navigation" : "Show Navigation"}
+        </button>
         <button className="dock-button" onClick={onToggleInspector} type="button">
           {inspectorPinned ? "Collapse Inspector" : "Show Inspector"}
         </button>
@@ -7639,13 +8932,29 @@ function FilterSelect({
   );
 }
 
-function MessageBubble({ message }: { message: MessageDto }) {
+function MessageBubble({
+  message,
+  isSelected,
+  onSelect
+}: {
+  message: MessageDto;
+  isSelected: boolean;
+  onSelect: () => void;
+}) {
   return (
-    <div className={`message-bubble role-${message.role}`}>
-      <div className="message-meta">
-        <span>{message.role}</span>
-        <span>{message.createdAt}</span>
-      </div>
+    <div
+      aria-pressed={isSelected}
+      className={`message-bubble role-${message.role}${isSelected ? " selected" : ""}`}
+      onClick={onSelect}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect();
+        }
+      }}
+      role="button"
+      tabIndex={0}
+    >
       <p>{message.content}</p>
     </div>
   );

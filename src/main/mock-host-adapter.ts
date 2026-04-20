@@ -3,14 +3,18 @@ import type {
   ArtifactSummaryDto,
   BindingDto,
   CommandResultDto,
+  CreateConversationThreadInput,
   DesktopPreferencesDto,
   EnvironmentEventDto,
   EventSubscriptionInput,
   EnvironmentStatusDto,
   EnvironmentSummaryDto,
   HostStatusDto,
+  ThreadSummaryDto,
   QueryResultDto,
   PackageBrowserDto,
+  SendConversationMessageInput,
+  SendConversationMessageResultDto,
   SourceMutationResultDto,
   SourceReloadResultDto,
   RuntimeEntityDetailDto,
@@ -20,6 +24,8 @@ import type {
 } from "../shared/contracts";
 import {
   commandApproveRequest,
+  commandCreateConversationThread,
+  commandSendConversationMessage,
   commandDenyRequest,
   commandEvaluateInContext,
   commandReloadSourceFile,
@@ -58,8 +64,37 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
 
   private preferences: DesktopPreferencesDto = {
     lastWorkspace: "environment",
+    sidebarPinned: true,
     inspectorPinned: true,
     themePreference: "system",
+    currentProjectId: "project-local-dev",
+    projects: [
+      {
+        projectId: "project-local-dev",
+        title: "Local Dev",
+        environmentId: defaultEnvironmentId,
+        summary: "Default governed desktop project bound to the local development environment."
+      }
+    ],
+    selectedConversationThreadByProject: {
+      "project-local-dev": "thread-transport-contract"
+    },
+    replSessionsByProject: {
+      "project-local-dev": [
+        {
+          sessionId: "repl-main",
+          title: "Main Listener",
+          environmentId: defaultEnvironmentId,
+          draftForm: '(describe "sbcl-agent")',
+          packageName: "SBCL-AGENT-USER",
+          lastSummary: "Primary listener session for governed runtime evaluation.",
+          history: []
+        }
+      ]
+    },
+    currentReplSessionIdByProject: {
+      "project-local-dev": "repl-main"
+    },
     lispCodeView: {
       parenDepthColors: ["#6ec0c2", "#f4b267", "#9f8cff", "#7bc47f", "#f07c9b", "#56a3ff"]
     }
@@ -152,6 +187,42 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
 
   async turnDetail(turnId: string, environmentId?: string) {
     return queryTurnDetail(this.resolveEnvironmentId(environmentId), turnId);
+  }
+
+  async createConversationThread(
+    input: CreateConversationThreadInput
+  ): Promise<CommandResultDto<ThreadSummaryDto>> {
+    return commandCreateConversationThread({
+      ...input,
+      environmentId: this.resolveEnvironmentId(input.environmentId)
+    });
+  }
+
+  async sendConversationMessage(
+    input: SendConversationMessageInput,
+    onEvent?: (event: EnvironmentEventDto) => void
+  ): Promise<CommandResultDto<SendConversationMessageResultDto>> {
+    if (onEvent) {
+      onEvent({
+        cursor: Date.now(),
+        kind: "provider-stream",
+        timestamp: new Date().toISOString(),
+        family: "provider",
+        summary: "provider / message-delta",
+        entityId: null,
+        threadId: input.threadId,
+        turnId: null,
+        visibility: "user",
+        payload: {
+          canonicalType: "text-delta",
+          payload: "Mock assistant response"
+        }
+      });
+    }
+    return commandSendConversationMessage({
+      ...input,
+      environmentId: this.resolveEnvironmentId(input.environmentId)
+    });
   }
 
   async runtimeSummary(environmentId?: string) {

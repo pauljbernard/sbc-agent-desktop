@@ -9,6 +9,8 @@
                  :type nil
                  :defaults *script-path*))
 
+(defparameter *project-root* nil)
+
 (defun sbcl-agent-symbol (name)
   (or (find-symbol name "SBCL-AGENT")
       (error "Unable to resolve SBCL-AGENT symbol ~A" name)))
@@ -312,6 +314,106 @@
   (let ((object (request-object request-json)))
     (and object
          (sbcl-agent-call "JSON-OBJECT-VALUE" object key))))
+
+(defun emit-json-line (object)
+  (write-line (sbcl-agent-call "EMIT-JSON" (json-friendly object)))
+  (finish-output))
+
+(defun emit-stream-frame (type payload)
+  (emit-json-line (list :type type :payload payload)))
+
+(defun provider-event-stream-payload (event)
+  (list :cursor 0
+        :kind :provider-stream
+        :timestamp (get-universal-time)
+        :family :provider
+        :summary (format nil "provider / ~A"
+                         (normalize-symbol-value
+                          (sbcl-agent-call "PROVIDER-EVENT-EFFECTIVE-TYPE" event)))
+        :entity-id (or (sbcl-agent-call "PROVIDER-EVENT-ENTITY-ID" event)
+                       (sbcl-agent-call "PROVIDER-EVENT-RUN-ID" event)
+                       (sbcl-agent-call "PROVIDER-EVENT-OPERATION-ID" event))
+        :thread-id (sbcl-agent-call "PROVIDER-EVENT-THREAD-ID" event)
+        :turn-id (sbcl-agent-call "PROVIDER-EVENT-TURN-ID" event)
+        :visibility (or (sbcl-agent-call "PROVIDER-EVENT-VISIBILITY" event) :user)
+        :payload (list :canonical-type
+                       (sbcl-agent-call "PROVIDER-EVENT-EFFECTIVE-TYPE" event)
+                       :legacy-type (sbcl-agent-call "PROVIDER-EVENT-LEGACY-TYPE" event)
+                       :payload (sbcl-agent-call "PROVIDER-EVENT-PAYLOAD" event)
+                       :run-id (sbcl-agent-call "PROVIDER-EVENT-RUN-ID" event)
+                       :operation-id (sbcl-agent-call "PROVIDER-EVENT-OPERATION-ID" event)
+                       :thread-id (sbcl-agent-call "PROVIDER-EVENT-THREAD-ID" event)
+                       :turn-id (sbcl-agent-call "PROVIDER-EVENT-TURN-ID" event))))
+
+(defun last-id (items)
+  (car (last items)))
+
+(defun record-conversation-send-failure (session thread-id summary)
+  (let* ((thread (and thread-id
+                      (sbcl-agent-call "FIND-THREAD" session thread-id)))
+         (turn-id (and thread
+                       (last-id (sbcl-agent-call "THREAD-TURN-IDS" thread))))
+         (turn (and turn-id
+                    (sbcl-agent-call "FIND-TURN" session turn-id)))
+         (operation-id (and turn
+                            (last-id (sbcl-agent-call "TURN-OPERATION-IDS" turn))))
+         (operation (and operation-id
+                         (sbcl-agent-call "FIND-OPERATION" session operation-id)))
+         (assistant-message (and thread turn
+                                 (sbcl-agent-call "CREATE-MESSAGE"
+                                                  session
+                                                  thread
+                                                  :assistant
+                                                  summary
+                                                  :turn-id (sbcl-agent-call "TURN-ID" turn)
+                                                  :metadata (plist :source :live-bridge
+                                                                   :delivery :error)))))
+    (when (and thread turn operation)
+      (sbcl-agent-call "COMPLETE-OPERATION"
+                       session
+                       thread
+                       turn
+                       operation
+                       (plist :error summary)
+                       :failed-p t
+                       :status :failed
+                       :metadata (plist :bridge-error-p t)))
+    (when (and thread turn assistant-message)
+      (sbcl-agent-call "COMPLETE-TURN"
+                       session
+                       thread
+                       turn
+                       assistant-message
+                       :error-state summary
+                       :status :failed
+                       :metadata (plist :bridge-error-p t)))
+    (list :thread (and thread (sbcl-agent-call "THREAD-RECORD-SUMMARY" thread))
+          :turn (and turn (sbcl-agent-call "TURN-RECORD-SUMMARY" turn))
+          :assistant-message (and assistant-message
+                                  (sbcl-agent-call "MESSAGE-RECORD-SUMMARY" assistant-message))
+          :summary summary)))
+
+(defun current-provider-for-prompt (environment session prompt options)
+  (let* ((base-config (sbcl-agent-call "LOAD-CONFIG"
+                                       :working-directory (namestring *project-root*)))
+         (profiles (sbcl-agent-call "ENVIRONMENT-PROVIDER-PROFILES" environment)))
+    (when (null profiles)
+      (sbcl-agent-call "ENSURE-ENVIRONMENT-PROVIDER-PROFILE"
+                       :environment environment
+                       :config base-config))
+    (let* ((route (sbcl-agent-call "SELECT-ENVIRONMENT-PROVIDER-PROFILE"
+                                   prompt
+                                   :environment environment
+                                   :options options
+                                   :session session))
+           (selected-profile (and route (getf route :selected-profile)))
+           (selected-provider-name (and selected-profile (getf selected-profile :provider)))
+           (base-provider-name (sbcl-agent-call "CONFIG-PROVIDER" base-config)))
+      (or (and selected-profile
+               selected-provider-name
+               (string-equal selected-provider-name base-provider-name)
+               (sbcl-agent-call "PROVIDER-FROM-PROFILE" selected-profile base-config))
+          (sbcl-agent-call "MAKE-PROVIDER" base-config)))))
 
 (defun keywordish (value)
   (when (and value (> (length value) 0))
@@ -678,6 +780,82 @@
          (sbcl-agent-call "COMMAND-RUNTIME-RELOAD-FILE-SERVICE" session path)))
       ((string= operation "conversation.thread-list")
        (sbcl-agent-call "QUERY-CONVERSATION-THREAD-LIST-SERVICE" (bridge-session environment)))
+      ((string= operation "conversation.create-thread")
+       (let* ((session (bridge-session environment))
+              (title (request-object-value request-json "title"))
+              (summary (request-object-value request-json "summary")))
+        (unless title
+          (error "conversation.create-thread requires a title payload"))
+        (sbcl-agent-call "COMMAND-CONVERSATION-CREATE-THREAD-SERVICE"
+                         session
+                         :title title
+                         :summary summary)))
+      ((string= operation "conversation.send-message")
+       (let* ((session (bridge-session environment))
+              (thread-id (request-object-value request-json "threadId"))
+              (prompt (request-object-value request-json "prompt"))
+              (options '()))
+         (unless thread-id
+           (error "conversation.send-message requires a threadId payload"))
+         (unless prompt
+           (error "conversation.send-message requires a prompt payload"))
+         (sbcl-agent-call "COMMAND-CONVERSATION-USE-THREAD-SERVICE" session thread-id)
+         (handler-case
+             (sbcl-agent-call "COMMAND-CONVERSATION-EXECUTION-SERVICE"
+                              session
+                              (current-provider-for-prompt environment session prompt options)
+                              prompt
+                              options
+                              :source :say
+                              :operator-mode :conversation)
+           (error (condition)
+             (sbcl-agent-call "MAKE-SERVICE-RESPONSE"
+                              :execution
+                              :say
+                              :command
+                              (record-conversation-send-failure session
+                                                                thread-id
+                                                                (princ-to-string condition))
+                              :status :error
+                              :metadata (sbcl-agent-call "MAKE-SERVICE-METADATA"
+                                                         :authority :environment
+                                                         :session session
+                                                         :thread-id thread-id))))))
+      ((string= operation "conversation.send-message-stream")
+       (let* ((session (bridge-session environment))
+              (thread-id (request-object-value request-json "threadId"))
+              (prompt (request-object-value request-json "prompt"))
+              (options '(:stream t)))
+         (unless thread-id
+           (error "conversation.send-message-stream requires a threadId payload"))
+         (unless prompt
+           (error "conversation.send-message-stream requires a prompt payload"))
+         (sbcl-agent-call "COMMAND-CONVERSATION-USE-THREAD-SERVICE" session thread-id)
+         (let ((listener (lambda (event)
+                           (emit-stream-frame :event (provider-event-stream-payload event)))))
+           (progv (list (sbcl-agent-symbol "*STREAM-EVENT-LISTENER*"))
+                  (list listener)
+              (handler-case
+                  (sbcl-agent-call "COMMAND-CONVERSATION-EXECUTION-SERVICE"
+                                   session
+                                   (current-provider-for-prompt environment session prompt options)
+                                   prompt
+                                   options
+                                   :source :say
+                                   :operator-mode :conversation)
+                (error (condition)
+                  (sbcl-agent-call "MAKE-SERVICE-RESPONSE"
+                                   :execution
+                                   :say
+                                   :command
+                                   (record-conversation-send-failure session
+                                                                     thread-id
+                                                                     (princ-to-string condition))
+                                   :status :error
+                                   :metadata (sbcl-agent-call "MAKE-SERVICE-METADATA"
+                                                              :authority :environment
+                                                              :session session
+                                                              :thread-id thread-id))))))))
       ((string= operation "conversation.thread-detail")
        (let ((request-id (request-object-value request-json "threadId")))
          (sbcl-agent-call "QUERY-CONVERSATION-THREAD-DETAIL-SERVICE"
@@ -861,13 +1039,33 @@
     (unless (and project-dir state-path-argument operation)
       (error "Usage: live-service-bridge.lisp <sbcl-agent-project-dir> <state-path> <operation> [environment-id]"))
     (require :asdf)
+    (setf *project-root* project-root)
     (load (merge-pathnames #P"sbcl-agent.asd" project-root))
     (asdf-call "LOAD-SYSTEM" :sbcl-agent)
     (let* ((environment (load-or-create-bridge-environment project-root state-path environment-id))
-           (response (service-response-for environment operation environment-id request-json)))
-      (sbcl-agent-call "SAVE-ENVIRONMENT" environment state-path)
-      (write-string
-       (sbcl-agent-call "EMIT-JSON"
-        (json-friendly response))))))
+           (response
+             (handler-case
+                 (service-response-for environment operation environment-id request-json)
+               (error (condition)
+                 (sbcl-agent-call "MAKE-SERVICE-RESPONSE"
+                                  :bridge
+                                  :failure
+                                  :command
+                                  (list :summary (princ-to-string condition)
+                                        :error (princ-to-string condition)
+                                        :operation operation)
+                                  :status :error
+                                  :metadata (sbcl-agent-call "MAKE-SERVICE-METADATA"
+                                                             :authority :environment
+                                                             :environment environment))))))
+      (handler-case
+          (sbcl-agent-call "SAVE-ENVIRONMENT" environment state-path)
+        (error ()
+          nil))
+      (if (string= operation "conversation.send-message-stream")
+          (emit-stream-frame :result response)
+          (write-string
+           (sbcl-agent-call "EMIT-JSON"
+                            (json-friendly response)))))))
 
 (main)
