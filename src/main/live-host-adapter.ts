@@ -14,6 +14,7 @@ import type {
   BindingDto,
   CommandResultDto,
   CreateConversationThreadInput,
+  UpdateConversationThreadInput,
   DesktopPreferencesDto,
   EnvironmentEventDto,
   EventSubscriptionInput,
@@ -1708,6 +1709,21 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
       "conversation.create-thread",
       input.environmentId,
       {
+        title: input.title,
+        summary: input.summary
+      }
+    );
+    return adaptCreateConversationThreadResponse(response);
+  }
+
+  async updateConversationThread(
+    input: UpdateConversationThreadInput
+  ): Promise<CommandResultDto<ThreadSummaryDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "conversation.update-thread",
+      input.environmentId,
+      {
+        threadId: input.threadId,
         title: input.title,
         summary: input.summary
       }

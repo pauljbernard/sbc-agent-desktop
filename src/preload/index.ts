@@ -14,7 +14,9 @@ import type {
 const eventHandlers = new Map<string, (event: EnvironmentEventDto) => void>();
 const pendingEvents = new Map<string, EnvironmentEventDto[]>();
 const conversationStreamHandlers = new Map<string, (event: EnvironmentEventDto) => void>();
+const menuActionHandlers = new Map<string, (action: string) => void>();
 let nextConversationStreamSubscriptionId = 1;
+let nextMenuActionSubscriptionId = 1;
 
 ipcRenderer.on(
   "events:subscription-event",
@@ -34,6 +36,12 @@ ipcRenderer.on(
 ipcRenderer.on("conversation:stream-event", (_event, payload: EnvironmentEventDto) => {
   for (const handler of conversationStreamHandlers.values()) {
     handler(payload);
+  }
+});
+
+ipcRenderer.on("menu:action", (_event, payload: { action: string }) => {
+  for (const handler of menuActionHandlers.values()) {
+    handler(payload.action);
   }
 });
 
@@ -78,6 +86,7 @@ const api: SbclAgentDesktopApi = {
   },
   command: {
     createConversationThread: (input) => ipcRenderer.invoke("command:create-conversation-thread", input),
+    updateConversationThread: (input) => ipcRenderer.invoke("command:update-conversation-thread", input),
     sendConversationMessage: (input) => ipcRenderer.invoke("command:send-conversation-message", input),
     evaluateInContext: (input) => ipcRenderer.invoke("command:evaluate-in-context", input),
     stageSourceChange: (input) => ipcRenderer.invoke("command:stage-source-change", input),
@@ -109,6 +118,9 @@ const api: SbclAgentDesktopApi = {
     unsubscribe: async (subscriptionId: string): Promise<void> => {
       eventHandlers.delete(subscriptionId);
       pendingEvents.delete(subscriptionId);
+      if (menuActionHandlers.delete(subscriptionId)) {
+        return;
+      }
       if (conversationStreamHandlers.delete(subscriptionId)) {
         return;
       }
@@ -122,12 +134,18 @@ const api: SbclAgentDesktopApi = {
       ipcRenderer.invoke("desktop:get-preferences"),
     setDesktopPreferences: (patch: Partial<DesktopPreferencesDto>): Promise<DesktopPreferencesDto> =>
       ipcRenderer.invoke("desktop:set-preferences", patch),
+    setWindowTitle: (title: string): Promise<void> => ipcRenderer.invoke("desktop:set-window-title", title),
     openEntityInNewWindow: (ref: EntityRefDto) => ipcRenderer.invoke("desktop:open-entity", ref),
     listDocumentationPages: (): Promise<DocumentationPageSummaryDto[]> =>
       ipcRenderer.invoke("desktop:list-documentation-pages"),
     readDocumentationPage: (slug: string): Promise<DocumentationPageDto> =>
       ipcRenderer.invoke("desktop:read-documentation-page", slug),
-    openExternalLink: (url: string): Promise<void> => ipcRenderer.invoke("desktop:open-external-link", url)
+    openExternalLink: (url: string): Promise<void> => ipcRenderer.invoke("desktop:open-external-link", url),
+    subscribeMenuActions: async (handler: (action: string) => void): Promise<EventSubscriptionHandle> => {
+      const subscriptionId = `menu-action-${nextMenuActionSubscriptionId++}`;
+      menuActionHandlers.set(subscriptionId, handler);
+      return { subscriptionId };
+    }
   }
 };
 

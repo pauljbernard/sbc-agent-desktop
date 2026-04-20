@@ -4,6 +4,7 @@ import type {
   BindingDto,
   CommandResultDto,
   CreateConversationThreadInput,
+  UpdateConversationThreadInput,
   DesktopPreferencesDto,
   EnvironmentEventDto,
   EventSubscriptionInput,
@@ -25,6 +26,7 @@ import type {
 import {
   commandApproveRequest,
   commandCreateConversationThread,
+  commandUpdateConversationThread,
   commandSendConversationMessage,
   commandDenyRequest,
   commandEvaluateInContext,
@@ -195,6 +197,15 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
     input: CreateConversationThreadInput
   ): Promise<CommandResultDto<ThreadSummaryDto>> {
     return commandCreateConversationThread({
+      ...input,
+      environmentId: this.resolveEnvironmentId(input.environmentId)
+    });
+  }
+
+  async updateConversationThread(
+    input: UpdateConversationThreadInput
+  ): Promise<CommandResultDto<ThreadSummaryDto>> {
+    return commandUpdateConversationThread({
       ...input,
       environmentId: this.resolveEnvironmentId(input.environmentId)
     });

@@ -790,6 +790,20 @@
                          session
                          :title title
                          :summary summary)))
+      ((string= operation "conversation.update-thread")
+       (let* ((session (bridge-session environment))
+              (thread-id (request-object-value request-json "threadId"))
+              (title (request-object-value request-json "title"))
+              (summary (request-object-value request-json "summary")))
+         (unless thread-id
+           (error "conversation.update-thread requires a threadId payload"))
+         (unless title
+           (error "conversation.update-thread requires a title payload"))
+         (sbcl-agent-call "COMMAND-CONVERSATION-UPDATE-THREAD-SERVICE"
+                          session
+                          thread-id
+                          :title title
+                          :summary summary)))
       ((string= operation "conversation.send-message")
        (let* ((session (bridge-session environment))
               (thread-id (request-object-value request-json "threadId"))

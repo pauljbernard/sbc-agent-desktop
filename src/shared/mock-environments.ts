@@ -31,6 +31,7 @@ import type {
   TaskSummaryDto,
   ThreadDetailDto,
   ThreadSummaryDto,
+  UpdateConversationThreadInput,
   TurnDetailDto,
   TurnSummaryDto,
   TruthPostureDto,
@@ -1195,6 +1196,44 @@ export function commandCreateConversationThread(
       ...metadata(binding, "thread-command"),
       commandModel: "thread-command-v1",
       threadId
+    }
+  };
+}
+
+export function commandUpdateConversationThread(
+  input: UpdateConversationThreadInput
+): CommandResultDto<ThreadSummaryDto> {
+  const environment = environments[input.environmentId];
+  const binding = { environmentId: input.environmentId };
+  const detail = environment.threadDetails[input.threadId];
+  const thread = environment.threads.find((entry) => entry.threadId === input.threadId);
+  if (!detail || !thread) {
+    throw new Error(`Unknown thread ${input.threadId}`);
+  }
+
+  const title = input.title.trim();
+  if (!title) {
+    throw new Error("Thread title is required.");
+  }
+
+  thread.title = title;
+  detail.title = title;
+  if (typeof input.summary === "string") {
+    thread.summary = input.summary;
+    detail.summary = input.summary;
+  }
+  thread.latestActivityAt = new Date().toISOString();
+
+  return {
+    contractVersion: 1,
+    domain: "conversation",
+    operation: "conversation.update_thread",
+    kind: "command",
+    status: "ok",
+    data: thread,
+    metadata: {
+      ...metadata(binding, "thread-update"),
+      threadId: input.threadId
     }
   };
 }

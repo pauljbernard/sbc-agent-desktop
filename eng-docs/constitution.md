@@ -206,6 +206,8 @@ This means:
 - supportive context must move to inspectors, selection detail, or collapsed rails when possible
 - repeated explanatory copy must be removed once the user is inside an active workflow
 - transient navigation and secondary status must not permanently consume the same space as active work
+- resizable boundaries must be rendered as explicit splitters centered in the space between panes rather than fused to panel borders
+- splitters must stay within the working band they separate and must not cut through global shell chrome
 
 Layouts that spend scarce vertical or horizontal space on duplicated framing, decorative summaries, or always-visible helper text are constitutionally suspect.
 

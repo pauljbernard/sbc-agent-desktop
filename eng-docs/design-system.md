@@ -178,6 +178,7 @@ Primary layout primitives:
 - shell footer
 - content canvas
 - split pane
+- splitter
 - inspector rail
 - section stack
 - card or panel
@@ -258,6 +259,41 @@ For transcript and feed-like work:
 - the content body should grow upward until scrolling becomes necessary
 - streaming output should keep the latest response in view automatically
 
+### Splitter Rule
+
+When adjacent layout rails or panes are user-resizable, the splitter is part of the design system and must not be improvised.
+
+Splitters must:
+
+- live in the actual gap between the two resizable regions rather than attaching visually to either panel edge
+- align only to the vertical extent of the working band they separate
+- stop at the boundaries of shell header and shell footer or status dock rather than cutting through global chrome
+- remain visible at rest through a subtle but persistent cue
+- become more prominent on hover or drag without becoming visually heavy at idle
+- preserve a sufficiently large grab target even when the visible divider line is thin
+- resize the neighboring regions without distorting unrelated shell structure
+
+Splitters should feel:
+
+- precise
+- quiet
+- easy to discover
+- clearly part of layout, not decoration
+
+Splitters should avoid:
+
+- merging into the border of one adjacent panel
+- extending through unrelated shell regions
+- requiring the user to hunt for the grab target
+- using a decorative treatment so strong that it competes with the work surface
+
+For shell-level splitters specifically:
+
+- the splitter should sit at the midpoint of the inter-column gap
+- the visual cue should be centered in that gap
+- resizing should preserve the dominance of the center work surface while allowing the support rail to expand when needed
+- collapsed rails should not continue to render active splitters
+
 ## Component Families
 
 ### Shell Components
@@ -267,6 +303,7 @@ For transcript and feed-like work:
 - workspace navigation rail
 - footer status dock
 - canvas workspace header
+- shell splitter
 - contextual inspector rail
 
 The shell itself is part of the design system and not merely application scaffolding.
@@ -276,6 +313,7 @@ It should provide:
 - one stable application frame across all workspaces
 - a reusable full-width top header for brand, product identity, and shell continuity
 - a reusable left navigation rail dedicated to hierarchical workspace navigation
+- reusable shell splitters wherever adjacent rails can be resized by the operator
 - a reusable bottom status dock dedicated to compact environment, binding, workspace, runtime, and inspector posture
 - clear separation between global shell chrome and workspace-local content headers
 

@@ -1,5 +1,6 @@
 {
   "name": "sbcl-agent-ux",
+  "productName": "Agent Desktop",
   "version": "0.1.0",
   "private": true,
   "description": "An environment based agentic first development enviornment",
@@ -10,6 +11,7 @@
   "scripts": {
     "dev": "node node_modules/electron-vite/bin/electron-vite.js dev",
     "build": "node node_modules/electron-vite/bin/electron-vite.js build",
+    "build:app": "npm run build && electron-builder --mac dir",
     "preview": "node node_modules/electron-vite/bin/electron-vite.js preview",
     "typecheck": "tsc --noEmit",
     "test:spec-drift": "node scripts/spec-drift-check.mjs",
@@ -17,7 +19,6 @@
     "test:ui:headed": "npm run test:spec-drift && npm run build && playwright test --headed"
   },
   "dependencies": {
-    "electron": "^36.2.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },
@@ -27,9 +28,35 @@
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
     "@vitejs/plugin-react": "^5.0.0",
+    "electron": "^36.2.1",
+    "electron-builder": "^26.8.1",
     "electron-vite": "^3.1.0",
     "playwright": "^1.59.1",
     "typescript": "^5.8.3",
     "vite": "^6.3.5"
+  },
+  "build": {
+    "appId": "com.paulbernard.agentdesktop",
+    "productName": "Agent Desktop",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "dist/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "artifactName": "Agent Desktop.${ext}",
+      "category": "public.app-category.developer-tools",
+      "target": [
+        {
+          "target": "dir",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ]
+    }
   }
 }

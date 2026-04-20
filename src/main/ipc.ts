@@ -1,4 +1,4 @@
-import { ipcMain, shell, type WebContents } from "electron";
+import { BrowserWindow, ipcMain, shell, type WebContents } from "electron";
 import type { EnvironmentEventDto, EventSubscriptionInput, WorkspaceId } from "../shared/contracts";
 import { listDocumentationPages, readDocumentationPageBySlug } from "./documentation";
 import { hostAdapter } from "./host-adapter";
@@ -115,6 +115,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("command:create-conversation-thread", (_event, input) =>
     hostAdapter.createConversationThread(input)
   );
+  ipcMain.handle("command:update-conversation-thread", (_event, input) =>
+    hostAdapter.updateConversationThread(input)
+  );
   ipcMain.handle("command:send-conversation-message", (_event, input) =>
     hostAdapter.sendConversationMessage(input, (streamEvent) => {
       emitDesktopEvent(streamEvent);
@@ -137,6 +140,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("desktop:set-preferences", (_event, patch) =>
     hostAdapter.setDesktopPreferences(patch)
   );
+  ipcMain.handle("desktop:set-window-title", (event, title: string) => {
+    BrowserWindow.fromWebContents(event.sender)?.setTitle(title);
+  });
   ipcMain.handle("desktop:open-entity", (_event, ref) => hostAdapter.openEntityInNewWindow(ref));
   ipcMain.handle("desktop:list-documentation-pages", () => listDocumentationPages());
   ipcMain.handle("desktop:read-documentation-page", (_event, slug: string) =>

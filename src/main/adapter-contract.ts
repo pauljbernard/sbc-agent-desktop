@@ -8,6 +8,7 @@ import type {
   BindingDto,
   CommandResultDto,
   CreateConversationThreadInput,
+  UpdateConversationThreadInput,
   DesktopPreferencesDto,
   EnvironmentEventDto,
   EventSubscriptionInput,
@@ -53,6 +54,9 @@ export interface SbclAgentHostAdapter {
   turnDetail(turnId: string, environmentId?: string): Promise<QueryResultDto<TurnDetailDto>>;
   createConversationThread(
     input: CreateConversationThreadInput
+  ): Promise<CommandResultDto<ThreadSummaryDto>>;
+  updateConversationThread(
+    input: UpdateConversationThreadInput
   ): Promise<CommandResultDto<ThreadSummaryDto>>;
   sendConversationMessage(
     input: SendConversationMessageInput,

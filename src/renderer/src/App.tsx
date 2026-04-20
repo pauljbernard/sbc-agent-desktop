@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
   ApprovalDecisionDto,
   ApprovalRequestDto,
@@ -87,17 +87,6 @@ interface WorkspaceResolutionState {
   tone: "active" | "warning" | "danger" | "steady";
 }
 
-interface CommandCenterEntry {
-  id: string;
-  group: "workspace" | "thread" | "work" | "approval" | "incident" | "artifact";
-  label: string;
-  summary: string;
-  badge: string;
-  tone: "active" | "warning" | "danger" | "steady";
-  workspace: WorkspaceId;
-  onSelect: () => Promise<void>;
-}
-
 type ThemePreference = "system" | "light" | "dark";
 
 type ResolvedTheme = "light" | "dark";
@@ -114,7 +103,7 @@ const PUBLISHED_DOCUMENTATION_URL = "https://pauljbernard.github.io/sbcl-agent-d
 
 type OperateSection = "orientation" | "journeys" | "evidence";
 type ConversationSection = "threads" | "turns" | "draft";
-type ConfigurationSection = "preferences";
+type ConfigurationSection = "theme" | "lisp-code-view";
 type ExecutionSection = "listener" | "approvals" | "work";
 type RecoverySection = "incidents";
 type EvidenceSection = "artifacts" | "observation";
@@ -154,11 +143,19 @@ const configurationSections: Array<{
   id: ConfigurationSection;
   label: string;
   summary: string;
+  family: string;
 }> = [
   {
-    id: "preferences",
-    label: "Preferences",
-    summary: "Desktop appearance and operator defaults that shape the shell itself."
+    id: "theme",
+    label: "Theme",
+    summary: "Desktop appearance preference and resolved operating-system behavior.",
+    family: "appearance"
+  },
+  {
+    id: "lisp-code-view",
+    label: "Lisp Code View",
+    summary: "Structured Lisp rendering, delimiter depth colors, and code-surface presentation.",
+    family: "editor"
   }
 ];
 
@@ -950,7 +947,7 @@ export function App() {
     useState<ConversationSection>("threads");
   const [selectedBrowserDomain, setSelectedBrowserDomain] = useState<BrowserDomain>("symbols");
   const [selectedConfigurationSection, setSelectedConfigurationSection] =
-    useState<ConfigurationSection>("preferences");
+    useState<ConfigurationSection>("theme");
   const [selectedExecutionSection, setSelectedExecutionSection] = useState<ExecutionSection>("listener");
   const [selectedRecoverySection, setSelectedRecoverySection] = useState<RecoverySection>("incidents");
   const [selectedEvidenceSection, setSelectedEvidenceSection] = useState<EvidenceSection>("artifacts");
@@ -973,8 +970,7 @@ export function App() {
     incidents: true,
     artifacts: true,
     browser: true,
-    documentation: true,
-    configuration: true
+    documentation: true
   });
   const [hostStatus, setHostStatus] = useState<HostStatusDto | null>(null);
   const [binding, setBinding] = useState<BindingDto | null>(null);
@@ -983,8 +979,9 @@ export function App() {
   const [selectedConversationThreadByProject, setSelectedConversationThreadByProject] = useState<Record<string, string>>({});
   const [replSessionsByProject, setReplSessionsByProject] = useState<Record<string, ReplSessionProfileDto[]>>({});
   const [currentReplSessionIdByProject, setCurrentReplSessionIdByProject] = useState<Record<string, string>>({});
-  const [projectTitleDraft, setProjectTitleDraft] = useState("");
-  const [projectEnvironmentDraft, setProjectEnvironmentDraft] = useState("");
+  const [isProjectOpenDialogOpen, setIsProjectOpenDialogOpen] = useState(false);
+  const [isProjectCreateDialogOpen, setIsProjectCreateDialogOpen] = useState(false);
+  const [newProjectTitleDraft, setNewProjectTitleDraft] = useState("");
   const [replSessionTitleDraft, setReplSessionTitleDraft] = useState("New Listener Session");
   const [summary, setSummary] = useState<EnvironmentSummaryDto | null>(null);
   const [status, setStatus] = useState<EnvironmentStatusDto | null>(null);
@@ -995,7 +992,11 @@ export function App() {
   const [selectedConversationMessageId, setSelectedConversationMessageId] = useState<string | null>(null);
   const [selectedTurnId, setSelectedTurnId] = useState<string | null>(null);
   const [selectedTurn, setSelectedTurn] = useState<TurnDetailDto | null>(null);
-  const [conversationSessionTitleDraft, setConversationSessionTitleDraft] = useState("New Conversation Session");
+  const [conversationSessionTitleDraft, setConversationSessionTitleDraft] = useState("");
+  const [isConversationSessionCreateDialogOpen, setIsConversationSessionCreateDialogOpen] = useState(false);
+  const [isConversationThreadRenameDialogOpen, setIsConversationThreadRenameDialogOpen] = useState(false);
+  const [conversationThreadRenameDraft, setConversationThreadRenameDraft] = useState("");
+  const [conversationThreadRenameTargetId, setConversationThreadRenameTargetId] = useState<string | null>(null);
   const [conversationDraft, setConversationDraft] = useState(
     "Start from the live environment focus and keep runtime, source, and governance context attached."
   );
@@ -1053,11 +1054,9 @@ export function App() {
   const [documentationPages, setDocumentationPages] = useState<DocumentationPageSummaryDto[]>([]);
   const [selectedDocumentationSlug, setSelectedDocumentationSlug] = useState<string>("development-model");
   const [selectedDocumentationPage, setSelectedDocumentationPage] = useState<DocumentationPageDto | null>(null);
-  const [isCommandCenterOpen, setIsCommandCenterOpen] = useState(false);
-  const [commandCenterQuery, setCommandCenterQuery] = useState("");
-  const [commandCenterHistory, setCommandCenterHistory] = useState<Record<string, number>>({});
   const effectiveEnvironmentId = summary?.environmentId ?? binding?.environmentId ?? null;
   const shellRef = useRef<HTMLDivElement | null>(null);
+  const statusDockRef = useRef<HTMLElement | null>(null);
   const inspectorResizeSessionRef = useRef<{
     contentRight: number;
     minWidth: number;
@@ -1065,6 +1064,7 @@ export function App() {
     gap: number;
   } | null>(null);
   const lastPersistedInspectorWidthRef = useRef<number | null>(null);
+  const [splitterVerticalBounds, setSplitterVerticalBounds] = useState<{ top: number; bottom: number } | null>(null);
 
   function updateRuntimeInspectorSymbol(value: string): void {
     runtimeInspectorSymbolRef.current = value;
@@ -1175,6 +1175,7 @@ export function App() {
   const [selectedArtifact, setSelectedArtifact] = useState<ArtifactDetailDto | null>(null);
   const currentProjectReplSessions = currentProjectId ? replSessionsByProject[currentProjectId] ?? [] : [];
   const currentReplSessionId = currentProjectId ? currentReplSessionIdByProject[currentProjectId] ?? currentProjectReplSessions[0]?.sessionId ?? null : null;
+  const currentProject = projects.find((project) => project.projectId === currentProjectId) ?? null;
   const currentProjectConversationSessionCount = currentProjectId
     ? threads.length
     : 0;
@@ -1200,11 +1201,52 @@ export function App() {
     currentProjectReplSessions.find((session) => session.sessionId === currentReplSessionId) ??
     currentProjectReplSessions[0] ??
     null;
-  const deferredCommandCenterQuery = useDeferredValue(commandCenterQuery.trim().toLowerCase());
-
   useEffect(() => {
     void loadInitialState();
   }, []);
+
+  useEffect(() => {
+    const title = currentProject?.title ?? summary?.environmentLabel ?? "sbcl-agent Desktop";
+    void window.sbclAgentDesktop.desktop.setWindowTitle(title);
+  }, [currentProject?.title, summary?.environmentLabel]);
+
+  useEffect(() => {
+    let active = true;
+    let subscriptionId: string | null = null;
+
+    void window.sbclAgentDesktop.desktop
+      .subscribeMenuActions((action) => {
+        if (!active) {
+          return;
+        }
+
+        if (action === "project:new") {
+          setNewProjectTitleDraft(summary?.environmentLabel ?? summary?.environmentId ?? binding?.environmentId ?? "");
+          setIsProjectCreateDialogOpen(true);
+          return;
+        }
+
+        if (action === "project:save") {
+          void handleSaveCurrentProject();
+          return;
+        }
+
+        if (action === "project:open") {
+          setIsProjectOpenDialogOpen(true);
+        }
+      })
+      .then((handle) => {
+        subscriptionId = handle.subscriptionId;
+      })
+      .catch(() => undefined);
+
+    return () => {
+      active = false;
+      if (subscriptionId) {
+        void window.sbclAgentDesktop.events.unsubscribe(subscriptionId);
+      }
+    };
+  }, [binding?.environmentId, handleSaveCurrentProject, summary?.environmentId, summary?.environmentLabel]);
 
   useEffect(() => {
     setSelectedConversationMessageId(null);
@@ -1293,6 +1335,27 @@ export function App() {
     window.addEventListener("resize", handleViewportResize);
     return () => window.removeEventListener("resize", handleViewportResize);
   }, []);
+
+  useEffect(() => {
+    function updateSplitterVerticalBounds(): void {
+      if (!shellRef.current || !statusDockRef.current) {
+        return;
+      }
+
+      const shellRect = shellRef.current.getBoundingClientRect();
+      const statusDockRect = statusDockRef.current.getBoundingClientRect();
+      const gap = shellGapForViewport(viewportWidth);
+      const titleStripHeight = 34;
+      setSplitterVerticalBounds({
+        top: titleStripHeight + gap,
+        bottom: shellRect.bottom - statusDockRect.top + gap
+      });
+    }
+
+    updateSplitterVerticalBounds();
+    window.addEventListener("resize", updateSplitterVerticalBounds);
+    return () => window.removeEventListener("resize", updateSplitterVerticalBounds);
+  }, [viewportWidth, sidebarPinned, canvasPinned, inspectorPinned, inspectorWidth, activeWorkspace]);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
@@ -1560,7 +1623,6 @@ export function App() {
       setSelectedConversationThreadByProject(desktopPreferences.selectedConversationThreadByProject ?? {});
       setReplSessionsByProject(desktopPreferences.replSessionsByProject ?? {});
       setCurrentReplSessionIdByProject(desktopPreferences.currentReplSessionIdByProject ?? {});
-      setProjectEnvironmentDraft(nextBinding?.environmentId ?? "");
 
       if (nextBinding?.environmentId) {
         const [summaryResult, statusResult] = await Promise.all([
@@ -1577,8 +1639,6 @@ export function App() {
         );
         setProjects(nextProjects);
         setCurrentProjectId((current) => current ?? desktopPreferences.currentProjectId ?? nextProjects[0]?.projectId ?? null);
-        setProjectTitleDraft(summaryResult.data.environmentLabel ?? summaryResult.data.environmentId);
-        setProjectEnvironmentDraft(summaryResult.data.environmentId);
       }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Failed to load desktop state.");
@@ -1692,8 +1752,7 @@ export function App() {
     try {
       await persistProjectRegistry(projects, project.projectId);
       await loadEnvironmentBinding(project.environmentId);
-      setProjectTitleDraft(project.title);
-      setProjectEnvironmentDraft(project.environmentId);
+      setIsProjectOpenDialogOpen(false);
       setErrorMessage(null);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Failed to switch projects.");
@@ -1707,7 +1766,7 @@ export function App() {
       return;
     }
 
-    const title = projectTitleDraft.trim() || summary?.environmentLabel || environmentId;
+    const title = currentProject?.title || summary?.environmentLabel || environmentId;
     if (!title) {
       return;
     }
@@ -1730,14 +1789,14 @@ export function App() {
     }
   }
 
-  async function handleCreateProjectFromEnvironment(): Promise<void> {
-    const environmentId = projectEnvironmentDraft.trim() || summary?.environmentId || binding?.environmentId || "";
+  async function handleCreateProjectFromEnvironment(requestedTitleOverride?: string): Promise<void> {
+    const environmentId = summary?.environmentId || binding?.environmentId || "";
     if (!environmentId) {
-      setErrorMessage("Enter an environment id or bind an environment before creating a project.");
+      setErrorMessage("Bind an environment before creating a project.");
       return;
     }
 
-    const requestedTitle = projectTitleDraft.trim() || summary?.environmentLabel || environmentId;
+    const requestedTitle = requestedTitleOverride?.trim() || summary?.environmentLabel || environmentId;
     const { projectId, title } = makeUniqueProjectIdentity(projects, requestedTitle);
     if (!title) {
       return;
@@ -1754,8 +1813,7 @@ export function App() {
     try {
       await persistProjectRegistry(nextProjects, projectId);
       await loadEnvironmentBinding(environmentId);
-      setProjectTitleDraft(title);
-      setProjectEnvironmentDraft(environmentId);
+      setIsProjectCreateDialogOpen(false);
       setErrorMessage(null);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Failed to create the project.");
@@ -1818,7 +1876,7 @@ export function App() {
       return;
     }
 
-    const title = conversationSessionTitleDraft.trim();
+    const title = conversationSessionTitleDraft.trim() || "New Conversation Session";
     if (!title) {
       return;
     }
@@ -1841,10 +1899,44 @@ export function App() {
       setSelectedThread(null);
       setSelectedTurnId(null);
       setSelectedTurn(null);
-      setConversationSessionTitleDraft("New Conversation Session");
+      setConversationSessionTitleDraft("");
+      setIsConversationSessionCreateDialogOpen(false);
       await persistConversationThreadSelection(currentProjectId, result.data.threadId);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Failed to create the conversation session.");
+    }
+  }
+
+  async function handleRenameConversationThread(): Promise<void> {
+    if (!effectiveEnvironmentId || !conversationThreadRenameTargetId) {
+      return;
+    }
+
+    const title = conversationThreadRenameDraft.trim();
+    if (!title) {
+      return;
+    }
+
+    try {
+      setErrorMessage(null);
+      const updateConversationThread = window.sbclAgentDesktop.command.updateConversationThread;
+      if (typeof updateConversationThread !== "function") {
+        throw new Error(
+          "The desktop preload bridge does not expose updateConversationThread yet. Restart sbcl-agent desktop so the updated preload bundle is loaded."
+        );
+      }
+      await updateConversationThread({
+        environmentId: effectiveEnvironmentId,
+        threadId: conversationThreadRenameTargetId,
+        title
+      });
+      await loadConversationWorkspace(effectiveEnvironmentId);
+      await loadThreadDetail(conversationThreadRenameTargetId, effectiveEnvironmentId);
+      setConversationThreadRenameDraft("");
+      setConversationThreadRenameTargetId(null);
+      setIsConversationThreadRenameDialogOpen(false);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to rename the conversation session.");
     }
   }
 
@@ -2391,207 +2483,6 @@ export function App() {
     return base;
   }, [globalAttentionItems]);
 
-  const commandCenterEntries = useMemo<CommandCenterEntry[]>(() => {
-    const workspaceEntries: CommandCenterEntry[] = workspaceOrder
-      .filter((workspace) => workspace.primary)
-      .map((workspace) => ({
-        id: `workspace:${workspace.id}`,
-        group: "workspace",
-        label: workspace.label,
-        summary: `Open the ${workspace.label} workspace.`,
-        badge: "workspace",
-        tone: workspaceAttention.get(workspace.id)?.tone ?? "steady",
-        workspace: workspace.id,
-        onSelect: async () => {
-          if (workspace.id === "environment") {
-            await navigateToOperateSection(selectedOperateSection);
-            return;
-          }
-          if (workspace.id === "conversations") {
-            await navigateToConversationSection(selectedConversationSection);
-            return;
-          }
-          if (workspace.id === "runtime") {
-            await navigateToExecutionSection(selectedExecutionSection);
-            return;
-          }
-          if (workspace.id === "incidents") {
-            await navigateToRecoverySection(selectedRecoverySection);
-            return;
-          }
-          if (workspace.id === "artifacts") {
-            await navigateToEvidenceSection(selectedEvidenceSection);
-            return;
-          }
-          if (workspace.id === "browser") {
-            await navigateToBrowserDomain(selectedBrowserDomain);
-            return;
-          }
-          if (workspace.id === "configuration") {
-            await navigateToConfigurationSection(selectedConfigurationSection);
-            return;
-          }
-          await navigateToWorkspace(workspace.id);
-        }
-      }));
-
-    const threadEntries: CommandCenterEntry[] = threads.slice(0, 8).map((thread) => ({
-      id: `thread:${thread.threadId}`,
-      group: "thread",
-      label: thread.title,
-      summary: thread.summary,
-      badge: "thread",
-      tone: toneForThreadState(thread.state),
-      workspace: "conversations",
-      onSelect: async () => {
-        setSelectedThreadId(thread.threadId);
-        await navigateToConversationSection("threads");
-      }
-    }));
-
-    const workEntries: CommandCenterEntry[] = workItems.slice(0, 8).map((item) => ({
-      id: `work:${item.workItemId}`,
-      group: "work",
-      label: item.title,
-      summary: item.summary,
-      badge: "work",
-      tone: toneForWorkState(item.state),
-      workspace: "runtime",
-      onSelect: async () => {
-        setSelectedWorkItemId(item.workItemId);
-        await navigateToExecutionSection("work");
-      }
-    }));
-
-    const approvalEntries: CommandCenterEntry[] = approvalRequests.slice(0, 6).map((request) => ({
-      id: `approval:${request.requestId}`,
-      group: "approval",
-      label: request.title,
-      summary: request.summary,
-      badge: "approval",
-      tone: toneForApprovalState(request.state),
-      workspace: "runtime",
-      onSelect: async () => {
-        setSelectedApprovalId(request.requestId);
-        await navigateToExecutionSection("approvals");
-      }
-    }));
-
-    const incidentEntries: CommandCenterEntry[] = incidents.slice(0, 6).map((incident) => ({
-      id: `incident:${incident.incidentId}`,
-      group: "incident",
-      label: incident.title,
-      summary: `Severity ${incident.severity}. ${incident.state}.`,
-      badge: "incident",
-      tone: toneForIncidentSeverity(incident.severity),
-      workspace: "incidents",
-      onSelect: async () => {
-        setSelectedIncidentId(incident.incidentId);
-        await navigateToRecoverySection("incidents");
-      }
-    }));
-
-    const artifactEntries: CommandCenterEntry[] = artifacts.slice(0, 6).map((artifact) => ({
-      id: `artifact:${artifact.artifactId}`,
-      group: "artifact",
-      label: artifact.title,
-      summary: artifact.summary,
-      badge: artifact.kind,
-      tone: artifact.kind.includes("incident") ? "warning" : "active",
-      workspace: "artifacts",
-      onSelect: async () => {
-        setSelectedArtifactId(artifact.artifactId);
-        await navigateToEvidenceSection("artifacts");
-      }
-    }));
-
-    return [
-      ...workspaceEntries,
-      ...threadEntries,
-      ...workEntries,
-      ...approvalEntries,
-      ...incidentEntries,
-      ...artifactEntries
-    ];
-  }, [
-    navigateToConfigurationSection,
-    navigateToConversationSection,
-    navigateToEvidenceSection,
-    navigateToExecutionSection,
-    navigateToOperateSection,
-    navigateToRecoverySection,
-    navigateToWorkspace,
-    approvalRequests,
-    artifacts,
-    incidents,
-    selectedBrowserDomain,
-    selectedConfigurationSection,
-    selectedConversationSection,
-    selectedEvidenceSection,
-    selectedExecutionSection,
-    selectedOperateSection,
-    selectedRecoverySection,
-    threads,
-    workItems,
-    workspaceAttention
-  ]);
-
-  const filteredCommandCenterEntries = useMemo(() => {
-    const groupWeight: Record<CommandCenterEntry["group"], number> = {
-      work: 6,
-      approval: 5,
-      incident: 4,
-      thread: 3,
-      workspace: 2,
-      artifact: 1
-    };
-
-    if (!deferredCommandCenterQuery) {
-      return [...commandCenterEntries]
-        .sort((left, right) => {
-          const historyDelta = (commandCenterHistory[right.id] ?? 0) - (commandCenterHistory[left.id] ?? 0);
-          if (historyDelta !== 0) {
-            return historyDelta;
-          }
-
-          const groupDelta = groupWeight[right.group] - groupWeight[left.group];
-          if (groupDelta !== 0) {
-            return groupDelta;
-          }
-
-          return left.label.localeCompare(right.label);
-        })
-        .slice(0, 20);
-    }
-
-    return [...commandCenterEntries]
-      .map((entry) => {
-        const haystack = `${entry.label} ${entry.summary} ${entry.badge} ${labelForWorkspace(entry.workspace)} ${entry.group}`.toLowerCase();
-        const matchIndex = haystack.indexOf(deferredCommandCenterQuery);
-        return { entry, matchIndex };
-      })
-      .filter((candidate) => candidate.matchIndex >= 0)
-      .sort((left, right) => {
-        if (left.matchIndex !== right.matchIndex) {
-          return left.matchIndex - right.matchIndex;
-        }
-
-        const historyDelta = (commandCenterHistory[right.entry.id] ?? 0) - (commandCenterHistory[left.entry.id] ?? 0);
-        if (historyDelta !== 0) {
-          return historyDelta;
-        }
-
-        const groupDelta = groupWeight[right.entry.group] - groupWeight[left.entry.group];
-        if (groupDelta !== 0) {
-          return groupDelta;
-        }
-
-        return left.entry.label.localeCompare(right.entry.label);
-      })
-      .map((candidate) => candidate.entry)
-      .slice(0, 20);
-  }, [commandCenterEntries, commandCenterHistory, deferredCommandCenterQuery]);
-
   const workspaceDescriptor = useMemo<WorkspaceDescriptor>(() => {
     switch (activeWorkspace) {
       case "environment":
@@ -2736,55 +2627,6 @@ export function App() {
     selectedWorkItem,
     workItems.length
   ]);
-
-  const headerAttentionSummary = useMemo(() => {
-    const approvalsAwaiting = summary?.attention.approvalsAwaiting ?? 0;
-    const openIncidents = summary?.attention.openIncidents ?? 0;
-    const blockedWork = summary?.attention.blockedWork ?? 0;
-
-    if (openIncidents > 0) {
-      return {
-        label: "Recovery",
-        value: `${openIncidents}`,
-        tone: "danger" as const,
-        action: () => navigateToRecoverySection("incidents")
-      };
-    }
-
-    if (approvalsAwaiting > 0) {
-      return {
-        label: "Approvals",
-        value: `${approvalsAwaiting}`,
-        tone: "warning" as const,
-        action: () => navigateToExecutionSection("approvals")
-      };
-    }
-
-    if (blockedWork > 0) {
-      return {
-        label: "Blocked Work",
-        value: `${blockedWork}`,
-        tone: "warning" as const,
-        action: () => navigateToExecutionSection("work")
-      };
-    }
-
-    return {
-      label: "Clear",
-      value: "0",
-      tone: "active" as const,
-      action: () => navigateToOperateSection("orientation")
-    };
-  }, [summary, navigateToExecutionSection, navigateToOperateSection, navigateToRecoverySection]);
-
-  const headerContinuationSummary =
-    summary?.activeContext.currentThreadTitle ??
-    selectedWorkItem?.title ??
-    "No dominant continuation";
-
-  const headerContinuationMeta =
-    summary?.activeContext.focusSummary ??
-    "Use the command center to jump directly into the next active thread, blocker, or recovery path.";
 
   async function navigateToWorkspace(workspace: WorkspaceId): Promise<void> {
     const nextWorkspace = canonicalWorkspace(workspace);
@@ -2933,12 +2775,6 @@ export function App() {
     await navigateToWorkspace("browser");
   }
 
-  async function navigateToConfigurationSection(section: ConfigurationSection): Promise<void> {
-    setSelectedConfigurationSection(section);
-    setExpandedWorkspaceMenus((current) => ({ ...current, configuration: true }));
-    await navigateToWorkspace("configuration");
-  }
-
   async function navigateToOperateSection(section: OperateSection): Promise<void> {
     setSelectedOperateSection(section);
     setExpandedWorkspaceMenus((current) => ({ ...current, environment: true }));
@@ -2973,431 +2809,407 @@ export function App() {
     <div
       className={`desktop-shell${sidebarPinned ? "" : " sidebar-collapsed"}${canvasPinned ? "" : " canvas-collapsed"}${inspectorPinned ? "" : " inspector-collapsed"}`}
       ref={shellRef}
-      style={desktopShellInlineColumns ? { gridTemplateColumns: desktopShellInlineColumns } : undefined}
+      style={
+        desktopShellInlineColumns
+          ? {
+              gridTemplateColumns: desktopShellInlineColumns,
+              ["--shell-gap" as string]: `${shellGapForViewport(viewportWidth)}px`,
+              ["--shell-padding-x" as string]: `${shellHorizontalPaddingForViewport(viewportWidth)}px`,
+              ["--shell-inspector-width" as string]: `${
+                Math.min(
+                  Math.max(
+                    inspectorWidth ?? shellInspectorDefaultWidthForViewport(viewportWidth),
+                    shellInspectorMinWidthForViewport(viewportWidth)
+                  ),
+                  Math.max(
+                    shellInspectorMinWidthForViewport(viewportWidth),
+                    viewportWidth -
+                      shellHorizontalPaddingForViewport(viewportWidth) * 2 -
+                      shellSidebarWidthForViewport(viewportWidth, sidebarPinned) -
+                      shellCanvasMinWidthForViewport(viewportWidth) -
+                      shellGapForViewport(viewportWidth) * 2
+                  )
+                )
+              }px`
+            }
+          : undefined
+      }
     >
       <div className="window-drag-strip" aria-hidden="true">
-        <div className="window-drag-label">sbcl-agent Desktop</div>
+        <div className="window-drag-label">Agent Desktop</div>
       </div>
 
       <div className="shell-glow shell-glow-left" />
       <div className="shell-glow shell-glow-right" />
 
-      <header className="shell-header">
-        <div className="shell-header-brand">
-          <div className="brand-mark">SA</div>
-          <div className="shell-header-brand-stack">
-            <div className="shell-header-copy">
-              <p className="eyebrow">sbcl-agent Desktop</p>
-              <strong>Environment Shell</strong>
-            </div>
-            <div className="shell-header-brand-meta">
-              <Badge tone="active">Governed Runtime</Badge>
-              <span>Kernel-first engineering cockpit</span>
-            </div>
-          </div>
-        </div>
-        <div className="shell-header-projects">
-          <label className="project-switcher">
-            <span className="context-label">Project</span>
-            <select onChange={(event) => void handleProjectSwitch(event.target.value)} value={currentProjectId ?? ""}>
-              {projects.length > 0 ? (
-                projects.map((project) => (
-                  <option key={project.projectId} value={project.projectId}>
-                    {project.title}
-                  </option>
-                ))
-              ) : (
-                <option value="">No projects</option>
-              )}
-            </select>
-          </label>
-          <label className="project-input">
-            <span className="context-label">Title</span>
-            <input onChange={(event) => setProjectTitleDraft(event.target.value)} value={projectTitleDraft} />
-          </label>
-          <label className="project-input">
-            <span className="context-label">Environment</span>
-            <input onChange={(event) => setProjectEnvironmentDraft(event.target.value)} value={projectEnvironmentDraft} />
-          </label>
-          <button className="project-action-button" onClick={() => void handleSaveCurrentProject()} type="button">
-            Save Project
-          </button>
-          <button className="project-action-button" onClick={() => void handleCreateProjectFromEnvironment()} type="button">
-            New Project
-          </button>
-        </div>
-        <div className="shell-header-supervision">
-          <div className="shell-header-supervision-copy">
-            <span className="context-label">Current continuation</span>
-            <strong>{headerContinuationSummary}</strong>
-            <p>{headerContinuationMeta}</p>
-          </div>
-          <div className="shell-header-supervision-metrics">
-            <button
-              className={`header-metric-chip header-metric-chip-${headerAttentionSummary.tone}`}
-              onClick={() => void headerAttentionSummary.action()}
-              type="button"
-            >
-              <span>{headerAttentionSummary.label}</span>
-              <strong>{headerAttentionSummary.value}</strong>
-            </button>
-            <button className="header-metric-chip header-metric-chip-steady" onClick={() => void navigateToExecutionSection("work")} type="button">
-              <span>Runtime</span>
-              <strong>{summary?.activeContext.runtimePackage ?? status?.runtimeState ?? "unknown"}</strong>
-            </button>
-            <button className="header-metric-chip header-metric-chip-steady" onClick={() => void navigateToConversationSection("threads")} type="button">
-              <span>Thread</span>
-              <strong>{summary?.activeContext.currentThreadTitle ? "Active" : "None"}</strong>
-            </button>
-          </div>
-        </div>
-        <div className="shell-header-actions">
-          <button className="shell-chrome-button" onClick={() => void toggleSidebarPinned()} type="button">
-            {sidebarPinned ? "Hide Navigation" : "Show Navigation"}
-          </button>
-          <button className="shell-chrome-button" onClick={() => void toggleCanvasPinned()} type="button">
-            {canvasPinned ? "Hide Workspace" : "Show Workspace"}
-          </button>
-          <button
-            aria-expanded={isCommandCenterOpen}
-            aria-haspopup="dialog"
-            className="command-center-button"
-            onClick={() => setIsCommandCenterOpen(true)}
-            type="button"
-          >
-            <span>Command Center</span>
-            <kbd>⌘K</kbd>
-          </button>
-        </div>
-      </header>
+      {isProjectOpenDialogOpen ? (
+        <ProjectOpenDialog
+          currentProjectId={currentProjectId}
+          onClose={() => setIsProjectOpenDialogOpen(false)}
+          onOpenProject={(projectId) => void handleProjectSwitch(projectId)}
+          projects={projects}
+        />
+      ) : null}
 
-      {isCommandCenterOpen ? (
-        <CommandCenter
-          entries={filteredCommandCenterEntries}
-          onClose={() => setIsCommandCenterOpen(false)}
-          onQueryChange={setCommandCenterQuery}
-          onSelectEntry={(entryId) =>
-            setCommandCenterHistory((current) => ({
-              ...current,
-              [entryId]: Date.now()
-            }))
-          }
-          query={commandCenterQuery}
+      {isProjectCreateDialogOpen ? (
+        <ProjectCreateDialog
+          environmentId={summary?.environmentId ?? binding?.environmentId ?? null}
+          onClose={() => setIsProjectCreateDialogOpen(false)}
+          onCreateProject={() => void handleCreateProjectFromEnvironment(newProjectTitleDraft)}
+          setTitleDraft={setNewProjectTitleDraft}
+          titleDraft={newProjectTitleDraft}
+        />
+      ) : null}
+
+      {isConversationSessionCreateDialogOpen ? (
+        <ConversationSessionCreateDialog
+          onClose={() => {
+            setIsConversationSessionCreateDialogOpen(false);
+            setConversationSessionTitleDraft("");
+          }}
+          onCreateSession={() => void handleCreateConversationSession()}
+          setTitleDraft={setConversationSessionTitleDraft}
+          titleDraft={conversationSessionTitleDraft}
+        />
+      ) : null}
+
+      {isConversationThreadRenameDialogOpen ? (
+        <ConversationThreadRenameDialog
+          onClose={() => {
+            setIsConversationThreadRenameDialogOpen(false);
+            setConversationThreadRenameDraft("");
+            setConversationThreadRenameTargetId(null);
+          }}
+          onRenameThread={() => void handleRenameConversationThread()}
+          setTitleDraft={setConversationThreadRenameDraft}
+          titleDraft={conversationThreadRenameDraft}
         />
       ) : null}
 
       {sidebarPinned ? (
         <aside className="sidebar">
-          <nav className="workspace-nav" aria-label="Workspace navigation">
-            {groupWorkspaces().map(([group, items]) => (
-              <section className="workspace-group" key={group}>
-                <p className="workspace-group-label">{group}</p>
-                {items.map((workspace) => (
-                  <div className="workspace-tree-node" key={workspace.id}>
-                    <div className={workspace.id === activeWorkspace ? "workspace-link active" : "workspace-link"}>
-                      <button
-                        className="workspace-link-main"
-                        aria-keyshortcuts={workspace.primary ? String(keyboardWorkspaceOrder.indexOf(workspace.id) + 1) : undefined}
-                        onClick={() => {
-                          if (workspace.id === "environment") {
-                            void navigateToOperateSection(selectedOperateSection);
-                            return;
-                          }
-                          if (workspace.id === "conversations") {
-                            void navigateToConversationSection(selectedConversationSection);
-                            return;
-                          }
-                          if (workspace.id === "runtime") {
-                            void navigateToExecutionSection(selectedExecutionSection);
-                            return;
-                          }
-                          if (workspace.id === "incidents") {
-                            void navigateToRecoverySection(selectedRecoverySection);
-                            return;
-                          }
-                          if (workspace.id === "artifacts") {
-                            void navigateToEvidenceSection(selectedEvidenceSection);
-                            return;
-                          }
-                          if (workspace.id === "browser") {
-                            void navigateToBrowserDomain(selectedBrowserDomain);
-                            return;
-                          }
-                          if (workspace.id === "documentation") {
-                            void navigateToWorkspace("documentation");
-                            return;
-                          }
-                          if (workspace.id === "configuration") {
-                            void navigateToConfigurationSection(selectedConfigurationSection);
-                            return;
-                          }
-                          void navigateToWorkspace(workspace.id);
-                        }}
-                        type="button"
-                      >
-                        <span title={workspace.label === "Documentation" ? "Open the in-app user documentation workspace." : undefined}>
-                          {workspace.label}
-                        </span>
-                      </button>
-                      <div className="workspace-link-meta">
-                        {workspace.id !== "environment" ? (
-                          <WorkspaceSignal signal={workspaceAttention.get(workspace.id)} />
-                        ) : null}
-                        {workspace.id === "environment" ||
-                        workspace.id === "conversations" ||
-                        workspace.id === "runtime" ||
-                        workspace.id === "incidents" ||
-                        workspace.id === "artifacts" ||
-                        workspace.id === "browser" ||
-                        workspace.id === "documentation" ||
-                        workspace.id === "configuration" ? (
-                          <button
-                            aria-label={`${expandedWorkspaceMenus[workspace.id] ? "Collapse" : "Expand"} ${workspace.label}`}
-                            className="workspace-disclosure"
-                            onClick={() => toggleWorkspaceMenu(workspace.id)}
-                            type="button"
-                          >
-                            {expandedWorkspaceMenus[workspace.id] ? "▾" : "▸"}
-                          </button>
-                        ) : null}
+          <div className="panel-titlebar">
+            <button
+              aria-label="Hide navigation"
+              className="panel-titlebar-toggle"
+              onClick={() => void toggleSidebarPinned()}
+              title="Hide navigation"
+              type="button"
+            >
+              <span aria-hidden="true">−</span>
+            </button>
+            <span className="panel-titlebar-label">Navigation</span>
+          </div>
+          <div className="sidebar-body">
+            <nav className="workspace-nav" aria-label="Workspace navigation">
+              {groupWorkspaces().map(([group, items]) => (
+                <section className="workspace-group" key={group}>
+                  <p className="workspace-group-label">{group}</p>
+                  {items.map((workspace) => (
+                    <div className="workspace-tree-node" key={workspace.id}>
+                      <div className={workspace.id === activeWorkspace ? "workspace-link active" : "workspace-link"}>
+                        <button
+                          className="workspace-link-main"
+                          aria-keyshortcuts={workspace.primary ? String(keyboardWorkspaceOrder.indexOf(workspace.id) + 1) : undefined}
+                          onClick={() => {
+                            if (workspace.id === "environment") {
+                              void navigateToOperateSection(selectedOperateSection);
+                              return;
+                            }
+                            if (workspace.id === "conversations") {
+                              void navigateToConversationSection(selectedConversationSection);
+                              return;
+                            }
+                            if (workspace.id === "runtime") {
+                              void navigateToExecutionSection(selectedExecutionSection);
+                              return;
+                            }
+                            if (workspace.id === "incidents") {
+                              void navigateToRecoverySection(selectedRecoverySection);
+                              return;
+                            }
+                            if (workspace.id === "artifacts") {
+                              void navigateToEvidenceSection(selectedEvidenceSection);
+                              return;
+                            }
+                            if (workspace.id === "browser") {
+                              void navigateToBrowserDomain(selectedBrowserDomain);
+                              return;
+                            }
+                            if (workspace.id === "documentation") {
+                              void navigateToWorkspace("documentation");
+                              return;
+                            }
+                            void navigateToWorkspace(workspace.id);
+                          }}
+                          type="button"
+                        >
+                          <span title={workspace.label === "Documentation" ? "Open the in-app user documentation workspace." : undefined}>
+                            {workspace.label}
+                          </span>
+                        </button>
+                        <div className="workspace-link-meta">
+                          {workspace.id !== "environment" ? (
+                            <WorkspaceSignal signal={workspaceAttention.get(workspace.id)} />
+                          ) : null}
+                          {workspace.id === "environment" ||
+                          workspace.id === "conversations" ||
+                          workspace.id === "runtime" ||
+                          workspace.id === "incidents" ||
+                          workspace.id === "artifacts" ||
+                          workspace.id === "browser" ||
+                          workspace.id === "documentation" ? (
+                            <button
+                              aria-label={`${expandedWorkspaceMenus[workspace.id] ? "Collapse" : "Expand"} ${workspace.label}`}
+                              className="workspace-disclosure"
+                              onClick={() => toggleWorkspaceMenu(workspace.id)}
+                              type="button"
+                            >
+                              {expandedWorkspaceMenus[workspace.id] ? "▾" : "▸"}
+                            </button>
+                          ) : null}
+                        </div>
                       </div>
+                      {workspace.id === "environment" && expandedWorkspaceMenus.environment ? (
+                        <div className="workspace-child-list">
+                          {operateSections.map((section) => (
+                            <button
+                              className={
+                                activeWorkspace === "environment" && selectedOperateSection === section.id
+                                  ? "workspace-child-link active"
+                                  : "workspace-child-link"
+                              }
+                              key={section.id}
+                              onClick={() => {
+                                void navigateToOperateSection(section.id);
+                              }}
+                              type="button"
+                            >
+                              <span title={section.summary}>{section.label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                      {workspace.id === "conversations" && expandedWorkspaceMenus.conversations ? (
+                        <div className="workspace-child-list">
+                          {conversationSections.map((section) => (
+                            <button
+                              className={
+                                activeWorkspace === "conversations" && selectedConversationSection === section.id
+                                  ? "workspace-child-link active"
+                                  : "workspace-child-link"
+                              }
+                              key={section.id}
+                              onClick={() => {
+                                void navigateToConversationSection(section.id);
+                              }}
+                              type="button"
+                            >
+                              <span title={section.summary}>{section.label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                      {workspace.id === "browser" && expandedWorkspaceMenus.browser ? (
+                        <div className="workspace-child-list">
+                          {browserDomains.map((domain) => (
+                            <button
+                              className={
+                                activeWorkspace === "browser" && selectedBrowserDomain === domain.id
+                                  ? "workspace-child-link active"
+                                  : "workspace-child-link"
+                              }
+                              key={domain.id}
+                              onClick={() => {
+                                void navigateToBrowserDomain(domain.id);
+                              }}
+                              type="button"
+                            >
+                              <span title={domain.summary}>{domain.label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                      {workspace.id === "runtime" && expandedWorkspaceMenus.runtime ? (
+                        <div className="workspace-child-list">
+                          {executionSections.map((section) => (
+                            <button
+                              className={
+                                activeWorkspace === "runtime" && selectedExecutionSection === section.id
+                                  ? "workspace-child-link active"
+                                  : "workspace-child-link"
+                              }
+                              key={section.id}
+                              onClick={() => {
+                                void navigateToExecutionSection(section.id);
+                              }}
+                              type="button"
+                            >
+                              <span title={section.summary}>{section.label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                      {workspace.id === "incidents" && expandedWorkspaceMenus.incidents ? (
+                        <div className="workspace-child-list">
+                          {recoverySections.map((section) => (
+                            <button
+                              className={
+                                activeWorkspace === "incidents" && selectedRecoverySection === section.id
+                                  ? "workspace-child-link active"
+                                  : "workspace-child-link"
+                              }
+                              key={section.id}
+                              onClick={() => {
+                                void navigateToRecoverySection(section.id);
+                              }}
+                              type="button"
+                            >
+                              <span title={section.summary}>{section.label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                      {workspace.id === "artifacts" && expandedWorkspaceMenus.artifacts ? (
+                        <div className="workspace-child-list">
+                          {evidenceSections.map((section) => (
+                            <button
+                              className={
+                                activeWorkspace === "artifacts" && selectedEvidenceSection === section.id
+                                  ? "workspace-child-link active"
+                                  : "workspace-child-link"
+                              }
+                              key={section.id}
+                              onClick={() => {
+                                void navigateToEvidenceSection(section.id);
+                              }}
+                              type="button"
+                            >
+                              <span title={section.summary}>{section.label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
-                    {workspace.id === "environment" && expandedWorkspaceMenus.environment ? (
-                      <div className="workspace-child-list">
-                        {operateSections.map((section) => (
-                          <button
-                            className={
-                              activeWorkspace === "environment" && selectedOperateSection === section.id
-                                ? "workspace-child-link active"
-                                : "workspace-child-link"
-                            }
-                            key={section.id}
-                            onClick={() => {
-                              void navigateToOperateSection(section.id);
-                            }}
-                            type="button"
-                          >
-                            <span title={section.summary}>{section.label}</span>
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                    {workspace.id === "conversations" && expandedWorkspaceMenus.conversations ? (
-                      <div className="workspace-child-list">
-                        {conversationSections.map((section) => (
-                          <button
-                            className={
-                              activeWorkspace === "conversations" && selectedConversationSection === section.id
-                                ? "workspace-child-link active"
-                                : "workspace-child-link"
-                            }
-                            key={section.id}
-                            onClick={() => {
-                              void navigateToConversationSection(section.id);
-                            }}
-                            type="button"
-                          >
-                            <span title={section.summary}>{section.label}</span>
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                    {workspace.id === "browser" && expandedWorkspaceMenus.browser ? (
-                      <div className="workspace-child-list">
-                        {browserDomains.map((domain) => (
-                          <button
-                            className={
-                              activeWorkspace === "browser" && selectedBrowserDomain === domain.id
-                                ? "workspace-child-link active"
-                                : "workspace-child-link"
-                            }
-                            key={domain.id}
-                            onClick={() => {
-                              void navigateToBrowserDomain(domain.id);
-                            }}
-                            type="button"
-                          >
-                            <span title={domain.summary}>{domain.label}</span>
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                    {workspace.id === "runtime" && expandedWorkspaceMenus.runtime ? (
-                      <div className="workspace-child-list">
-                        {executionSections.map((section) => (
-                          <button
-                            className={
-                              activeWorkspace === "runtime" && selectedExecutionSection === section.id
-                                ? "workspace-child-link active"
-                                : "workspace-child-link"
-                            }
-                            key={section.id}
-                            onClick={() => {
-                              void navigateToExecutionSection(section.id);
-                            }}
-                            type="button"
-                          >
-                            <span title={section.summary}>{section.label}</span>
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                    {workspace.id === "incidents" && expandedWorkspaceMenus.incidents ? (
-                      <div className="workspace-child-list">
-                        {recoverySections.map((section) => (
-                          <button
-                            className={
-                              activeWorkspace === "incidents" && selectedRecoverySection === section.id
-                                ? "workspace-child-link active"
-                                : "workspace-child-link"
-                            }
-                            key={section.id}
-                            onClick={() => {
-                              void navigateToRecoverySection(section.id);
-                            }}
-                            type="button"
-                          >
-                            <span title={section.summary}>{section.label}</span>
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                    {workspace.id === "artifacts" && expandedWorkspaceMenus.artifacts ? (
-                      <div className="workspace-child-list">
-                        {evidenceSections.map((section) => (
-                          <button
-                            className={
-                              activeWorkspace === "artifacts" && selectedEvidenceSection === section.id
-                                ? "workspace-child-link active"
-                                : "workspace-child-link"
-                            }
-                            key={section.id}
-                            onClick={() => {
-                              void navigateToEvidenceSection(section.id);
-                            }}
-                            type="button"
-                          >
-                            <span title={section.summary}>{section.label}</span>
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                    {workspace.id === "configuration" && expandedWorkspaceMenus.configuration ? (
-                      <div className="workspace-child-list">
-                        {configurationSections.map((section) => (
-                          <button
-                            className={
-                              activeWorkspace === "configuration" && selectedConfigurationSection === section.id
-                                ? "workspace-child-link active"
-                                : "workspace-child-link"
-                            }
-                            key={section.id}
-                            onClick={() => {
-                              void navigateToConfigurationSection(section.id);
-                            }}
-                            type="button"
-                          >
-                            <span title={section.summary}>{section.label}</span>
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                ))}
-              </section>
-            ))}
-          </nav>
+                  ))}
+                </section>
+              ))}
+            </nav>
+          </div>
         </aside>
       ) : (
         <aside className="sidebar sidebar-collapsed-rail" aria-label="Collapsed workspace navigation">
-          <button className="collapsed-sidebar-toggle" onClick={() => void toggleSidebarPinned()} type="button">
-            <span>Show Navigation</span>
-          </button>
+          <div className="collapsed-panel-titlebar">
+            <button
+              aria-label="Show navigate panel"
+              className="panel-titlebar-toggle collapsed-panel-toggle"
+              onClick={() => void toggleSidebarPinned()}
+              title="Show navigate panel"
+              type="button"
+            >
+              <span aria-hidden="true">+</span>
+            </button>
+            <span className="collapsed-panel-title">Navigate</span>
+          </div>
         </aside>
       )}
       {canvasPinned ? (
         <main className="canvas">
-          {activeWorkspace === "conversations" ? null : (
-            <header className="canvas-header">
-              <div className="canvas-header-copy">
-                <div className="canvas-header-eyebrow-row">
-                  <p className="eyebrow">{workspaceDescriptor.eyebrow}</p>
-                  <HelpHint text={workspaceDescriptor.summary} />
+          <div className="panel-titlebar">
+            <button
+              aria-label="Hide browse panel"
+              className="panel-titlebar-toggle"
+              onClick={() => void toggleCanvasPinned()}
+              title="Hide browse panel"
+              type="button"
+            >
+              <span aria-hidden="true">−</span>
+            </button>
+            <span className="panel-titlebar-label">Browse</span>
+          </div>
+          <div className="canvas-body">
+            {activeWorkspace === "conversations" || activeWorkspace === "documentation" ? null : (
+              <header className="canvas-header">
+                <div className="canvas-header-copy">
+                  <div className="canvas-header-eyebrow-row">
+                    <p className="eyebrow">{workspaceDescriptor.eyebrow}</p>
+                    <HelpHint text={workspaceDescriptor.summary} />
+                  </div>
+                  <h2>{workspaceDescriptor.title}</h2>
+                  <p className="canvas-subtitle">{workspaceDescriptor.summary}</p>
                 </div>
-                <h2>{workspaceDescriptor.title}</h2>
-                <p className="canvas-subtitle">{workspaceDescriptor.summary}</p>
-              </div>
-            </header>
-          )}
-
-          {activeWorkspace === "environment" ||
-          activeWorkspace === "browser" ||
-          activeWorkspace === "configuration" ||
-          activeWorkspace === "runtime" ||
-          activeWorkspace === "conversations" ? null : (
-            <section className="panel workspace-context-brief">
-              <div className="signal-digest-grid execution-objective-digest">
-                <div className="signal-digest-card">
-                  <span className="context-label">Project</span>
-                  <strong>{projects.find((project) => project.projectId === currentProjectId)?.title ?? "Current Environment"}</strong>
-                  <p>
-                    {projects.find((project) => project.projectId === currentProjectId)?.summary ??
-                      "Project scope is still implicit until the bound environment is saved into the desktop registry."}
-                  </p>
-                </div>
-                <button className="signal-digest-card project-session-card" onClick={() => void navigateToConversationSection("threads")} type="button">
-                  <span className="context-label">Conversation Sessions</span>
-                  <strong>{currentProjectConversationSessionCount}</strong>
-                  <p>
-                    {currentProjectConversationFocus
-                      ? `${currentProjectConversationFocus.title} is the retained conversation focus for this project.`
-                      : "No retained conversation session is currently selected for this project."}
-                  </p>
-                </button>
-                <button className="signal-digest-card project-session-card" onClick={() => void navigateToExecutionSection("listener")} type="button">
-                  <span className="context-label">REPL Sessions</span>
-                  <strong>{currentProjectReplSessions.length}</strong>
-                  <p>
-                    {currentProjectReplFocus
-                      ? `${currentProjectReplFocus.title} is the active project listener session.`
-                      : "No retained REPL session is currently selected for this project."}
-                  </p>
-                </button>
-                <div className="signal-digest-card">
-                  <span className="context-label">Environment</span>
-                  <strong>{summary?.environmentLabel ?? "Unbound"}</strong>
-                  <p>{summary?.activeContext.environmentRoot ?? binding?.environmentId ?? "No environment root bound."}</p>
-                </div>
-                <div className="signal-digest-card">
-                  <span className="context-label">Thread</span>
-                  <strong>{summary?.activeContext.currentThreadTitle ?? "No active thread"}</strong>
-                  <p>{summary?.activeContext.focusSummary ?? "No active continuation summary."}</p>
-                </div>
-                <div className="signal-digest-card">
-                  <span className="context-label">Runtime</span>
-                  <strong>{summary?.activeContext.runtimePackage ?? status?.runtimeState ?? "unknown"}</strong>
-                  <p>{status?.workflowState ?? "No workflow state available."}</p>
-                </div>
-              </div>
-            </section>
-          )}
-
-          {errorMessage ? <div className="error-banner">{errorMessage}</div> : null}
-
-          <section
-            className={`${isWorkspaceTransitioning ? "workspace-frame transitioning" : "workspace-frame"}${
-              activeWorkspace === "conversations" ? " workspace-frame-conversations" : ""
-            }`}
-          >
-            {activeWorkspace === "conversations" ? null : (
-              <WorkspaceTransitionBanner
-                activeWorkspace={canonicalWorkspace(activeWorkspace)}
-                isTransitioning={isWorkspaceTransitioning}
-                resolution={workspaceResolution}
-              />
+              </header>
             )}
-            {activeWorkspace === "environment" ? (
-              <OperateWorkspace
+
+            {activeWorkspace === "environment" ||
+            activeWorkspace === "browser" ||
+            activeWorkspace === "configuration" ||
+            activeWorkspace === "documentation" ||
+            activeWorkspace === "runtime" ||
+            activeWorkspace === "conversations" ? null : (
+              <section className="panel workspace-context-brief">
+                <div className="signal-digest-grid execution-objective-digest">
+                  <div className="signal-digest-card">
+                    <span className="context-label">Project</span>
+                    <strong>{currentProject?.title ?? "Current Environment"}</strong>
+                    <p>
+                      {currentProject?.summary ??
+                        "Project scope is still implicit until the bound environment is saved into the desktop registry."}
+                    </p>
+                  </div>
+                  <button className="signal-digest-card project-session-card" onClick={() => void navigateToConversationSection("threads")} type="button">
+                    <span className="context-label">Conversation Sessions</span>
+                    <strong>{currentProjectConversationSessionCount}</strong>
+                    <p>
+                      {currentProjectConversationFocus
+                        ? `${currentProjectConversationFocus.title} is the retained conversation focus for this project.`
+                        : "No retained conversation session is currently selected for this project."}
+                    </p>
+                  </button>
+                  <button className="signal-digest-card project-session-card" onClick={() => void navigateToExecutionSection("listener")} type="button">
+                    <span className="context-label">REPL Sessions</span>
+                    <strong>{currentProjectReplSessions.length}</strong>
+                    <p>
+                      {currentProjectReplFocus
+                        ? `${currentProjectReplFocus.title} is the active project listener session.`
+                        : "No retained REPL session is currently selected for this project."}
+                    </p>
+                  </button>
+                  <div className="signal-digest-card">
+                    <span className="context-label">Environment</span>
+                    <strong>{summary?.environmentLabel ?? "Unbound"}</strong>
+                    <p>{summary?.activeContext.environmentRoot ?? binding?.environmentId ?? "No environment root bound."}</p>
+                  </div>
+                  <div className="signal-digest-card">
+                    <span className="context-label">Thread</span>
+                    <strong>{summary?.activeContext.currentThreadTitle ?? "No active thread"}</strong>
+                    <p>{summary?.activeContext.focusSummary ?? "No active continuation summary."}</p>
+                  </div>
+                  <div className="signal-digest-card">
+                    <span className="context-label">Runtime</span>
+                    <strong>{summary?.activeContext.runtimePackage ?? status?.runtimeState ?? "unknown"}</strong>
+                    <p>{status?.workflowState ?? "No workflow state available."}</p>
+                  </div>
+                </div>
+              </section>
+            )}
+
+            {errorMessage ? <div className="error-banner">{errorMessage}</div> : null}
+
+            <section
+              className={`${isWorkspaceTransitioning ? "workspace-frame transitioning" : "workspace-frame"}${
+                activeWorkspace === "conversations" ? " workspace-frame-conversations" : ""
+              }`}
+            >
+              {activeWorkspace === "conversations" || activeWorkspace === "documentation" ? null : (
+                <WorkspaceTransitionBanner
+                  activeWorkspace={canonicalWorkspace(activeWorkspace)}
+                  isTransitioning={isWorkspaceTransitioning}
+                  resolution={workspaceResolution}
+                />
+              )}
+              {activeWorkspace === "environment" ? (
+                <OperateWorkspace
                 artifacts={artifacts}
                 navigateToBrowserDomain={navigateToBrowserDomain}
                 navigateToConversationSection={navigateToConversationSection}
@@ -3414,22 +3226,19 @@ export function App() {
               />
             ) : activeWorkspace === "conversations" ? (
               <ConversationsWorkspace
-                conversationSessionTitleDraft={conversationSessionTitleDraft}
-                conversationDraft={conversationDraft}
-                conversationSendError={conversationSendError}
-                conversationStream={conversationStream}
-                createConversationSession={handleCreateConversationSession}
-                sendConversationMessage={handleSendConversationMessage}
-                isSendingConversation={isSendingConversation}
+                onOpenCreateConversationSession={() => setIsConversationSessionCreateDialogOpen(true)}
+                onOpenRenameConversationSession={(threadId, title) => {
+                  setConversationThreadRenameTargetId(threadId);
+                  setConversationThreadRenameDraft(title);
+                  setIsConversationThreadRenameDialogOpen(true);
+                }}
                 selectedSection={selectedConversationSection}
                 selectedConversationMessageId={selectedConversationMessageId}
                 selectedThread={selectedThread}
                 selectedThreadId={selectedThreadId}
                 selectedTurn={selectedTurn}
                 selectedTurnId={selectedTurnId}
-                setConversationDraft={setConversationDraft}
                 setSelectedConversationMessageId={setSelectedConversationMessageId}
-                setConversationSessionTitleDraft={setConversationSessionTitleDraft}
                 setSelectedThreadId={setSelectedThreadId}
                 setSelectedTurnId={setSelectedTurnId}
                 threads={threads}
@@ -3482,10 +3291,6 @@ export function App() {
             ) : activeWorkspace === "documentation" ? (
               <DocumentationWorkspace
                 documentationPages={documentationPages}
-                openPublishedDocumentation={() =>
-                  window.sbclAgentDesktop.desktop.openExternalLink(PUBLISHED_DOCUMENTATION_URL)
-                }
-                selectedDocumentationPage={selectedDocumentationPage}
                 selectedDocumentationSlug={selectedDocumentationSlug}
                 setSelectedDocumentationSlug={setSelectedDocumentationSlug}
                 loadDocumentationPage={loadDocumentationPage}
@@ -3495,6 +3300,7 @@ export function App() {
                 lispParenColors={lispParenColors}
                 resolvedTheme={resolvedTheme}
                 selectedSection={selectedConfigurationSection}
+                setSelectedSection={setSelectedConfigurationSection}
                 systemTheme={systemTheme}
                 themePreference={themePreference}
                 updateThemePreference={applyThemePreference}
@@ -3591,41 +3397,65 @@ export function App() {
                   setSelectedEventCursor={setSelectedEventCursor}
                 />
               )
-            ) : (
-              <PlannedWorkspace workspaceId={activeWorkspace} />
-            )}
-          </section>
+              ) : (
+                <PlannedWorkspace workspaceId={activeWorkspace} />
+              )}
+            </section>
+          </div>
         </main>
       ) : (
         <aside className="canvas canvas-collapsed-rail" aria-label="Collapsed workspace canvas">
-          <button
-            aria-label={`Show ${workspaceDescriptor.title} workspace`}
-            className="collapsed-canvas-toggle"
-            onClick={() => void toggleCanvasPinned()}
-            title={workspaceDescriptor.title}
-            type="button"
-          >
-            <span>Show Workspace</span>
-          </button>
+          <div className="collapsed-panel-titlebar">
+            <button
+              aria-label="Show browse panel"
+              className="panel-titlebar-toggle collapsed-panel-toggle"
+              onClick={() => void toggleCanvasPinned()}
+              title={`Show ${workspaceDescriptor.title} browse panel`}
+              type="button"
+            >
+              <span aria-hidden="true">+</span>
+            </button>
+            <span className="collapsed-panel-title">Browse</span>
+          </div>
         </aside>
       )}
+
+      {canvasPinned && inspectorPinned && viewportWidth > SHELL_STACK_BREAKPOINT ? (
+        <button
+          aria-label="Resize inspector"
+          className={`shell-column-splitter${isInspectorResizing ? " active" : ""}`}
+          onPointerDown={startInspectorResize}
+          style={
+            splitterVerticalBounds
+              ? { top: `${splitterVerticalBounds.top}px`, bottom: `${splitterVerticalBounds.bottom}px` }
+              : undefined
+          }
+          type="button"
+        />
+      ) : null}
 
       {inspectorPinned ? (
         <WorkspaceInspector
           activeWorkspace={activeWorkspace}
           artifacts={artifacts}
           binding={binding}
-          isResizing={isInspectorResizing}
-          onStartResize={startInspectorResize}
+          onToggleInspector={() => void toggleInspectorPinned()}
+          conversationSendError={conversationSendError}
           selectedBrowserDomain={selectedBrowserDomain}
           conversationDraft={conversationDraft}
+          conversationStream={conversationStream}
           environmentEvents={environmentEvents}
+          isSendingConversation={isSendingConversation}
+          lispParenColors={lispParenColors}
+          sendConversationMessage={handleSendConversationMessage}
+          resolvedTheme={resolvedTheme}
           runtimeForm={runtimeForm}
           runtimeEntityDetail={runtimeEntityDetail}
           runtimeInspection={runtimeInspection}
           runtimeSummary={runtimeSummary}
           selectedApproval={selectedApproval}
           selectedArtifact={selectedArtifact}
+          selectedConfigurationSection={selectedConfigurationSection}
           selectedConversationMessage={selectedConversationMessage}
           selectedConversationSection={selectedConversationSection}
           selectedDocumentationPage={selectedDocumentationPage}
@@ -3637,30 +3467,43 @@ export function App() {
           selectedTurn={selectedTurn}
           selectedWorkItem={selectedWorkItem}
           selectedWorkflowRecord={selectedWorkflowRecord}
+          setConversationDraft={setConversationDraft}
+          setSelectedConversationMessageId={setSelectedConversationMessageId}
           sourcePreview={sourcePreview}
           status={status}
           summary={summary}
+          systemTheme={systemTheme}
+          themePreference={themePreference}
+          openPublishedDocumentation={() =>
+            window.sbclAgentDesktop.desktop.openExternalLink(PUBLISHED_DOCUMENTATION_URL)
+          }
+          updateLispParenColor={updateLispParenColor}
+          updateThemePreference={applyThemePreference}
           workItems={workItems}
         />
       ) : (
         <aside className="inspector inspector-collapsed-rail" aria-label="Collapsed workspace inspector">
-          <button className="collapsed-inspector-toggle" onClick={() => void toggleInspectorPinned()} type="button">
-            Show Inspector
-          </button>
+          <div className="collapsed-panel-titlebar">
+            <button
+              aria-label="Show workspace panel"
+              className="panel-titlebar-toggle collapsed-panel-toggle"
+              onClick={() => void toggleInspectorPinned()}
+              title="Show workspace panel"
+              type="button"
+            >
+              <span aria-hidden="true">+</span>
+            </button>
+            <span className="collapsed-panel-title">Workspace</span>
+          </div>
         </aside>
       )}
 
       <StatusDock
         activeWorkspace={activeWorkspace}
         binding={binding}
-        currentProject={projects.find((project) => project.projectId === currentProjectId) ?? null}
+        currentProject={currentProject}
         hostStatus={hostStatus}
-        sidebarPinned={sidebarPinned}
-        canvasPinned={canvasPinned}
-        inspectorPinned={inspectorPinned}
-        onToggleSidebar={() => void toggleSidebarPinned()}
-        onToggleCanvas={() => void toggleCanvasPinned()}
-        onToggleInspector={() => void toggleInspectorPinned()}
+        dockRef={statusDockRef}
         status={status}
       />
     </div>
@@ -3701,160 +3544,228 @@ function WorkspaceTransitionBanner({
   );
 }
 
-function CommandCenter({
-  entries,
+function ProjectOpenDialog({
+  currentProjectId,
   onClose,
-  onQueryChange,
-  onSelectEntry,
-  query
+  onOpenProject,
+  projects
 }: {
-  entries: CommandCenterEntry[];
+  currentProjectId: string | null;
   onClose: () => void;
-  onQueryChange: (value: string) => void;
-  onSelectEntry: (entryId: string) => void;
-  query: string;
+  onOpenProject: (projectId: string) => void;
+  projects: ProjectProfileDto[];
 }) {
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const previousActiveElementRef = useRef<HTMLElement | null>(null);
-  const [activeIndex, setActiveIndex] = useState(0);
-
-  useEffect(() => {
-    previousActiveElementRef.current =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    inputRef.current?.focus();
-    inputRef.current?.select();
-  }, []);
-
-  useEffect(() => {
-    setActiveIndex(0);
-  }, [query, entries]);
-
-  useEffect(() => {
-    return () => {
-      previousActiveElementRef.current?.focus();
-    };
-  }, []);
-
-  async function handleSelect(entry: CommandCenterEntry): Promise<void> {
-    onSelectEntry(entry.id);
-    await entry.onSelect();
-    onClose();
-  }
-
-  function handleKeyDown(event: React.KeyboardEvent<HTMLInputElement>): void {
-    if (entries.length === 0) {
-      return;
-    }
-
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      setActiveIndex((current) => (current + 1) % entries.length);
-      return;
-    }
-
-    if (event.key === "ArrowUp") {
-      event.preventDefault();
-      setActiveIndex((current) => (current - 1 + entries.length) % entries.length);
-      return;
-    }
-
-    if (event.key === "Enter") {
-      event.preventDefault();
-      const entry = entries[activeIndex] ?? entries[0];
-      if (entry) {
-        void handleSelect(entry);
-      }
-    }
-  }
-
-  const groupedEntries = entries.reduce(
-    (groups, entry, index) => {
-      const items = groups.get(entry.group) ?? [];
-      items.push({ entry, index });
-      groups.set(entry.group, items);
-      return groups;
-    },
-    new Map<CommandCenterEntry["group"], Array<{ entry: CommandCenterEntry; index: number }>>()
-  );
-
-  const groupLabels: Record<CommandCenterEntry["group"], string> = {
-    workspace: "Workspaces",
-    thread: "Threads",
-    work: "Governed Work",
-    approval: "Approvals",
-    incident: "Incidents",
-    artifact: "Artifacts"
-  };
-
-  const groupOrder: CommandCenterEntry["group"][] = ["work", "approval", "incident", "thread", "workspace", "artifact"];
-
   return (
-    <div className="command-center-overlay" role="presentation" onClick={onClose}>
+    <div className="project-dialog-overlay" role="presentation" onClick={onClose}>
       <section
-        aria-label="Command Center"
+        aria-label="Open Project"
         aria-modal="true"
-        className="command-center-dialog"
+        className="project-dialog"
         role="dialog"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="command-center-header">
+        <div className="project-dialog-header">
           <div>
-            <p className="eyebrow">Command Center</p>
-            <h3>Jump to the next supervised move</h3>
+            <p className="eyebrow">Open Project</p>
+            <h3>Choose a saved project</h3>
+            <p className="project-dialog-copy">
+              Projects remain the user-facing object. The bound environment image is restored underneath the project.
+            </p>
           </div>
-          <button className="command-center-close" onClick={onClose} type="button">
+          <button className="project-dialog-close" onClick={onClose} type="button">
             Close
           </button>
         </div>
-        <label className="command-center-search">
-          <span className="context-label">Search threads, work, approvals, incidents, artifacts, and workspaces</span>
+        {projects.length > 0 ? (
+          <div className="project-dialog-list">
+            {projects.map((project) => (
+              <button
+                className={project.projectId === currentProjectId ? "project-dialog-item active" : "project-dialog-item"}
+                key={project.projectId}
+                onClick={() => onOpenProject(project.projectId)}
+                type="button"
+              >
+                <div className="project-dialog-item-copy">
+                  <strong>{project.title}</strong>
+                  <p>{project.summary}</p>
+                </div>
+                <div className="project-dialog-item-meta">
+                  <span className="context-label">Environment</span>
+                  <span>{project.environmentId}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-state project-dialog-empty">
+            <p className="eyebrow">No Projects</p>
+            <h3>No saved projects are available yet.</h3>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function ProjectCreateDialog({
+  environmentId,
+  onClose,
+  onCreateProject,
+  setTitleDraft,
+  titleDraft
+}: {
+  environmentId: string | null;
+  onClose: () => void;
+  onCreateProject: () => void;
+  setTitleDraft: (value: string) => void;
+  titleDraft: string;
+}) {
+  const canCreate = Boolean(environmentId && titleDraft.trim().length > 0);
+
+  return (
+    <div className="project-dialog-overlay" role="presentation" onClick={onClose}>
+      <section
+        aria-label="New Project"
+        aria-modal="true"
+        className="project-dialog"
+        role="dialog"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="project-dialog-header">
+          <div>
+            <p className="eyebrow">New Project</p>
+            <h3>Create a project from the current environment</h3>
+            <p className="project-dialog-copy">
+              Projects are the user-facing container. The currently bound environment image remains the runtime state behind it.
+            </p>
+          </div>
+          <button className="project-dialog-close" onClick={onClose} type="button">
+            Close
+          </button>
+        </div>
+        <label className="project-dialog-field">
+          <span className="context-label">Project Name</span>
           <input
-            onChange={(event) => onQueryChange(event.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Search current work surfaces"
-            ref={inputRef}
-            value={query}
+            autoFocus
+            onChange={(event) => setTitleDraft(event.target.value)}
+            placeholder="Enter project name"
+            value={titleDraft}
           />
         </label>
-        <div className="command-center-list">
-          {entries.length > 0 ? (
-            groupOrder.map((group) => {
-              const items = groupedEntries.get(group);
-              if (!items || items.length === 0) {
-                return null;
-              }
+        <div className="project-dialog-binding">
+          <span className="context-label">Bound Environment</span>
+          <strong>{environmentId ?? "No environment bound"}</strong>
+        </div>
+        <div className="project-dialog-actions">
+          <button className="project-dialog-close" onClick={onClose} type="button">
+            Cancel
+          </button>
+          <button className="project-dialog-primary" disabled={!canCreate} onClick={onCreateProject} type="button">
+            Create Project
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
 
-              return (
-                <section className="command-center-group" key={group}>
-                  <div className="command-center-group-label">{groupLabels[group]}</div>
-                  {items.map(({ entry, index }) => (
-                    <button
-                      aria-selected={index === activeIndex}
-                      className={index === activeIndex ? "command-center-item active" : "command-center-item"}
-                      key={entry.id}
-                      onClick={() => void handleSelect(entry)}
-                      onMouseEnter={() => setActiveIndex(index)}
-                      type="button"
-                    >
-                      <div className="command-center-item-copy">
-                        <div className="command-center-item-top">
-                          <strong>{entry.label}</strong>
-                          <Badge tone={entry.tone}>{entry.badge}</Badge>
-                        </div>
-                        <p>{entry.summary}</p>
-                      </div>
-                      <span className="command-center-item-target">{labelForWorkspace(entry.workspace)}</span>
-                    </button>
-                  ))}
-                </section>
-              );
-            })
-          ) : (
-            <div className="empty-state command-center-empty">
-              <p className="eyebrow">No Matches</p>
-              <h3>Nothing in the current environment matches that search.</h3>
-            </div>
-          )}
+function ConversationSessionCreateDialog({
+  onClose,
+  onCreateSession,
+  setTitleDraft,
+  titleDraft
+}: {
+  onClose: () => void;
+  onCreateSession: () => void;
+  setTitleDraft: (value: string) => void;
+  titleDraft: string;
+}) {
+  const canCreate = titleDraft.trim().length > 0;
+
+  return (
+    <div className="project-dialog-overlay" role="presentation" onClick={onClose}>
+      <section
+        aria-label="New Conversation Session"
+        aria-modal="true"
+        className="project-dialog"
+        role="dialog"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="project-dialog-header">
+          <div>
+            <p className="eyebrow">New Conversation Session</p>
+            <h3>Name the new conversation thread</h3>
+            <p className="project-dialog-copy">
+              Conversation sessions are durable work objects. Name the thread before creating it.
+            </p>
+          </div>
+          <button className="project-dialog-close" onClick={onClose} type="button">
+            Close
+          </button>
+        </div>
+        <label className="project-dialog-field">
+          <span className="context-label">Session Name</span>
+          <input
+            autoFocus
+            onChange={(event) => setTitleDraft(event.target.value)}
+            value={titleDraft}
+          />
+        </label>
+        <div className="project-dialog-actions">
+          <button className="project-dialog-close" onClick={onClose} type="button">
+            Cancel
+          </button>
+          <button className="project-dialog-primary" disabled={!canCreate} onClick={onCreateSession} type="button">
+            Create Session
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ConversationThreadRenameDialog({
+  onClose,
+  onRenameThread,
+  setTitleDraft,
+  titleDraft
+}: {
+  onClose: () => void;
+  onRenameThread: () => void;
+  setTitleDraft: (value: string) => void;
+  titleDraft: string;
+}) {
+  const canRename = titleDraft.trim().length > 0;
+
+  return (
+    <div className="project-dialog-overlay" role="presentation" onClick={onClose}>
+      <section
+        aria-label="Rename Conversation Session"
+        aria-modal="true"
+        className="project-dialog"
+        role="dialog"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="project-dialog-header">
+          <div>
+            <p className="eyebrow">Rename Conversation Session</p>
+            <h3>Edit the conversation thread name</h3>
+          </div>
+          <button className="project-dialog-close" onClick={onClose} type="button">
+            Close
+          </button>
+        </div>
+        <label className="project-dialog-field">
+          <span className="context-label">Session Name</span>
+          <input autoFocus onChange={(event) => setTitleDraft(event.target.value)} value={titleDraft} />
+        </label>
+        <div className="project-dialog-actions">
+          <button className="project-dialog-close" onClick={onClose} type="button">
+            Cancel
+          </button>
+          <button className="project-dialog-primary" disabled={!canRename} onClick={onRenameThread} type="button">
+            Rename Session
+          </button>
         </div>
       </section>
     </div>
@@ -3864,18 +3775,24 @@ function CommandCenter({
 function WorkspaceInspector({
   activeWorkspace,
   binding,
-  onStartResize,
-  isResizing,
+  onToggleInspector,
   summary,
   status,
   selectedThread,
   selectedTurn,
+  conversationSendError,
   conversationDraft,
+  conversationStream,
+  isSendingConversation,
+  sendConversationMessage,
   selectedConversationSection,
+  selectedConfigurationSection,
   runtimeEntityDetail,
   runtimeSummary,
   runtimeInspection,
   runtimeForm,
+  lispParenColors,
+  resolvedTheme,
   sourcePreview,
   selectedApproval,
   selectedWorkItem,
@@ -3888,24 +3805,41 @@ function WorkspaceInspector({
   selectedOperateSection,
   selectedDocumentationPage,
   selectedEvidenceSection,
+  systemTheme,
+  themePreference,
+  openPublishedDocumentation,
+  setConversationDraft,
+  setSelectedConversationMessageId,
+  updateLispParenColor,
+  updateThemePreference,
   artifacts,
   environmentEvents,
   workItems
 }: {
   activeWorkspace: WorkspaceId;
   binding: BindingDto | null;
-  onStartResize: (event: React.PointerEvent<HTMLButtonElement>) => void;
-  isResizing: boolean;
+  onToggleInspector: () => void;
   summary: EnvironmentSummaryDto | null;
   status: EnvironmentStatusDto | null;
   selectedThread: ThreadDetailDto | null;
   selectedTurn: TurnDetailDto | null;
+  conversationSendError: string | null;
   conversationDraft: string;
+  conversationStream: {
+    threadId: string;
+    turnId: string | null;
+    content: string;
+  } | null;
+  isSendingConversation: boolean;
+  sendConversationMessage: () => Promise<void>;
   selectedConversationSection: ConversationSection;
+  selectedConfigurationSection: ConfigurationSection;
   runtimeEntityDetail: QueryResultDto<RuntimeEntityDetailDto> | null;
   runtimeSummary: RuntimeSummaryDto | null;
   runtimeInspection: QueryResultDto<RuntimeInspectionResultDto> | null;
   runtimeForm: string;
+  lispParenColors: string[];
+  resolvedTheme: ResolvedTheme;
   sourcePreview: QueryResultDto<SourcePreviewDto> | null;
   selectedApproval: ApprovalRequestDto | null;
   selectedWorkItem: WorkItemDetailDto | null;
@@ -3918,10 +3852,84 @@ function WorkspaceInspector({
   selectedOperateSection: OperateSection;
   selectedDocumentationPage: DocumentationPageDto | null;
   selectedEvidenceSection: EvidenceSection;
+  systemTheme: ResolvedTheme;
+  themePreference: ThemePreference;
+  openPublishedDocumentation: () => Promise<void>;
+  setConversationDraft: (value: string) => void;
+  setSelectedConversationMessageId: (messageId: string | null) => void;
+  updateLispParenColor: (index: number, color: string) => Promise<void>;
+  updateThemePreference: (value: ThemePreference) => Promise<void>;
   artifacts: ArtifactSummaryDto[];
   environmentEvents: EnvironmentEventDto[];
   workItems: WorkItemSummaryDto[];
 }) {
+  const selectedConfigurationDescriptor =
+    configurationSections.find((section) => section.id === selectedConfigurationSection) ?? configurationSections[0];
+  const messageStackRef = useRef<HTMLDivElement | null>(null);
+  const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const displayedConversationMessages =
+    selectedThread &&
+    conversationStream &&
+    conversationStream.threadId === selectedThread.threadId &&
+    conversationStream.content.length > 0
+      ? [
+          ...selectedThread.messages,
+          {
+            messageId: `streaming-${conversationStream.turnId ?? selectedThread.threadId}`,
+            role: "assistant" as const,
+            content: conversationStream.content,
+            createdAt: new Date().toISOString()
+          }
+        ]
+      : selectedThread?.messages ?? [];
+  const renderedDocumentationHtml = useMemo(
+    () => renderDocumentationMarkdown(selectedDocumentationPage?.markdown ?? ""),
+    [selectedDocumentationPage?.markdown]
+  );
+
+  useEffect(() => {
+    if (activeWorkspace !== "conversations" || selectedConversationSection !== "threads") {
+      return;
+    }
+    const messageStack = messageStackRef.current;
+    if (!messageStack) {
+      return;
+    }
+    messageStack.scrollTop = messageStack.scrollHeight;
+  }, [
+    activeWorkspace,
+    selectedConversationSection,
+    selectedThread?.threadId,
+    displayedConversationMessages.length,
+    conversationStream?.content,
+    conversationStream?.turnId,
+    isSendingConversation
+  ]);
+
+  useEffect(() => {
+    if (activeWorkspace !== "conversations" || selectedConversationSection !== "threads") {
+      return;
+    }
+    const textarea = composerTextareaRef.current;
+    if (!textarea) {
+      return;
+    }
+    const computedStyle = window.getComputedStyle(textarea);
+    const lineHeight = Number.parseFloat(computedStyle.lineHeight) || 20;
+    const paddingTop = Number.parseFloat(computedStyle.paddingTop) || 0;
+    const paddingBottom = Number.parseFloat(computedStyle.paddingBottom) || 0;
+    const borderTop = Number.parseFloat(computedStyle.borderTopWidth) || 0;
+    const borderBottom = Number.parseFloat(computedStyle.borderBottomWidth) || 0;
+    const frameHeight = paddingTop + paddingBottom + borderTop + borderBottom;
+    const minHeight = lineHeight * 5 + frameHeight;
+    const maxHeight = lineHeight * 15 + frameHeight;
+
+    textarea.style.height = "auto";
+    const nextHeight = Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight);
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
+  }, [activeWorkspace, selectedConversationSection, conversationDraft, selectedThread?.threadId]);
+
   const currentFocusTitle =
     activeWorkspace === "conversations"
       ? selectedTurn?.title ?? selectedThread?.title ?? "No conversation focus"
@@ -3935,10 +3943,10 @@ function WorkspaceInspector({
             ? selectedIncident?.title ?? "No incident selected"
             : activeWorkspace === "artifacts"
               ? selectedEvidenceSection === "observation"
-                ? selectedEvent?.kind ?? "No event selected"
+              ? selectedEvent?.kind ?? "No event selected"
                 : selectedArtifact?.title ?? "No artifact selected"
               : activeWorkspace === "configuration"
-                ? "Desktop Preferences"
+                ? selectedConfigurationDescriptor.label
                 : summary?.activeContext.currentThreadTitle ?? summary?.environmentLabel ?? "Environment";
 
   const currentFocusSummary =
@@ -3960,10 +3968,10 @@ function WorkspaceInspector({
             ? selectedIncident?.recoverySummary ?? "Recovery context appears here once an incident is selected."
             : activeWorkspace === "artifacts"
               ? selectedEvidenceSection === "observation"
-                ? selectedEvent?.summary ?? "Select an event to inspect replayable evidence."
+              ? selectedEvent?.summary ?? "Select an event to inspect replayable evidence."
                 : selectedArtifact?.summary ?? "Select an artifact to inspect provenance and evidentiary posture."
               : activeWorkspace === "configuration"
-                ? "Theme and desktop preferences belong here, not hidden behind shell scaffolding."
+                ? selectedConfigurationDescriptor.summary
               : summary?.activeContext.focusSummary ?? "Environment posture is not yet available.";
 
   const inspectorTabs: Array<{ id: string; label: string; content: React.ReactNode }> =
@@ -4218,25 +4226,148 @@ function WorkspaceInspector({
                         id: "context",
                         label: "Context",
                         content: (
-                          <p className="inspector-copy">
-                            Configuration should stay concise: current preference, resolved behavior, and any environment-level effect.
-                          </p>
+                          <dl className="detail-list">
+                            <DetailRow label="Category" value={selectedConfigurationDescriptor.label} />
+                            <DetailRow label="Family" value={selectedConfigurationDescriptor.family} />
+                            <DetailRow
+                              label="Current"
+                              value={
+                                selectedConfigurationSection === "theme"
+                                  ? themePreference === "system"
+                                    ? "System"
+                                    : themePreference
+                                  : `${normalizeParenDepthColors(lispParenColors).length} depth colors`
+                              }
+                            />
+                            <DetailRow
+                              label="Resolved"
+                              value={selectedConfigurationSection === "theme" ? resolvedTheme : "Structured Lisp renderer"}
+                            />
+                          </dl>
                         )
+                      },
+                      {
+                        id: "edit",
+                        label: "Edit",
+                        content:
+                          selectedConfigurationSection === "theme" ? (
+                            <div className="configuration-inspector-stack">
+                              <p className="inspector-copy">
+                                Control how the desktop resolves light and dark appearance for this project shell.
+                              </p>
+                              <div className="configuration-theme-actions" role="group" aria-label="Theme preference">
+                                <button
+                                  className={themePreference === "system" ? "starter-chip active" : "starter-chip"}
+                                  onClick={() => void updateThemePreference("system")}
+                                  type="button"
+                                >
+                                  System
+                                </button>
+                                <button
+                                  className={themePreference === "light" ? "starter-chip active" : "starter-chip"}
+                                  onClick={() => void updateThemePreference("light")}
+                                  type="button"
+                                >
+                                  Light
+                                </button>
+                                <button
+                                  className={themePreference === "dark" ? "starter-chip active" : "starter-chip"}
+                                  onClick={() => void updateThemePreference("dark")}
+                                  type="button"
+                                >
+                                  Dark
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="configuration-inspector-stack">
+                              <p className="inspector-copy">
+                                Adjust the delimiter palette used by the structured Lisp renderer across browser and execution surfaces.
+                              </p>
+                              <div className="configuration-code-colors" role="group" aria-label="Parenthesis depth colors">
+                                {normalizeParenDepthColors(lispParenColors).map((color, index) => (
+                                  <label className="configuration-color-control" key={`inspector-paren-depth:${index + 1}`}>
+                                    <span>{`Depth ${index + 1}`}</span>
+                                    <input
+                                      className="configuration-color-input"
+                                      onChange={(event) => void updateLispParenColor(index, event.target.value)}
+                                      type="color"
+                                      value={color}
+                                    />
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          )
+                      },
+                      {
+                        id: "effect",
+                        label: "Effect",
+                        content:
+                          selectedConfigurationSection === "theme" ? (
+                            <div className="configuration-inspector-stack">
+                              <dl className="detail-list">
+                                <DetailRow label="Preference" value={themePreference} />
+                                <DetailRow label="Resolved Theme" value={resolvedTheme} />
+                                <DetailRow label="System Signal" value={systemTheme} />
+                              </dl>
+                              <p className="inspector-copy">
+                                Theme selection changes panel chrome, editors, tables, and the wider desktop palette without changing governed runtime state.
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="configuration-inspector-stack">
+                              <p className="inspector-copy">
+                                The active palette is previewed below and persists across relaunch so Lisp-aware browsing keeps the same depth model.
+                              </p>
+                              <div className="configuration-code-preview">
+                                <LispCodeBlock code={LISP_CONFIGURATION_SAMPLE} parenDepthColors={lispParenColors} />
+                              </div>
+                            </div>
+                          )
                       }
                     ]
-                  : activeWorkspace === "documentation"
-                    ? [
-                        {
-                          id: "context",
-                          label: "Context",
-                          content: (
-                            <p className="inspector-copy">
-                              {selectedDocumentationPage?.summary ??
-                                "Documentation is deliberate and separate from the operational workspaces so learning material stays available without competing with active engineering surfaces."}
-                            </p>
-                          )
-                        }
-                      ]
+                    : activeWorkspace === "documentation"
+                      ? [
+                          {
+                            id: "context",
+                            label: "Context",
+                            content: (
+                              <div className="configuration-inspector-stack">
+                                <dl className="detail-list">
+                                  <DetailRow label="Title" value={selectedDocumentationPage?.title ?? "No page selected"} />
+                                  <DetailRow label="Category" value={selectedDocumentationPage?.category ?? "unknown"} />
+                                  <DetailRow label="Slug" value={selectedDocumentationPage?.slug ?? selectedDocumentationPage?.title ?? "unknown"} />
+                                </dl>
+                                <p className="inspector-copy">
+                                  {selectedDocumentationPage?.summary ??
+                                    "Select a documentation page from the workspace table to read it in the inspector."}
+                                </p>
+                                <button
+                                  className="starter-chip"
+                                  onClick={() => void openPublishedDocumentation()}
+                                  type="button"
+                                >
+                                  Open Published Site
+                                </button>
+                              </div>
+                            )
+                          },
+                          {
+                            id: "content",
+                            label: "Content",
+                            content: selectedDocumentationPage ? (
+                              <article
+                                className="documentation-markdown inspector-documentation-markdown"
+                                dangerouslySetInnerHTML={{ __html: renderedDocumentationHtml }}
+                              />
+                            ) : (
+                              <p className="inspector-copy">
+                                Select a documentation page from the workspace table to read it here.
+                              </p>
+                            )
+                          }
+                        ]
                     : [];
   const [activeInspectorTab, setActiveInspectorTab] = useState<string>(inspectorTabs[0]?.id ?? "context");
 
@@ -4248,60 +4379,148 @@ function WorkspaceInspector({
 
   const selectedInspectorTab = inspectorTabs.find((tab) => tab.id === activeInspectorTab) ?? inspectorTabs[0] ?? null;
 
+  if (activeWorkspace === "conversations" && selectedConversationSection === "threads") {
+    return (
+      <aside className="inspector">
+        <div className="panel-titlebar">
+          <button
+            aria-label="Collapse workspace panel"
+            className="panel-titlebar-toggle"
+            onClick={onToggleInspector}
+            title="Collapse workspace panel"
+            type="button"
+          >
+            <span aria-hidden="true">−</span>
+          </button>
+          <span className="panel-titlebar-label">Workspace</span>
+        </div>
+        <div className="inspector-body conversation-workspace-body">
+          {selectedThread ? (
+            <>
+              <section className="inspector-card conversation-thread-panel conversation-thread-transcript-panel">
+                {displayedConversationMessages.length > 0 ? (
+                  <div className="message-stack" ref={messageStackRef}>
+                    {displayedConversationMessages.map((message) => (
+                      <MessageBubble
+                        key={message.messageId}
+                        isSelected={selectedConversationMessage?.messageId === message.messageId}
+                        message={message}
+                        onSelect={() => setSelectedConversationMessageId(message.messageId)}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="empty-state conversation-inline-empty">
+                    <p className="eyebrow">No Messages Yet</p>
+                    <h3>This session exists, but it does not have a retained transcript yet.</h3>
+                  </div>
+                )}
+              </section>
+
+              <section className="inspector-card conversation-thread-panel conversation-composer-panel conversation-composer-dock">
+                {conversationSendError ? (
+                  <div className="conversation-composer-error" role="alert">
+                    {conversationSendError}
+                  </div>
+                ) : null}
+                <textarea
+                  className="runtime-editor conversation-draft-editor"
+                  ref={composerTextareaRef}
+                  onChange={(event) => setConversationDraft(event.target.value)}
+                  rows={5}
+                  value={conversationDraft}
+                />
+                <div className="conversation-composer-actions">
+                  <button
+                    aria-label={isSendingConversation ? "Sending message" : "Send message"}
+                    className="action-button conversation-send-button"
+                    disabled={isSendingConversation || conversationDraft.trim().length === 0}
+                    onClick={() => void sendConversationMessage()}
+                    title={isSendingConversation ? "Sending..." : "Send message"}
+                    type="button"
+                  >
+                    <span aria-hidden="true">{isSendingConversation ? "…" : "↵"}</span>
+                  </button>
+                </div>
+              </section>
+            </>
+          ) : (
+            <section className="inspector-card conversation-thread-empty">
+              <div className="empty-state">
+                <p className="eyebrow">No Thread Selected</p>
+                <h3>Select a thread from Browse to continue the session here.</h3>
+              </div>
+            </section>
+          )}
+        </div>
+      </aside>
+    );
+  }
+
   return (
     <aside className="inspector">
-      <button
-        aria-label="Resize inspector"
-        className={`shell-column-resizer${isResizing ? " active" : ""}`}
-        onPointerDown={onStartResize}
-        type="button"
-      />
-      <section className="inspector-card">
-        <p className="eyebrow">Current Focus</p>
-        <h3>{currentFocusTitle}</h3>
-        <p className="inspector-copy">{currentFocusSummary}</p>
-        <dl className="detail-list">
-          <DetailRow label="Workspace" value={labelForWorkspace(activeWorkspace)} />
-          <DetailRow label="Binding" value={binding?.environmentId ?? "unbound"} />
-          <DetailRow label="Runtime" value={summary?.activeContext.runtimePackage ?? status?.runtimeState ?? "unknown"} />
-          <DetailRow label="Workflow" value={status?.workflowState ?? "unknown"} />
-        </dl>
-      </section>
-      {selectedInspectorTab ? (
-        <section className="inspector-card inspector-tabs-card">
-          <div className="inspector-tabs" role="tablist" aria-label="Inspector panels">
-            {inspectorTabs.map((tab) => (
-              <button
-                aria-selected={tab.id === selectedInspectorTab.id}
-                className={tab.id === selectedInspectorTab.id ? "inspector-tab active" : "inspector-tab"}
-                key={tab.id}
-                onClick={() => setActiveInspectorTab(tab.id)}
-                role="tab"
-                type="button"
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-          <div className="inspector-tab-panel" role="tabpanel">
-            {selectedInspectorTab.content}
-          </div>
+      <div className="panel-titlebar">
+        <button
+          aria-label="Collapse workspace panel"
+          className="panel-titlebar-toggle"
+          onClick={onToggleInspector}
+          title="Collapse workspace panel"
+          type="button"
+        >
+          <span aria-hidden="true">−</span>
+        </button>
+        <span className="panel-titlebar-label">Workspace</span>
+      </div>
+      <div className="inspector-body">
+        <section className="inspector-card">
+          <p className="eyebrow">Current Focus</p>
+          <h3>{currentFocusTitle}</h3>
+          <p className="inspector-copy">{currentFocusSummary}</p>
+          <dl className="detail-list">
+            <DetailRow label="Workspace" value={labelForWorkspace(activeWorkspace)} />
+            <DetailRow label="Binding" value={binding?.environmentId ?? "unbound"} />
+            <DetailRow label="Runtime" value={summary?.activeContext.runtimePackage ?? status?.runtimeState ?? "unknown"} />
+            <DetailRow label="Workflow" value={status?.workflowState ?? "unknown"} />
+          </dl>
         </section>
-      ) : null}
+        {selectedInspectorTab ? (
+          <section className="inspector-card inspector-tabs-card">
+            <div className="inspector-tabs" role="tablist" aria-label="Inspector panels">
+              {inspectorTabs.map((tab) => (
+                <button
+                  aria-selected={tab.id === selectedInspectorTab.id}
+                  className={tab.id === selectedInspectorTab.id ? "inspector-tab active" : "inspector-tab"}
+                  key={tab.id}
+                  onClick={() => setActiveInspectorTab(tab.id)}
+                  role="tab"
+                  type="button"
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <div className="inspector-tab-panel" role="tabpanel">
+              {selectedInspectorTab.content}
+            </div>
+          </section>
+        ) : null}
+      </div>
     </aside>
   );
 }
 
 function ConfigurationWorkspace({
   selectedSection,
+  setSelectedSection,
   themePreference,
   lispParenColors,
   resolvedTheme,
   systemTheme,
-  updateLispParenColor,
-  updateThemePreference
+  updateLispParenColor: _updateLispParenColor,
+  updateThemePreference: _updateThemePreference
 }: {
   selectedSection: ConfigurationSection;
+  setSelectedSection: (value: ConfigurationSection) => void;
   themePreference: ThemePreference;
   lispParenColors: string[];
   resolvedTheme: ResolvedTheme;
@@ -4311,129 +4530,69 @@ function ConfigurationWorkspace({
 }) {
   const selectedDescriptor =
     configurationSections.find((section) => section.id === selectedSection) ?? configurationSections[0];
+  const configurationRows = configurationSections.map((section) => ({
+    key: section.id,
+    category: section.label,
+    family: section.family,
+    currentValue:
+      section.id === "theme"
+        ? themePreference === "system"
+          ? `System (${resolvedTheme})`
+          : `${themePreference} (${resolvedTheme})`
+        : `${normalizeParenDepthColors(lispParenColors).length} configured depths`,
+    summary: section.summary
+  }));
 
   return (
     <div className="configuration-journey">
       <div className="configuration-layout">
         <section className="configuration-pane panel">
-          <div className="panel-header">
-            <div>
-              <p className="eyebrow">Configuration Workspace</p>
-              <h3>{selectedDescriptor.label}</h3>
-            </div>
-            <Badge tone="active">{themePreference}</Badge>
-          </div>
-          <p className="lead-copy">{selectedDescriptor.summary}</p>
-
-          <section className="configuration-section">
-            <PanelHeader
-              title="Theme"
-              subtitle="The shell should support an extensible theme system and follow the operating system when System is selected."
-              helpText="Use this when the shell should follow macOS appearance or when you need to pin the desktop to a stable light or dark presentation."
-            />
-            <div className="configuration-theme-grid">
-              <div className="signal-digest-card">
-                <span className="context-label">Current Preference</span>
-                <strong>{themePreference === "system" ? "System Theme" : `${themePreference} theme`}</strong>
-                <p>Choose whether the desktop follows macOS or pins itself to an explicit appearance.</p>
-              </div>
-              <div className="signal-digest-card">
-                <span className="context-label">Resolved Theme</span>
-                <strong>{resolvedTheme === "light" ? "Light" : "Dark"}</strong>
-                <p>The shell currently renders using the resolved palette that is active in the renderer.</p>
-              </div>
-              <div className="signal-digest-card">
-                <span className="context-label">System Signal</span>
-                <strong>{systemTheme === "light" ? "Light" : "Dark"}</strong>
-                <p>When System Theme is selected, this macOS preference becomes the active desktop palette.</p>
-              </div>
-            </div>
-            <div className="configuration-theme-actions" role="group" aria-label="Theme preference">
-              <button
-                className={themePreference === "system" ? "starter-chip active" : "starter-chip"}
-                onClick={() => void updateThemePreference("system")}
-                type="button"
-                title="Follow the operating system appearance."
-              >
-                System
-              </button>
-              <button
-                className={themePreference === "light" ? "starter-chip active" : "starter-chip"}
-                onClick={() => void updateThemePreference("light")}
-                type="button"
-                title="Keep the desktop in the light theme."
-              >
-                Light
-              </button>
-              <button
-                className={themePreference === "dark" ? "starter-chip active" : "starter-chip"}
-                onClick={() => void updateThemePreference("dark")}
-                type="button"
-                title="Keep the desktop in the dark theme."
-              >
-                Dark
-              </button>
-            </div>
-            <div className="configuration-preview-grid">
-              <div className="configuration-preview-card">
-                <p className="eyebrow">Shell Preview</p>
-                <strong>Panels, chips, tables, and editors inherit this theme.</strong>
-                <p>
-                  This first pass establishes the preference model so additional named themes can be added without
-                  changing the configuration structure.
-                </p>
-              </div>
-              <div className="configuration-preview-card">
-                <p className="eyebrow">System Behavior</p>
-                <strong>System Theme follows `prefers-color-scheme`.</strong>
-                <p>
-                  On your current macOS setup that should resolve to the light theme whenever the OS appearance is
-                  set to light.
-                </p>
-              </div>
-            </div>
-          </section>
-
-          <section className="configuration-section">
-            <PanelHeader
-              title="Lisp Code View"
-              subtitle="Common Lisp source should render as structured code with depth-aware delimiter colorization rather than plain text."
-              helpText="These settings affect Lisp-aware source presentation in browser and execution surfaces. They do not change source formatting in the runtime itself."
-            />
-            <div className="configuration-theme-grid">
-              <div className="signal-digest-card">
-                <span className="context-label">Code Surface</span>
-                <strong>Structured Lisp Renderer</strong>
-                <p>Browser source panes and Lisp form previews render with syntax emphasis, line structure, and rainbow delimiters.</p>
-              </div>
-              <div className="signal-digest-card">
-                <span className="context-label">Delimiter Depth</span>
-                <strong>{lispParenColors.length} configured levels</strong>
-                <p>Each nested parenthesis depth can be assigned its own color and cycles once the configured palette is exhausted.</p>
-              </div>
-              <div className="signal-digest-card">
-                <span className="context-label">Persistence</span>
-                <strong>Desktop Preference</strong>
-                <p>The code-view palette is saved in desktop preferences so the renderer comes back with the same Lisp color model on relaunch.</p>
-              </div>
-            </div>
-            <div className="configuration-code-colors" role="group" aria-label="Parenthesis depth colors">
-              {normalizeParenDepthColors(lispParenColors).map((color, index) => (
-                <label className="configuration-color-control" key={`paren-depth:${index + 1}`}>
-                  <span>{`Depth ${index + 1}`}</span>
-                  <input
-                    className="configuration-color-input"
-                    onChange={(event) => void updateLispParenColor(index, event.target.value)}
-                    type="color"
-                    value={color}
-                  />
-                </label>
-              ))}
-            </div>
-            <div className="configuration-code-preview">
-              <LispCodeBlock code={LISP_CONFIGURATION_SAMPLE} parenDepthColors={lispParenColors} />
-            </div>
-          </section>
+          <PanelHeader
+            title="Configuration Categories"
+            subtitle="Browse configurable domains in the workspace, then edit the selected category in the inspector."
+            helpText="This keeps the left rail shallow while allowing the configuration system to scale to many categories over time."
+          />
+          <BrowserDataTable
+            key="configuration-categories"
+            columnTemplate="minmax(0, 1fr) minmax(0, 0.82fr) minmax(0, 1fr) minmax(0, 1.45fr)"
+            columns={[
+              {
+                id: "category",
+                label: "Category",
+                render: (row) => <strong>{row.category}</strong>,
+                sortValue: (row) => row.category,
+                searchValue: (row) => `${row.category} ${row.summary} ${row.family}`
+              },
+              {
+                id: "family",
+                label: "Family",
+                render: (row) => <Badge tone="steady">{row.family}</Badge>,
+                sortValue: (row) => row.family
+              },
+              {
+                id: "current",
+                label: "Current",
+                render: (row) => row.currentValue,
+                sortValue: (row) => row.currentValue
+              },
+              {
+                id: "summary",
+                label: "Summary",
+                render: (row) => row.summary,
+                sortValue: (row) => row.summary,
+                searchValue: (row) => row.summary
+              }
+            ]}
+            emptyMessage="No configuration categories are available."
+            filterLabel="Family"
+            filterOptions={Array.from(new Set(configurationRows.map((row) => row.family))).map((value) => ({ label: value, value }))}
+            getFilterValue={(row) => row.family}
+            getRowKey={(row) => row.key}
+            onSelect={(row) => setSelectedSection(row.key as ConfigurationSection)}
+            rows={configurationRows}
+            searchPlaceholder="Search configuration categories"
+            selectedKey={selectedDescriptor.id}
+          />
         </section>
       </div>
     </div>
@@ -4456,30 +4615,21 @@ function PlannedWorkspace({ workspaceId }: { workspaceId: WorkspaceId }) {
 function DocumentationWorkspace({
   documentationPages,
   selectedDocumentationSlug,
-  selectedDocumentationPage,
   setSelectedDocumentationSlug,
-  loadDocumentationPage,
-  openPublishedDocumentation
+  loadDocumentationPage
 }: {
   documentationPages: DocumentationPageSummaryDto[];
   selectedDocumentationSlug: string;
-  selectedDocumentationPage: DocumentationPageDto | null;
   setSelectedDocumentationSlug: (value: string) => void;
   loadDocumentationPage: (slug: string) => Promise<void>;
-  openPublishedDocumentation: () => Promise<void>;
 }) {
-  const renderedDocumentationHtml = useMemo(
-    () => renderDocumentationMarkdown(selectedDocumentationPage?.markdown ?? ""),
-    [selectedDocumentationPage?.markdown]
-  );
-
   return (
     <div className="documentation-workspace">
       <section className="panel documentation-table-panel">
         <PanelHeader
           title="Documentation Pages"
-          subtitle="Enter documentation deliberately here when you need conceptual guidance, workflow explanation, or workspace reference."
-          helpText="This workspace keeps user-facing guidance separate from the active engineering surfaces so documentation remains available without competing for attention."
+          subtitle="Browse documentation pages here, then read and inspect the selected page in the inspector."
+          helpText="This keeps Documentation scalable in the same way as Configuration: the workspace stays navigational and the inspector becomes the reading surface."
         />
         <BrowserDataTable
           key="desktop-documentation"
@@ -4523,39 +4673,6 @@ function DocumentationWorkspace({
           selectedKey={selectedDocumentationSlug}
         />
       </section>
-
-      {selectedDocumentationPage ? (
-        <section className="panel documentation-detail-panel">
-          <PanelHeader
-            title={selectedDocumentationPage.title}
-            subtitle="Read the selected documentation below the page list so navigation stays dense and the reading surface stays deliberate."
-            helpText="Use the table above to move between conceptual guides, workspace references, and operational help without changing the rest of the desktop layout."
-          />
-          <div className="documentation-detail-topbar">
-            <Badge tone="active">{selectedDocumentationPage.category}</Badge>
-            <button
-              className="starter-chip"
-              onClick={() => void openPublishedDocumentation()}
-              type="button"
-              title="Open the published GitHub Pages version of the same documentation set."
-            >
-              Open Published Site
-            </button>
-          </div>
-          <article
-            className="documentation-markdown"
-            dangerouslySetInnerHTML={{ __html: renderedDocumentationHtml }}
-          />
-        </section>
-      ) : (
-        <section className="panel documentation-detail-panel">
-          <div className="empty-state">
-            <p className="eyebrow">Documentation</p>
-            <h3>No page selected</h3>
-            <p>Select a documentation page from the table to read it here.</p>
-          </div>
-        </section>
-      )}
     </div>
   );
 }
@@ -5708,7 +5825,8 @@ function BrowserDataTable<Row>({
   getRowKey,
   onSelect,
   searchPlaceholder,
-  selectedKey
+  selectedKey,
+  toolbarLeading
 }: {
   rows: Row[];
   columns: BrowserTableColumn<Row>[];
@@ -5721,6 +5839,7 @@ function BrowserDataTable<Row>({
   onSelect: (row: Row) => void;
   searchPlaceholder: string;
   selectedKey: string | null;
+  toolbarLeading?: React.ReactNode;
 }) {
   const [searchTerm, setSearchTerm] = useState("");
   const [activeFilter, setActiveFilter] = useState("all");
@@ -5799,6 +5918,7 @@ function BrowserDataTable<Row>({
   return (
     <section className="browser-table-shell">
       <div className="browser-table-toolbar">
+        {toolbarLeading ? <div className="browser-table-leading">{toolbarLeading}</div> : null}
         <input
           className="filter-input browser-table-search"
           aria-label={searchPlaceholder}
@@ -5858,19 +5978,27 @@ function BrowserDataTable<Row>({
             pagedRows.map((row) => {
               const rowKey = getRowKey(row);
               return (
-                <button
+                <div
+                  aria-pressed={selectedKey === rowKey}
                   className={selectedKey === rowKey ? "browser-table-row active" : "browser-table-row"}
                   key={rowKey}
                   onClick={() => onSelect(row)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onSelect(row);
+                    }
+                  }}
+                  role="button"
                   style={{ gridTemplateColumns: columnTemplate }}
-                  type="button"
+                  tabIndex={0}
                 >
                   {columns.map((column) => (
                     <span className="browser-table-cell" key={`${rowKey}:${column.id}`}>
                       {column.render(row)}
                     </span>
                   ))}
-                </button>
+                </div>
               );
             })
           ) : (
@@ -7056,53 +7184,36 @@ function BrowserWorkspace({
 }
 
 function ConversationsWorkspace({
-  conversationSessionTitleDraft,
   selectedSection,
-  conversationDraft,
-  conversationSendError,
-  conversationStream,
-  createConversationSession,
-  sendConversationMessage,
-  isSendingConversation,
   threads,
   selectedConversationMessageId,
   selectedThreadId,
   selectedThread,
   selectedTurnId,
   selectedTurn,
-  setConversationDraft,
   setSelectedConversationMessageId,
-  setConversationSessionTitleDraft,
+  onOpenCreateConversationSession,
+  onOpenRenameConversationSession,
   setSelectedThreadId,
   setSelectedTurnId
 }: {
-  conversationSessionTitleDraft: string;
   selectedSection: ConversationSection;
-  conversationDraft: string;
-  conversationSendError: string | null;
-  conversationStream: {
-    threadId: string;
-    turnId: string | null;
-    content: string;
-  } | null;
-  createConversationSession: () => Promise<void>;
-  sendConversationMessage: () => Promise<void>;
-  isSendingConversation: boolean;
   threads: ThreadSummaryDto[];
   selectedConversationMessageId: string | null;
   selectedThreadId: string | null;
   selectedThread: ThreadDetailDto | null;
   selectedTurnId: string | null;
   selectedTurn: TurnDetailDto | null;
-  setConversationDraft: (value: string) => void;
   setSelectedConversationMessageId: (messageId: string | null) => void;
-  setConversationSessionTitleDraft: (value: string) => void;
+  onOpenCreateConversationSession: () => void;
+  onOpenRenameConversationSession: (threadId: string, title: string) => void;
   setSelectedThreadId: (threadId: string) => void;
   setSelectedTurnId: (turnId: string) => void;
 }) {
   const [threadTableExpanded, setThreadTableExpanded] = useState(true);
-  const messageStackRef = useRef<HTMLDivElement | null>(null);
-  const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [browseConversationTab, setBrowseConversationTab] = useState<"context" | "turn" | "entry" | "linked">(
+    "context"
+  );
   const threadRows = threads.map((thread) => ({
     key: thread.threadId,
     title: thread.title,
@@ -7147,63 +7258,8 @@ function ConversationsWorkspace({
       state: turn.state,
       createdAt: turn.createdAt
     })) ?? [];
-  const displayedMessages =
-    selectedThread &&
-    conversationStream &&
-    conversationStream.threadId === selectedThread.threadId &&
-    conversationStream.content.length > 0
-      ? [
-          ...selectedThread.messages,
-          {
-            messageId: `streaming-${conversationStream.turnId ?? selectedThread.threadId}`,
-            role: "assistant" as const,
-            content: conversationStream.content,
-            createdAt: new Date().toISOString()
-          }
-        ]
-      : selectedThread?.messages ?? [];
-
-  useEffect(() => {
-    if (selectedSection !== "threads") {
-      return;
-    }
-    const messageStack = messageStackRef.current;
-    if (!messageStack) {
-      return;
-    }
-    messageStack.scrollTop = messageStack.scrollHeight;
-  }, [
-    selectedSection,
-    selectedThread?.threadId,
-    displayedMessages.length,
-    conversationStream?.content,
-    conversationStream?.turnId,
-    isSendingConversation
-  ]);
-
-  useEffect(() => {
-    if (selectedSection !== "threads") {
-      return;
-    }
-    const textarea = composerTextareaRef.current;
-    if (!textarea) {
-      return;
-    }
-    const computedStyle = window.getComputedStyle(textarea);
-    const lineHeight = Number.parseFloat(computedStyle.lineHeight) || 20;
-    const paddingTop = Number.parseFloat(computedStyle.paddingTop) || 0;
-    const paddingBottom = Number.parseFloat(computedStyle.paddingBottom) || 0;
-    const borderTop = Number.parseFloat(computedStyle.borderTopWidth) || 0;
-    const borderBottom = Number.parseFloat(computedStyle.borderBottomWidth) || 0;
-    const frameHeight = paddingTop + paddingBottom + borderTop + borderBottom;
-    const minHeight = lineHeight * 5 + frameHeight;
-    const maxHeight = lineHeight * 15 + frameHeight;
-
-    textarea.style.height = "auto";
-    const nextHeight = Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight);
-    textarea.style.height = `${nextHeight}px`;
-    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
-  }, [selectedSection, conversationDraft, selectedThread?.threadId]);
+  const selectedConversationMessage =
+    selectedThread?.messages.find((message) => message.messageId === selectedConversationMessageId) ?? null;
 
   return (
     <div className="conversations-journey">
@@ -7216,62 +7272,32 @@ function ConversationsWorkspace({
               {threadTableExpanded ? (
                 <div className="conversation-frame-header">
                   <div>
-                    <p className="eyebrow">Thread Navigation</p>
-                    <h3>Conversation Sessions</h3>
+                    <p className="eyebrow">Conversations &gt;&gt; Threads</p>
                   </div>
                   <div className="conversation-frame-header-actions">
-                    {attentionThreadRows.length > 0 ? (
-                      <button
-                        className="thread-attention-pill"
-                        onClick={() => {
-                          if (primaryAttentionThread) {
-                            setSelectedThreadId(primaryAttentionThread.key);
-                          }
-                        }}
-                        type="button"
-                      >
-                        <span>Attention</span>
-                        <strong>{attentionThreadRows.length}</strong>
-                      </button>
-                    ) : (
-                      <Badge tone="steady">{`${threadRows.length} threads`}</Badge>
-                    )}
+                    <Badge tone="steady">{`${threadRows.length} threads`}</Badge>
                     <button
-                      className="shell-chrome-button"
+                      aria-label="Collapse thread table"
+                      className="panel-titlebar-toggle"
                       onClick={() => setThreadTableExpanded((current) => !current)}
+                      title="Collapse thread table"
                       type="button"
                     >
-                      Collapse Thread Table
+                      <span aria-hidden="true">−</span>
                     </button>
                   </div>
                 </div>
               ) : (
                 <div className="conversation-frame-inline">
                   <div className="conversation-frame-inline-title">
-                    <span className="conversation-frame-inline-eyebrow">Thread Navigation</span>
-                    <strong>Conversation Sessions</strong>
+                    <span className="conversation-frame-inline-eyebrow">Conversations &gt;&gt; Threads</span>
                   </div>
                   <div className="conversation-frame-inline-summary" title={`${collapsedThreadSummary} ${collapsedThreadMeta}`}>
                     <strong>{collapsedThreadSummary}</strong>
                     <span>{collapsedThreadMeta}</span>
                   </div>
                   <div className="conversation-frame-inline-actions">
-                    {attentionThreadRows.length > 0 ? (
-                      <button
-                        className="thread-attention-pill"
-                        onClick={() => {
-                          if (primaryAttentionThread) {
-                            setSelectedThreadId(primaryAttentionThread.key);
-                          }
-                        }}
-                        type="button"
-                      >
-                        <span>Attention</span>
-                        <strong>{attentionThreadRows.length}</strong>
-                      </button>
-                    ) : (
-                      <Badge tone="steady">{`${threadRows.length} threads`}</Badge>
-                    )}
+                    <Badge tone="steady">{`${threadRows.length} threads`}</Badge>
                     {primaryAttentionThread ? (
                       <button
                         className="thread-collapsed-focus-button"
@@ -7282,34 +7308,22 @@ function ConversationsWorkspace({
                       </button>
                     ) : null}
                     <button
-                      className="shell-chrome-button"
+                      aria-label="Expand thread table"
+                      className="panel-titlebar-toggle"
                       onClick={() => setThreadTableExpanded(true)}
+                      title="Expand thread table"
                       type="button"
                     >
-                      Expand Thread Table
+                      <span aria-hidden="true">+</span>
                     </button>
                   </div>
                 </div>
               )}
               {threadTableExpanded ? (
                 <>
-                  <div className="conversation-thread-toolbar">
-                    <div className="conversation-thread-actions">
-                      <label className="runtime-session-create">
-                        <span className="context-label">New Session</span>
-                        <input
-                          onChange={(event) => setConversationSessionTitleDraft(event.target.value)}
-                          value={conversationSessionTitleDraft}
-                        />
-                      </label>
-                      <button className="starter-chip" onClick={() => void createConversationSession()} type="button">
-                        New Conversation Session
-                      </button>
-                    </div>
-                  </div>
                   <BrowserDataTable
                     key="conversation-threads"
-                    columnTemplate="minmax(0, 1.15fr) minmax(0, 0.72fr) minmax(0, 0.78fr) minmax(0, 0.92fr) minmax(0, 1.35fr)"
+                    columnTemplate="minmax(180px, 1.05fr) minmax(92px, max-content) minmax(112px, max-content) minmax(132px, 0.92fr) minmax(220px, 1.2fr) 44px"
                     columns={[
                       {
                         id: "thread",
@@ -7342,6 +7356,25 @@ function ConversationsWorkspace({
                         render: (row) => row.summary,
                         sortValue: (row) => row.summary,
                         searchValue: (row) => row.summary
+                      },
+                      {
+                        id: "edit",
+                        label: "",
+                        render: (row) => (
+                          <button
+                            aria-label={`Rename ${row.title}`}
+                            className="panel-titlebar-toggle table-row-action"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onOpenRenameConversationSession(row.key, row.title);
+                            }}
+                            title={`Rename ${row.title}`}
+                            type="button"
+                          >
+                            <span aria-hidden="true">✎</span>
+                          </button>
+                        ),
+                        sortValue: () => ""
                       }
                     ]}
                     emptyMessage="No structured conversation threads are available."
@@ -7353,66 +7386,83 @@ function ConversationsWorkspace({
                     rows={threadRows}
                     searchPlaceholder="Search conversation threads"
                     selectedKey={selectedThreadId}
+                    toolbarLeading={
+                      <button
+                        aria-label="New conversation session"
+                        className="panel-titlebar-toggle"
+                        onClick={onOpenCreateConversationSession}
+                        title="New conversation session"
+                        type="button"
+                      >
+                        <span aria-hidden="true">{`{+}`}</span>
+                      </button>
+                    }
                   />
                 </>
               ) : null}
             </section>
 
-            {selectedThread ? (
-              <>
-                <section className="panel conversation-thread-panel conversation-thread-transcript-panel">
-                  {displayedMessages.length > 0 ? (
-                    <div className="message-stack" ref={messageStackRef}>
-                      {displayedMessages.map((message) => (
-                        <MessageBubble
-                          key={message.messageId}
-                          isSelected={selectedConversationMessageId === message.messageId}
-                          message={message}
-                          onSelect={() => setSelectedConversationMessageId(message.messageId)}
-                        />
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="empty-state conversation-inline-empty">
-                      <p className="eyebrow">No Messages Yet</p>
-                      <h3>This session exists, but it does not have a retained transcript yet.</h3>
-                    </div>
-                  )}
-                </section>
-
-                <section className="panel conversation-thread-panel conversation-composer-panel conversation-composer-dock">
-                  {conversationSendError ? (
-                    <div className="conversation-composer-error" role="alert">
-                      {conversationSendError}
-                    </div>
-                  ) : null}
-                  <textarea
-                    className="runtime-editor conversation-draft-editor"
-                    ref={composerTextareaRef}
-                    onChange={(event) => setConversationDraft(event.target.value)}
-                    rows={5}
-                    value={conversationDraft}
-                  />
-                  <div className="conversation-composer-actions">
-                    <button
-                      aria-label={isSendingConversation ? "Sending message" : "Send message"}
-                      className="action-button conversation-send-button"
-                      disabled={isSendingConversation || conversationDraft.trim().length === 0}
-                      onClick={() => void sendConversationMessage()}
-                      title={isSendingConversation ? "Sending..." : "Send message"}
-                      type="button"
-                    >
-                      <span aria-hidden="true">{isSendingConversation ? "…" : "↵"}</span>
-                    </button>
-                  </div>
-                </section>
-              </>
-            ) : (
-              <div className="empty-state conversation-thread-empty">
-                <p className="eyebrow">No Thread Selected</p>
-                <h3>Select a thread from the table to inspect structured conversation state.</h3>
+            <section className="panel conversation-thread-panel conversation-browse-detail-panel">
+              <div className="inspector-tabs" role="tablist" aria-label="Conversation browse panels">
+                {[
+                  { id: "context", label: "Context" },
+                  { id: "turn", label: "Turn" },
+                  { id: "entry", label: "Entry" },
+                  { id: "linked", label: "Linked" }
+                ].map((tab) => (
+                  <button
+                    aria-selected={tab.id === browseConversationTab}
+                    className={tab.id === browseConversationTab ? "inspector-tab active" : "inspector-tab"}
+                    key={tab.id}
+                    onClick={() => setBrowseConversationTab(tab.id as typeof browseConversationTab)}
+                    role="tab"
+                    type="button"
+                  >
+                    {tab.label}
+                  </button>
+                ))}
               </div>
-            )}
+              <div className="inspector-tab-panel" role="tabpanel">
+                {browseConversationTab === "context" ? (
+                  <dl className="detail-list">
+                    <DetailRow label="Thread" value={selectedThread?.title ?? "No thread selected"} />
+                    <DetailRow label="State" value={selectedThread?.state ?? "idle"} />
+                    <DetailRow label="Turns" value={String(selectedThread?.turns.length ?? 0)} />
+                    <DetailRow label="Linked Entities" value={String(selectedThread?.linkedEntities.length ?? 0)} />
+                  </dl>
+                ) : null}
+                {browseConversationTab === "turn" ? (
+                  <dl className="detail-list">
+                    <DetailRow label="Turn" value={selectedTurn?.title ?? "No turn selected"} />
+                    <DetailRow label="Turn State" value={selectedTurn?.state ?? "idle"} />
+                    <DetailRow label="Operations" value={String(selectedTurn?.operationIds.length ?? 0)} />
+                    <DetailRow label="Artifacts" value={String(selectedTurn?.artifactIds.length ?? 0)} />
+                    <DetailRow label="Approvals" value={String(selectedTurn?.approvalIds.length ?? 0)} />
+                  </dl>
+                ) : null}
+                {browseConversationTab === "entry" ? (
+                  selectedConversationMessage ? (
+                    <dl className="detail-list">
+                      <DetailRow label="Source" value={selectedConversationMessage.role} />
+                      <DetailRow label="Timestamp" value={selectedConversationMessage.createdAt} />
+                    </dl>
+                  ) : (
+                    <p className="inspector-copy">
+                      Select a transcript entry in Workspace to inspect its source and timestamp here.
+                    </p>
+                  )
+                ) : null}
+                {browseConversationTab === "linked" ? (
+                  selectedThread ? (
+                    <LinkedEntityList entities={selectedThread.linkedEntities} />
+                  ) : (
+                    <p className="inspector-copy">
+                      Select a conversation session to inspect the artifacts, approvals, incidents, and work attached to it.
+                    </p>
+                  )
+                ) : null}
+              </div>
+            </section>
           </div>
         ) : null}
 
@@ -8738,28 +8788,18 @@ function StatusDock({
   binding,
   currentProject,
   hostStatus,
-  sidebarPinned,
-  canvasPinned,
   status,
-  inspectorPinned,
-  onToggleSidebar,
-  onToggleCanvas,
-  onToggleInspector
+  dockRef
 }: {
   activeWorkspace: WorkspaceId;
   binding: BindingDto | null;
   currentProject: ProjectProfileDto | null;
   hostStatus: HostStatusDto | null;
-  sidebarPinned: boolean;
-  canvasPinned: boolean;
   status: EnvironmentStatusDto | null;
-  inspectorPinned: boolean;
-  onToggleSidebar: () => void;
-  onToggleCanvas: () => void;
-  onToggleInspector: () => void;
+  dockRef: React.RefObject<HTMLElement | null>;
 }) {
   return (
-    <section className="status-dock">
+    <section className="status-dock" ref={dockRef}>
       <div className="status-dock-group">
         <span className="status-dock-label">Host</span>
         <strong>{hostStatus?.hostState ?? "starting"}</strong>
@@ -8783,18 +8823,6 @@ function StatusDock({
       <div className="status-dock-group">
         <span className="status-dock-label">Workflow</span>
         <strong>{status?.workflowState ?? "unknown"}</strong>
-      </div>
-      <div className="status-dock-actions">
-        <span className="status-dock-hint">1-8 quick header switch</span>
-        <button className="dock-button" onClick={onToggleSidebar} type="button">
-          {sidebarPinned ? "Hide Navigation" : "Show Navigation"}
-        </button>
-        <button className="dock-button" onClick={onToggleCanvas} type="button">
-          {canvasPinned ? "Hide Workspace" : "Show Workspace"}
-        </button>
-        <button className="dock-button" onClick={onToggleInspector} type="button">
-          {inspectorPinned ? "Collapse Inspector" : "Show Inspector"}
-        </button>
       </div>
     </section>
   );

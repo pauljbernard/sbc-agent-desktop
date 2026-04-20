@@ -216,6 +216,13 @@ export interface CreateConversationThreadInput {
   summary?: string;
 }
 
+export interface UpdateConversationThreadInput {
+  environmentId: string;
+  threadId: string;
+  title: string;
+  summary?: string;
+}
+
 export interface SendConversationMessageInput {
   environmentId: string;
   threadId: string;
@@ -633,6 +640,9 @@ export interface CommandApi {
   createConversationThread(
     input: CreateConversationThreadInput
   ): Promise<CommandResultDto<ThreadSummaryDto>>;
+  updateConversationThread(
+    input: UpdateConversationThreadInput
+  ): Promise<CommandResultDto<ThreadSummaryDto>>;
   sendConversationMessage(
     input: SendConversationMessageInput
   ): Promise<CommandResultDto<SendConversationMessageResultDto>>;
@@ -664,10 +674,12 @@ export interface DesktopApi {
   focusWorkspace(workspace: WorkspaceId): Promise<void>;
   getDesktopPreferences(): Promise<DesktopPreferencesDto>;
   setDesktopPreferences(patch: Partial<DesktopPreferencesDto>): Promise<DesktopPreferencesDto>;
+  setWindowTitle(title: string): Promise<void>;
   openEntityInNewWindow(ref: EntityRefDto): Promise<void>;
   listDocumentationPages(): Promise<DocumentationPageSummaryDto[]>;
   readDocumentationPage(slug: string): Promise<DocumentationPageDto>;
   openExternalLink(url: string): Promise<void>;
+  subscribeMenuActions(handler: (action: string) => void): Promise<EventSubscriptionHandle>;
 }
 
 export interface SbclAgentDesktopApi {
