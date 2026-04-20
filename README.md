@@ -1,6 +1,6 @@
-# sbcl-agent-ux
+# sbcl-agent-desktop
 
-`sbcl-agent-ux` is the specification-first macOS desktop frontend program for the capabilities and services implemented in `sbcl-agent`.
+`sbcl-agent-desktop` is the specification-first macOS desktop frontend program for the capabilities and services implemented in `sbcl-agent`.
 
 This repository does not begin with screens. It begins with the operating model that the frontend must faithfully express:
 
@@ -67,7 +67,7 @@ The frontend goal is:
 ## Repository Structure
 
 ```text
-sbcl-agent-ux/
+sbcl-agent-desktop/
 ├── LICENSE.md
 ├── README.md
 ├── docs/
