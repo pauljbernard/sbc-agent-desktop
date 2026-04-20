@@ -110,7 +110,7 @@ const LISP_CONFIGURATION_SAMPLE = `(defun reconcile-runtime-state (work-item env
       (queue-approval work-item :policy :runtime-change))
     result))`;
 
-const PUBLISHED_DOCUMENTATION_URL = "https://pauljbernard.github.io/sbc-agent-desktop/";
+const PUBLISHED_DOCUMENTATION_URL = "https://pauljbernard.github.io/sbcl-agent-desktop/";
 
 type OperateSection = "orientation" | "journeys" | "evidence";
 type ConversationSection = "threads" | "turns" | "draft";
