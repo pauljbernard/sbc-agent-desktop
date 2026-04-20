@@ -79,6 +79,19 @@ The UX succeeds when users can answer the following with low friction:
 
 ## Functional Requirements
 
+### FR-0 Workspace Focus Discipline
+
+Every workspace must make the active work object visually dominant.
+
+This requires:
+
+- a single clear primary surface in the center canvas
+- supporting context moved to inspectors, selected-row detail, or collapsible secondary surfaces
+- elimination of repeated workspace framing once the user is inside the active task
+- strong preference for compact action controls over oversized decorative controls
+
+Dashboard-like first rows, duplicated summary copy, and competing primary panels violate this requirement.
+
 ### FR-1 Environment Orientation
 
 The system must provide an environment-level orientation view that shows:
@@ -112,6 +125,14 @@ The UX must represent conversation through explicit entities:
 - artifacts
 
 The UX must not reduce these to a plain scrolling transcript.
+
+Conversation views must also distinguish between:
+
+- navigation over threads
+- the active transcript or turn body
+- metadata and linked governed context
+
+These must not collapse into one undifferentiated scrolling page.
 
 ### FR-4 Turn Lifecycle Visibility
 
@@ -227,6 +248,18 @@ At minimum, the system must support live updates for:
 - artifacts
 - workflow posture
 
+### FR-12a Scroll Ownership
+
+Each workspace must define one primary scroll owner for its central task.
+
+The UX must avoid outer-page scrolling when the real growing object is a transcript, table, feed, or result body.
+
+Acceptance for this requirement includes:
+
+- short histories or short result sets should anchor naturally against the active control surface
+- fixed navigation and action regions must remain visually stable while the growing work body scrolls
+- nested scroll behavior must be deliberate and predictable
+
 ### FR-13 Frontend As Presentation Layer
 
 The frontend must operate as a presentation layer over `sbcl-agent`, not as an independent product model.
@@ -258,6 +291,30 @@ The application must support a desktop-grade engineering workflow, including:
 - simultaneous visibility into related entities when beneficial
 - live status updates without browser-style page transitions
 - interaction patterns suitable for long-running engineering sessions
+
+### FR-16 Progressive Metadata Disclosure
+
+The product must favor on-demand metadata over always-visible metadata.
+
+This means:
+
+- timestamps, actor labels, provenance, and similar secondary facts should appear in inspectors or selected detail by default
+- inline lists and transcripts should privilege readability and actionability over exhaustive annotation
+- dense metadata may be revealed on selection, focus, or explicit expansion
+
+The UX should optimize for fast comprehension first and completeness on demand second.
+
+### FR-17 Collapsible Secondary Surfaces
+
+Secondary navigation and supervision surfaces must support collapse when the user is engaged in focused work.
+
+When collapsed, these surfaces must still preserve:
+
+- orientation
+- restore affordance
+- critical attention signal
+
+They must not simply disappear without a recoverable path or hide urgent state entirely.
 
 ## Non-Functional Requirements
 

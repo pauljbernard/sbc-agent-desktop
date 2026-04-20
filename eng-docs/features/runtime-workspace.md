@@ -115,6 +115,10 @@ A multi-region desktop workspace with:
 - selected runtime scope detail
 - linked source, incident, and workflow inspector
 
+The dominant work surface is the runtime inspection and execution surface, with package or symbol navigation directly feeding selected runtime detail. Linked source, incident, and workflow context belongs in inspector or subordinate detail, not as competing first-row panels.
+
+Runtime result bodies, symbol tables, and scope detail own scroll depending on which runtime object is growing. Navigation and direct execution controls must remain stable while those bodies grow.
+
 ### Linked Entity Traversal
 
 The user must be able to move among:
@@ -187,6 +191,8 @@ The runtime workspace must surface:
 - The workspace supports low-friction inspection and execution entry points.
 - Runtime changes and failures update live from canonical events.
 - A capability review concludes the feature is competitive with serious Lisp runtime tooling and thesis-strengthening for `sbcl-agent`.
+- Runtime inspection remains the dominant work surface rather than being hidden behind summary chrome.
+- Scroll ownership is explicit for symbol tables, result bodies, and selected runtime scope detail.
 
 ## Open Questions
 

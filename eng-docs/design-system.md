@@ -63,9 +63,32 @@ Density should come from:
 - reusable inspector patterns
 - consistent state markers
 
-### Principle 4: State Is Part Of The Visual Language
+### Principle 4: Compression Over Explanation
+
+The interface should not narrate what the operator already understands from structure.
+
+The design system should prefer:
+
+- concise labels over explanatory paragraphs
+- selected detail over repeated inline metadata
+- inspector reveal over always-visible support panels
+- compact controls over oversized calls to action
+
+Repeated framing text is usually a product smell, not a product strength.
+
+### Principle 5: State Is Part Of The Visual Language
 
 Executed, blocked, awaiting approval, failed, interrupted, quarantined, and reconciled are part of the system’s visual grammar.
+
+### Principle 6: Stable Spatial Ownership
+
+Every screen should answer three questions clearly:
+
+- what is navigation?
+- what is the active work object?
+- what is contextual inspection?
+
+The layout should preserve stable ownership for those roles so the user can build spatial memory across long sessions.
 
 ## Design Tokens
 
@@ -197,6 +220,44 @@ It should avoid:
 - creating dashboard-like first rows that dilute the main operational task
 - turning the row-detail region into another horizontal dashboard of equal-weight panels
 
+### Primary Surface Rule
+
+Every workspace must have one dominant primary surface.
+
+Examples:
+
+- a data table
+- a transcript body
+- a runtime evaluation surface
+- an incident detail body
+
+Supporting elements must subordinate themselves to that primary surface through:
+
+- inspector placement
+- collapse behavior
+- smaller control footprint
+- lower visual emphasis
+
+No page should open with multiple competing first-class panels of equal weight.
+
+### Scroll Ownership Rule
+
+The design system must define scroll at the component level, not leave it to incidental page behavior.
+
+Preferred pattern:
+
+- shell chrome does not scroll with workspace bodies
+- navigation scrolls independently when necessary
+- inspectors scroll independently when necessary
+- the primary growing work object owns scroll in the center canvas
+- action docks and top navigation bands remain stable while the primary body grows
+
+For transcript and feed-like work:
+
+- short histories should visually anchor near the active input or action surface
+- the content body should grow upward until scrolling becomes necessary
+- streaming output should keep the latest response in view automatically
+
 ## Component Families
 
 ### Shell Components
@@ -224,6 +285,8 @@ It should avoid:
 - allowing workspace pages to invent their own shell-level framing
 - treating header, footer, and navigation as one-off page markup instead of shared components
 
+Shell framing should also avoid repeating workspace-local summaries that are better expressed by the workspace itself.
+
 ### Data Presentation Components
 
 - shared data table
@@ -242,6 +305,24 @@ It should not:
 
 - be paired with a competing first-row summary panel that weakens the table-first information architecture
 - hide important row detail off to the right when vertical coupling is more scalable
+
+### Transcript And Conversation Components
+
+Conversation surfaces are a canonical component family, not ad hoc chat markup.
+
+Their responsibilities are:
+
+- separate thread navigation from transcript reading
+- make the transcript body the primary growing surface
+- keep composition controls stable and adjacent to the latest context
+- reveal metadata, linked entities, and provenance through inspector or selected detail
+
+They should avoid:
+
+- top-of-page transcript framing that duplicates selected-thread context
+- inline role and timestamp repetition on every bubble when color and selection already provide identity
+- full-width action controls that visually overpower the transcript
+- treating the whole conversation page as one scrolling column
 
 ### Navigation Components
 
@@ -277,6 +358,14 @@ Its responsibilities are:
 - hold expand and collapse state for top-level workspace groups
 - preserve active selection and spatial memory
 - scale as browser, execution, evidence, and configuration categories continue to grow
+
+Secondary navigation surfaces inside workspaces should be collapsible when their task is transient.
+
+When collapsed, they must still expose:
+
+- restore affordance
+- critical attention indication
+- minimal orientation state
 
 It should not carry:
 

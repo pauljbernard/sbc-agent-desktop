@@ -196,7 +196,48 @@ A polished UI that obscures:
 
 is a constitutional failure.
 
-## Article 13: Specs Drive Delivery
+## Article 13: Working Space Is Sacred
+
+The desktop must protect the operator's active working space.
+
+This means:
+
+- primary work objects must dominate the center canvas
+- supportive context must move to inspectors, selection detail, or collapsed rails when possible
+- repeated explanatory copy must be removed once the user is inside an active workflow
+- transient navigation and secondary status must not permanently consume the same space as active work
+
+Layouts that spend scarce vertical or horizontal space on duplicated framing, decorative summaries, or always-visible helper text are constitutionally suspect.
+
+## Article 14: Scroll Ownership Must Be Explicit
+
+Each major workspace must define which region owns scroll.
+
+The UX must avoid ambiguous outer-page scrolling where multiple primary surfaces move together.
+
+In general:
+
+- navigation should remain fixed unless navigation itself is the active task
+- inspectors should scroll independently when their content overflows
+- transcripts, tables, logs, and result bodies should own scroll when they are the growing work object
+- input docks and primary controls should remain stable when the user is actively working through them
+
+If a user cannot predict what will move when they scroll, the layout is wrong.
+
+## Article 15: Metadata Must Be Revealed On Demand
+
+The desktop must not plaster every row, message, or record with all available metadata.
+
+Role, timestamp, provenance, and other supporting facts should appear:
+
+- in inspectors
+- in selected-row detail
+- in contextual expansion
+- in explicitly requested views
+
+They should not be repeated inline by default when they dilute the main task signal.
+
+## Article 16: Specs Drive Delivery
 
 This repository is spec-driven.
 
@@ -210,7 +251,7 @@ Major implementation work should not begin without:
 
 If implementation pressure exposes ambiguity, the specs must be improved rather than bypassed.
 
-## Article 14: Thesis Regression Is A Design Failure
+## Article 17: Thesis Regression Is A Design Failure
 
 Any feature, workflow, or layout that quietly restores the old file-centric, reconstruction-heavy SDLC model as the default operating model is a design failure.
 
@@ -225,7 +266,7 @@ This includes regressions where:
 
 Familiarity is not a valid reason to reintroduce those assumptions.
 
-## Article 15: Every Major Feature Requires Thesis Review
+## Article 18: Every Major Feature Requires Thesis Review
 
 Major product decisions must be reviewed not only for usability and implementation feasibility, but also for alignment with the `sbcl-agent` thesis.
 
@@ -235,6 +276,7 @@ At minimum, each major proposal should state:
 2. how it treats source, image, and workflow truth
 3. how it preserves governed execution
 4. whether it introduces any thesis-regression risk
+5. which surface owns the user's attention, space, and scroll
 
 ## Decision Test
 

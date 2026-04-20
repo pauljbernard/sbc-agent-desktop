@@ -117,6 +117,10 @@ A workspace with:
 - workflow state and waiting model
 - validation and reconciliation inspector
 
+The dominant work surface is the work-item queue with selected work detail directly coupled to it. Validation, reconciliation, and linked context belong in subordinate detail or inspector regions rather than competing first-row dashboards.
+
+The work-item queue or selected work detail owns scroll as the growing work object. Outer page chrome and primary decision controls remain stable while work history grows.
+
 ### Linked Entity Traversal
 
 The user must be able to move from work detail into:
@@ -186,6 +190,8 @@ The workspace must surface:
 - Reconciliation burden is visible when image truth and source truth diverge.
 - Linked artifacts, incidents, approvals, and runtime context remain navigable from work detail.
 - A thesis review concludes the feature prevents successful execution from being misrepresented as full closure.
+- The work-item queue remains the primary work surface and selected work detail stays spatially coupled to it.
+- Scroll ownership is explicit for the queue and selected-work detail body.
 
 ## Open Questions
 

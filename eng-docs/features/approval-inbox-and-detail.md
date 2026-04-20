@@ -112,6 +112,10 @@ A workspace with:
 - selected approval detail
 - linked entity and policy inspector
 
+The dominant work surface is the approval inbox list, with selected approval detail directly coupled to that list and policy or linked-entity context moved into inspector space.
+
+The approval inbox owns scroll as the growing operational record set. Approval decision controls and linked policy context should remain spatially stable while the inbox grows.
+
 ### Linked Entity Traversal
 
 The user must be able to move from approval detail into:
@@ -168,6 +172,8 @@ Awaiting approval must remain globally visible and also deeply inspectable here.
 - Users can approve or deny with clear understanding of what happens next.
 - Decision results are reflected in linked thread, turn, operation, and workflow state.
 - A thesis review concludes the feature prevents approval from collapsing into generic UI confirmation.
+- The approval inbox remains the primary work surface rather than being preceded by dashboard-like summary rows.
+- Scroll ownership is explicit: the inbox or selected detail body scrolls, not the whole page chrome.
 
 ## Open Questions
 

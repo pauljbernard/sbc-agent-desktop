@@ -740,6 +740,15 @@ function adaptPackageBrowserResponse(
   response: RawServiceResponse<Record<string, unknown>>
 ): QueryResultDto<PackageBrowserDto> {
   const data = asRecord(response.data);
+  const externalSymbols = asRecordArray(
+    (data.externalSymbols as Record<string, unknown>[] | undefined) ??
+      (data.external_symbols as Record<string, unknown>[] | undefined)
+  );
+  const internalSymbols = asRecordArray(
+    (data.internalSymbols as Record<string, unknown>[] | undefined) ??
+      (data.internal_symbols as Record<string, unknown>[] | undefined)
+  );
+  const useList = asStringArray((data.useList as unknown[] | undefined) ?? (data.use_list as unknown[] | undefined));
   const adaptSymbol = (entry: Record<string, unknown>) => ({
     symbol: String(entry.symbol ?? "UNKNOWN"),
     kind: (() => {
@@ -769,9 +778,9 @@ function adaptPackageBrowserResponse(
     data: {
       packageName: String(data.package ?? "CL-USER"),
       nicknames: asStringArray(data.nicknames),
-      useList: asStringArray(data.useList),
-      externalSymbols: asRecordArray(data.externalSymbols).map(adaptSymbol),
-      internalSymbols: asRecordArray(data.internalSymbols).map(adaptSymbol),
+      useList,
+      externalSymbols: externalSymbols.map(adaptSymbol),
+      internalSymbols: internalSymbols.map(adaptSymbol),
       summary: String(data.summary ?? "Package browser data projected from the live runtime.")
     },
     metadata: normalizeMetadata(response.metadata)
@@ -1519,7 +1528,9 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
   private preferences: DesktopPreferencesDto = {
     lastWorkspace: "environment",
     sidebarPinned: true,
+    canvasPinned: true,
     inspectorPinned: true,
+    inspectorWidth: null,
     themePreference: "system",
     currentProjectId: "project-live-environment",
     projects: [

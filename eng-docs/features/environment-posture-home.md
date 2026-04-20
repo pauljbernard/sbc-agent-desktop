@@ -132,6 +132,10 @@ A desktop workspace with four main regions:
 - attention region
 - recent activity and evidence region
 
+The dominant work surface is the environment posture and attention region together, with recent evidence and supporting summaries subordinated below or into inspector detail rather than competing as equal dashboard rows.
+
+Scroll ownership must stay explicit. Navigation and global shell chrome remain fixed, while the center posture workspace or any dense event/evidence list owns scroll when it grows.
+
 ### Linked Entity Traversal
 
 The user must be able to navigate from the home view directly into:
@@ -212,6 +216,8 @@ The view must foreground:
 - The user can navigate directly from posture surfaces into linked entity detail.
 - The workspace updates live from canonical service events.
 - A design review concludes the feature is thesis-strengthening and does not re-center the old SDLC model.
+- The environment posture surface remains primary and does not get displaced by decorative summary rows.
+- Scroll ownership is explicit whenever activity or evidence regions grow beyond the viewport.
 
 ## Open Questions
 

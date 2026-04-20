@@ -115,6 +115,10 @@ This feature is cross-cutting. It should appear as:
 - categorized attention lists
 - deep-linkable attention items
 
+The dominant work surface is the categorized attention list itself, with the persistent rail or strip acting as an entry signal rather than a substitute for detailed supervision.
+
+Attention lists own scroll when they overflow. Global chrome and category headers should remain stable so urgent states can be scanned quickly without page drift.
+
 ### Linked Entity Traversal
 
 Each attention item must open relevant detail in:
@@ -176,6 +180,8 @@ Core categories:
 - Users can move directly from attention items into relevant governed detail.
 - Concurrent work becomes easier to supervise without manual hunting through multiple workspaces.
 - A thesis review concludes the feature keeps workflow and risk visible in the main flow of the product.
+- Attention lists remain the primary work surface and are not displaced by decorative summary dashboards.
+- Scroll ownership is explicit wherever attention queues or categorized lists grow beyond the viewport.
 
 ## Open Questions
 

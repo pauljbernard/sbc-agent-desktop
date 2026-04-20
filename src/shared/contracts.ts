@@ -530,7 +530,9 @@ export interface EnvironmentStatusDto {
 export interface DesktopPreferencesDto {
   lastWorkspace: WorkspaceId;
   sidebarPinned: boolean;
+  canvasPinned: boolean;
   inspectorPinned: boolean;
+  inspectorWidth?: number | null;
   themePreference: "system" | "light" | "dark";
   currentProjectId?: string | null;
   projects?: ProjectProfileDto[];

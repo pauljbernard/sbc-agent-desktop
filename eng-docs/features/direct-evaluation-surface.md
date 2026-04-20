@@ -111,6 +111,10 @@ A focused execution surface with:
 - linked operation and evidence region
 - approval or incident state when relevant
 
+The dominant work surface is the execution input and result surface itself. Linked operation, approval, incident, and evidence context must remain secondary and should move below the result or into the inspector rather than competing with the editor in the first row.
+
+The execution result body owns scroll when output grows. The execution editor and primary run controls must remain spatially stable while results stream or accumulate.
+
 ### Linked Entity Traversal
 
 The user must be able to move from an execution result into:
@@ -175,6 +179,8 @@ The surface must clearly distinguish:
 - Results are linked to operations, approvals, artifacts, or incidents when those entities exist.
 - The surface remains fast enough to satisfy expert live-development expectations.
 - A thesis review concludes the feature preserves direct operator power without regressing into unguided or invisible mutation.
+- The execution editor remains the dominant work surface and is not pushed below summary panels or decorative status blocks.
+- Scroll ownership is explicit: the result body scrolls when needed while the editor and primary run controls remain stable.
 
 ## Open Questions
 

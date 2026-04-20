@@ -12,8 +12,9 @@
     "build": "node node_modules/electron-vite/bin/electron-vite.js build",
     "preview": "node node_modules/electron-vite/bin/electron-vite.js preview",
     "typecheck": "tsc --noEmit",
-    "test:ui": "npm run build && playwright test",
-    "test:ui:headed": "npm run build && playwright test --headed"
+    "test:spec-drift": "node scripts/spec-drift-check.mjs",
+    "test:ui": "npm run test:spec-drift && npm run build && playwright test",
+    "test:ui:headed": "npm run test:spec-drift && npm run build && playwright test --headed"
   },
   "dependencies": {
     "electron": "^36.2.1",

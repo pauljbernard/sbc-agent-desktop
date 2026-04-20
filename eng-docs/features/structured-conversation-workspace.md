@@ -120,9 +120,18 @@ It complements, rather than replaces:
 A multi-region workspace with:
 
 - thread supervision list
-- selected thread detail
-- selected turn lifecycle region
-- linked operations and artifacts inspector
+- selected transcript body
+- stable composition dock
+- linked operations, artifacts, and metadata inspector
+
+The dominant work surface is the selected transcript body, with the composition dock fixed against it and thread supervision kept subordinate as collapsible navigation.
+
+The Conversations workspace must preserve strict spatial ownership:
+
+- thread navigation is a transient supervision surface and may collapse
+- the transcript body is the dominant growing work object
+- the composition surface remains fixed relative to the latest transcript context
+- metadata and linked governed entities move to the inspector rather than crowding the transcript
 
 ### Linked Entity Traversal
 
@@ -138,6 +147,8 @@ The user must be able to move among:
 ### Live Event Behavior
 
 The workspace updates from conversation, operation, approval, incident, and artifact events.
+
+Streaming behavior must keep the latest response in view and keep the transcript anchored against the composition surface when history is short.
 
 ### Attention Model Implications
 
@@ -192,9 +203,24 @@ The workspace must make visible:
 - Turn detail exposes governed entities directly rather than hiding them in message text.
 - Multi-conversation work remains structured and legible under concurrent use.
 - A thesis review concludes the feature strengthens conversation as a native medium without letting it dominate the product model.
+- Thread navigation can collapse without hiding urgent attention state.
+- Only the transcript body owns scroll during active thread work.
+- Short transcripts visually anchor near the composition surface rather than floating at the top of the page.
+- Message metadata such as source and timestamp is available on selection through inspector detail rather than repeated on every transcript row.
+- Composition controls remain compact and subordinate to the transcript rather than dominating the page width.
 
 ## Open Questions
 
 - How much thread summary should be visible in the list versus in detail?
 - What is the right balance between message readability and operation/evidence density?
 - How should background-only threads be visually distinguished from operator-attended threads?
+
+## Lessons To Preserve
+
+This workspace must preserve the following learned constraints in future iterations:
+
+- remove duplicated framing once a thread is selected
+- treat the transcript as the primary work object, not the page header or transcript metadata
+- move linked entities and metadata to the inspector before adding new inline panels
+- protect working space by collapsing transient navigation and support surfaces aggressively
+- validate scroll and anchoring behavior with end-to-end UI tests, not CSS reasoning alone

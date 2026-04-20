@@ -113,6 +113,10 @@ A workspace with:
 - selected incident detail
 - linked context and evidence inspector
 
+The dominant work surface is the incident queue and selected recovery detail. Evidence and linked context remain coupled to the selected incident but should not compete with the queue as a separate first-row dashboard.
+
+The incident queue or recovery detail body owns scroll as the primary growing object. Navigation and recovery action controls should remain stable while the detail grows.
+
 ### Linked Entity Traversal
 
 The user must be able to move from incident detail into:
@@ -169,6 +173,8 @@ Open incidents, interrupted recovery, and unresolved high-risk failures must rem
 - Interrupted work and approval waits are distinguishable from failure-driven recovery.
 - The workspace supports evidence-backed recovery and closure tracking.
 - A capability review concludes the feature meets the seriousness expected for Lisp-grade failure handling and strengthens the `sbcl-agent` thesis.
+- The incident queue remains the primary work surface and selected incident detail stays spatially coupled to it.
+- Scroll ownership is explicit: queue and recovery detail bodies scroll independently of outer shell chrome.
 
 ## Open Questions
 

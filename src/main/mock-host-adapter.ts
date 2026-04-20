@@ -65,7 +65,9 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
   private preferences: DesktopPreferencesDto = {
     lastWorkspace: "environment",
     sidebarPinned: true,
+    canvasPinned: true,
     inspectorPinned: true,
+    inspectorWidth: null,
     themePreference: "system",
     currentProjectId: "project-local-dev",
     projects: [

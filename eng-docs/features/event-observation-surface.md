@@ -116,6 +116,10 @@ A workspace with:
 - actor and thread pivots
 - linked entity inspector
 
+The dominant work surface is the canonical event stream itself. Filters, actor pivots, and linked entity detail remain secondary and must not displace the stream as the first thing the user scans.
+
+The event stream owns scroll as the growing work object. Filter controls and navigation remain stable while the event body grows or replays.
+
 ### Linked Entity Traversal
 
 The user must be able to move from an event into:
@@ -165,6 +169,8 @@ The surface should support rapid understanding of urgent changes but should not 
 - The workspace supports replay-resume semantics through cursors.
 - The surface complements structured entity views rather than replacing them.
 - A thesis review concludes the feature strengthens event-native supervision and does not devolve into a generic log monitor.
+- The event stream remains the primary work surface rather than being preceded by competing summary panels.
+- Scroll ownership is explicit: the event body scrolls while filters and chrome remain stable.
 
 ## Open Questions
 

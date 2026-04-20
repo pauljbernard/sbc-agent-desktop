@@ -905,6 +905,44 @@ function buildDefaultReplSession(environmentId: string, runtimeSummary: RuntimeS
   };
 }
 
+const SHELL_STACK_BREAKPOINT = 1180;
+
+function shellSidebarWidthForViewport(viewportWidth: number, pinned: boolean): number {
+  if (viewportWidth <= 1320) {
+    return pinned ? 212 : 56;
+  }
+  if (viewportWidth <= 1480) {
+    return pinned ? 224 : 64;
+  }
+  return pinned ? 248 : 64;
+}
+
+function shellInspectorDefaultWidthForViewport(viewportWidth: number): number {
+  if (viewportWidth <= 1320) {
+    return 256;
+  }
+  if (viewportWidth <= 1480) {
+    return 280;
+  }
+  return 304;
+}
+
+function shellInspectorMinWidthForViewport(viewportWidth: number): number {
+  return viewportWidth <= 1320 ? 220 : 240;
+}
+
+function shellCanvasMinWidthForViewport(viewportWidth: number): number {
+  return viewportWidth <= 1320 ? 360 : 420;
+}
+
+function shellGapForViewport(viewportWidth: number): number {
+  return viewportWidth <= 1480 ? 12 : 14;
+}
+
+function shellHorizontalPaddingForViewport(viewportWidth: number): number {
+  return viewportWidth <= 1480 ? 12 : 14;
+}
+
 export function App() {
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceId>("environment");
   const [selectedOperateSection, setSelectedOperateSection] = useState<OperateSection>("orientation");
@@ -918,7 +956,13 @@ export function App() {
   const [selectedEvidenceSection, setSelectedEvidenceSection] = useState<EvidenceSection>("artifacts");
   const [isWorkspaceTransitioning, setIsWorkspaceTransitioning] = useState(false);
   const [sidebarPinned, setSidebarPinned] = useState(true);
+  const [canvasPinned, setCanvasPinned] = useState(true);
   const [inspectorPinned, setInspectorPinned] = useState(true);
+  const [inspectorWidth, setInspectorWidth] = useState<number | null>(null);
+  const [isInspectorResizing, setIsInspectorResizing] = useState(false);
+  const [viewportWidth, setViewportWidth] = useState<number>(() =>
+    typeof window === "undefined" ? 1600 : window.innerWidth
+  );
   const [themePreference, setThemePreference] = useState<ThemePreference>("system");
   const [lispParenColors, setLispParenColors] = useState<string[]>(DEFAULT_LISP_PAREN_COLORS);
   const [systemTheme, setSystemTheme] = useState<ResolvedTheme>("light");
@@ -1013,6 +1057,14 @@ export function App() {
   const [commandCenterQuery, setCommandCenterQuery] = useState("");
   const [commandCenterHistory, setCommandCenterHistory] = useState<Record<string, number>>({});
   const effectiveEnvironmentId = summary?.environmentId ?? binding?.environmentId ?? null;
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  const inspectorResizeSessionRef = useRef<{
+    contentRight: number;
+    minWidth: number;
+    maxWidth: number;
+    gap: number;
+  } | null>(null);
+  const lastPersistedInspectorWidthRef = useRef<number | null>(null);
 
   function updateRuntimeInspectorSymbol(value: string): void {
     runtimeInspectorSymbolRef.current = value;
@@ -1231,6 +1283,15 @@ export function App() {
       window.removeEventListener("keydown", handleCommandCenterShortcut);
       window.removeEventListener("keydown", handleEscape);
     };
+  }, []);
+
+  useEffect(() => {
+    function handleViewportResize(): void {
+      setViewportWidth(window.innerWidth);
+    }
+
+    window.addEventListener("resize", handleViewportResize);
+    return () => window.removeEventListener("resize", handleViewportResize);
   }, []);
 
   useEffect(() => {
@@ -1489,7 +1550,9 @@ export function App() {
       setBinding(nextBinding);
       setActiveWorkspace(desktopPreferences.lastWorkspace);
       setSidebarPinned(desktopPreferences.sidebarPinned ?? true);
+      setCanvasPinned(desktopPreferences.canvasPinned ?? true);
       setInspectorPinned(desktopPreferences.inspectorPinned);
+      setInspectorWidth(desktopPreferences.inspectorWidth ?? null);
       setThemePreference(desktopPreferences.themePreference);
       setLispParenColors(normalizeParenDepthColors(desktopPreferences.lispCodeView?.parenDepthColors));
       setProjects(ensureDesktopProjects(desktopPreferences.projects, nextBinding, null));
@@ -1981,6 +2044,9 @@ export function App() {
 
     setIsInspectingRuntime(true);
     setErrorMessage(null);
+    if (input.packageName && input.packageName.trim().length > 0) {
+      setSelectedPackageName(input.packageName.trim());
+    }
 
     try {
       const result = await window.sbclAgentDesktop.query.runtimeInspectSymbol({
@@ -1993,6 +2059,9 @@ export function App() {
         mode: input.mode
       });
       setRuntimeInspection(result);
+      if (result.data.packageName && result.data.packageName.trim().length > 0) {
+        setSelectedPackageName(result.data.packageName);
+      }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Runtime inspection failed.");
     } finally {
@@ -2016,6 +2085,9 @@ export function App() {
     updateRuntimeInspectorSymbol(symbol);
     updateRuntimeInspectorPackage(packageName ?? "");
     updateRuntimeInspectionMode(mode);
+    if (packageName && packageName.trim().length > 0) {
+      setSelectedPackageName(packageName);
+    }
     setRuntimeForm(
       buildListenerForm({
         symbol,
@@ -2729,11 +2801,105 @@ export function App() {
     await window.sbclAgentDesktop.desktop.setDesktopPreferences({ inspectorPinned: nextPinned });
   }
 
+  async function toggleCanvasPinned(): Promise<void> {
+    const nextPinned = !canvasPinned;
+    setCanvasPinned(nextPinned);
+    await window.sbclAgentDesktop.desktop.setDesktopPreferences({ canvasPinned: nextPinned });
+  }
+
   async function toggleSidebarPinned(): Promise<void> {
     const nextPinned = !sidebarPinned;
     setSidebarPinned(nextPinned);
     await window.sbclAgentDesktop.desktop.setDesktopPreferences({ sidebarPinned: nextPinned });
   }
+
+  useEffect(() => {
+    if (!isInspectorResizing) {
+      return;
+    }
+
+    function handlePointerMove(event: PointerEvent): void {
+      const session = inspectorResizeSessionRef.current;
+      if (!session) {
+        return;
+      }
+
+      const nextWidth = Math.min(
+        Math.max(session.contentRight - event.clientX - session.gap / 2, session.minWidth),
+        session.maxWidth
+      );
+      lastPersistedInspectorWidthRef.current = nextWidth;
+      setInspectorWidth(nextWidth);
+    }
+
+    function handlePointerUp(): void {
+      setIsInspectorResizing(false);
+      document.body.classList.remove("shell-inspector-resizing");
+      const nextWidth = lastPersistedInspectorWidthRef.current;
+      inspectorResizeSessionRef.current = null;
+      if (typeof nextWidth === "number") {
+        void window.sbclAgentDesktop.desktop.setDesktopPreferences({ inspectorWidth: nextWidth });
+      }
+    }
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp, { once: true });
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [isInspectorResizing]);
+
+  function startInspectorResize(event: React.PointerEvent<HTMLButtonElement>): void {
+    if (!canvasPinned || !inspectorPinned || viewportWidth <= SHELL_STACK_BREAKPOINT || !shellRef.current) {
+      return;
+    }
+
+    const shellRect = shellRef.current.getBoundingClientRect();
+    const computedStyle = window.getComputedStyle(shellRef.current);
+    const paddingLeft =
+      Number.parseFloat(computedStyle.paddingLeft) || shellHorizontalPaddingForViewport(viewportWidth);
+    const paddingRight =
+      Number.parseFloat(computedStyle.paddingRight) || shellHorizontalPaddingForViewport(viewportWidth);
+    const contentWidth = shellRect.width - paddingLeft - paddingRight;
+    const contentRight = shellRect.right - paddingRight;
+    const gap = shellGapForViewport(viewportWidth);
+    const sidebarWidth = shellSidebarWidthForViewport(viewportWidth, sidebarPinned);
+    const minInspectorWidth = shellInspectorMinWidthForViewport(viewportWidth);
+    const minCanvasWidth = shellCanvasMinWidthForViewport(viewportWidth);
+    const maxInspectorWidth = Math.max(minInspectorWidth, contentWidth - sidebarWidth - minCanvasWidth - gap * 2);
+
+    inspectorResizeSessionRef.current = {
+      contentRight,
+      minWidth: minInspectorWidth,
+      maxWidth: maxInspectorWidth,
+      gap
+    };
+    lastPersistedInspectorWidthRef.current = inspectorWidth ?? shellInspectorDefaultWidthForViewport(viewportWidth);
+    setIsInspectorResizing(true);
+    document.body.classList.add("shell-inspector-resizing");
+    event.preventDefault();
+  }
+
+  const desktopShellInlineColumns =
+    canvasPinned && inspectorPinned && viewportWidth > SHELL_STACK_BREAKPOINT
+      ? (() => {
+          const sidebarWidth = shellSidebarWidthForViewport(viewportWidth, sidebarPinned);
+          const gap = shellGapForViewport(viewportWidth);
+          const availableWidth = viewportWidth - shellHorizontalPaddingForViewport(viewportWidth) * 2;
+          const minInspectorWidth = shellInspectorMinWidthForViewport(viewportWidth);
+          const maxInspectorWidth = Math.max(
+            minInspectorWidth,
+            availableWidth - sidebarWidth - shellCanvasMinWidthForViewport(viewportWidth) - gap * 2
+          );
+          const effectiveInspectorWidth = Math.min(
+            Math.max(inspectorWidth ?? shellInspectorDefaultWidthForViewport(viewportWidth), minInspectorWidth),
+            maxInspectorWidth
+          );
+          return `${sidebarWidth}px minmax(0, 1fr) ${effectiveInspectorWidth}px`;
+        })()
+      : undefined;
 
   async function applyThemePreference(nextThemePreference: ThemePreference): Promise<void> {
     setThemePreference(nextThemePreference);
@@ -2805,7 +2971,9 @@ export function App() {
 
   return (
     <div
-      className={`desktop-shell${sidebarPinned ? "" : " sidebar-collapsed"}${inspectorPinned ? "" : " inspector-collapsed"}`}
+      className={`desktop-shell${sidebarPinned ? "" : " sidebar-collapsed"}${canvasPinned ? "" : " canvas-collapsed"}${inspectorPinned ? "" : " inspector-collapsed"}`}
+      ref={shellRef}
+      style={desktopShellInlineColumns ? { gridTemplateColumns: desktopShellInlineColumns } : undefined}
     >
       <div className="window-drag-strip" aria-hidden="true">
         <div className="window-drag-label">sbcl-agent Desktop</div>
@@ -2886,6 +3054,9 @@ export function App() {
         <div className="shell-header-actions">
           <button className="shell-chrome-button" onClick={() => void toggleSidebarPinned()} type="button">
             {sidebarPinned ? "Hide Navigation" : "Show Navigation"}
+          </button>
+          <button className="shell-chrome-button" onClick={() => void toggleCanvasPinned()} type="button">
+            {canvasPinned ? "Hide Workspace" : "Show Workspace"}
           </button>
           <button
             aria-expanded={isCommandCenterOpen}
@@ -3144,295 +3315,313 @@ export function App() {
           </button>
         </aside>
       )}
-      <main className="canvas">
-        {activeWorkspace === "conversations" ? null : (
-          <header className="canvas-header">
-            <div className="canvas-header-copy">
-              <div className="canvas-header-eyebrow-row">
-                <p className="eyebrow">{workspaceDescriptor.eyebrow}</p>
-                <HelpHint text={workspaceDescriptor.summary} />
-              </div>
-              <h2>{workspaceDescriptor.title}</h2>
-              <p className="canvas-subtitle">{workspaceDescriptor.summary}</p>
-            </div>
-          </header>
-        )}
-
-        {activeWorkspace === "environment" ||
-        activeWorkspace === "browser" ||
-        activeWorkspace === "configuration" ||
-        activeWorkspace === "runtime" ||
-        activeWorkspace === "conversations" ? null : (
-          <section className="panel workspace-context-brief">
-            <div className="signal-digest-grid execution-objective-digest">
-              <div className="signal-digest-card">
-                <span className="context-label">Project</span>
-                <strong>{projects.find((project) => project.projectId === currentProjectId)?.title ?? "Current Environment"}</strong>
-                <p>
-                  {projects.find((project) => project.projectId === currentProjectId)?.summary ??
-                    "Project scope is still implicit until the bound environment is saved into the desktop registry."}
-                </p>
-              </div>
-              <button className="signal-digest-card project-session-card" onClick={() => void navigateToConversationSection("threads")} type="button">
-                <span className="context-label">Conversation Sessions</span>
-                <strong>{currentProjectConversationSessionCount}</strong>
-                <p>
-                  {currentProjectConversationFocus
-                    ? `${currentProjectConversationFocus.title} is the retained conversation focus for this project.`
-                    : "No retained conversation session is currently selected for this project."}
-                </p>
-              </button>
-              <button className="signal-digest-card project-session-card" onClick={() => void navigateToExecutionSection("listener")} type="button">
-                <span className="context-label">REPL Sessions</span>
-                <strong>{currentProjectReplSessions.length}</strong>
-                <p>
-                  {currentProjectReplFocus
-                    ? `${currentProjectReplFocus.title} is the active project listener session.`
-                    : "No retained REPL session is currently selected for this project."}
-                </p>
-              </button>
-              <div className="signal-digest-card">
-                <span className="context-label">Environment</span>
-                <strong>{summary?.environmentLabel ?? "Unbound"}</strong>
-                <p>{summary?.activeContext.environmentRoot ?? binding?.environmentId ?? "No environment root bound."}</p>
-              </div>
-              <div className="signal-digest-card">
-                <span className="context-label">Thread</span>
-                <strong>{summary?.activeContext.currentThreadTitle ?? "No active thread"}</strong>
-                <p>{summary?.activeContext.focusSummary ?? "No active continuation summary."}</p>
-              </div>
-              <div className="signal-digest-card">
-                <span className="context-label">Runtime</span>
-                <strong>{summary?.activeContext.runtimePackage ?? status?.runtimeState ?? "unknown"}</strong>
-                <p>{status?.workflowState ?? "No workflow state available."}</p>
-              </div>
-            </div>
-          </section>
-        )}
-
-        {errorMessage ? <div className="error-banner">{errorMessage}</div> : null}
-
-        <section
-          className={`${isWorkspaceTransitioning ? "workspace-frame transitioning" : "workspace-frame"}${
-            activeWorkspace === "conversations" ? " workspace-frame-conversations" : ""
-          }`}
-        >
+      {canvasPinned ? (
+        <main className="canvas">
           {activeWorkspace === "conversations" ? null : (
-            <WorkspaceTransitionBanner
-              activeWorkspace={canonicalWorkspace(activeWorkspace)}
-              isTransitioning={isWorkspaceTransitioning}
-              resolution={workspaceResolution}
-            />
+            <header className="canvas-header">
+              <div className="canvas-header-copy">
+                <div className="canvas-header-eyebrow-row">
+                  <p className="eyebrow">{workspaceDescriptor.eyebrow}</p>
+                  <HelpHint text={workspaceDescriptor.summary} />
+                </div>
+                <h2>{workspaceDescriptor.title}</h2>
+                <p className="canvas-subtitle">{workspaceDescriptor.summary}</p>
+              </div>
+            </header>
           )}
-          {activeWorkspace === "environment" ? (
-            <OperateWorkspace
-              artifacts={artifacts}
-              navigateToBrowserDomain={navigateToBrowserDomain}
-              navigateToConversationSection={navigateToConversationSection}
-              navigateToEvidenceSection={navigateToEvidenceSection}
-              navigateToExecutionSection={navigateToExecutionSection}
-              navigateToRecoverySection={navigateToRecoverySection}
-              selectedSection={selectedOperateSection}
-              approvalRequests={approvalRequests}
-              incidents={incidents}
-              selectedApproval={selectedApproval}
-              status={status}
-              summary={summary}
-              workItems={workItems}
-            />
-          ) : activeWorkspace === "conversations" ? (
-            <ConversationsWorkspace
-              conversationSessionTitleDraft={conversationSessionTitleDraft}
-              conversationDraft={conversationDraft}
-              conversationSendError={conversationSendError}
-              conversationStream={conversationStream}
-              createConversationSession={handleCreateConversationSession}
-              sendConversationMessage={handleSendConversationMessage}
-              isSendingConversation={isSendingConversation}
-              selectedSection={selectedConversationSection}
-              selectedConversationMessageId={selectedConversationMessageId}
-              selectedThread={selectedThread}
-              selectedThreadId={selectedThreadId}
-              selectedTurn={selectedTurn}
-              selectedTurnId={selectedTurnId}
-              setConversationDraft={setConversationDraft}
-              setSelectedConversationMessageId={setSelectedConversationMessageId}
-              setConversationSessionTitleDraft={setConversationSessionTitleDraft}
-              setSelectedThreadId={setSelectedThreadId}
-              setSelectedTurnId={setSelectedTurnId}
-              threads={threads}
-            />
-          ) : activeWorkspace === "browser" ? (
-            <BrowserWorkspace
-              approvalRequests={approvalRequests}
-              artifacts={artifacts}
-              browseRuntimeEntity={browseRuntimeEntity}
-              incidents={incidents}
-              inspectRuntimeSymbol={inspectRuntimeSymbol}
-              isInspectingRuntime={isInspectingRuntime}
-              navigateToWorkspace={navigateToWorkspace}
-              parenDepthColors={lispParenColors}
-              packageBrowser={packageBrowser}
-              conversationDraft={conversationDraft}
-              runtimeEntityDetail={runtimeEntityDetail}
-              runtimeForm={runtimeForm}
-              setConversationDraft={setConversationDraft}
-              setRuntimeForm={setRuntimeForm}
-              selectedThread={selectedThread}
-              selectedThreadId={selectedThreadId}
-              selectedPackageName={selectedPackageName}
-              setSelectedPackageName={setSelectedPackageName}
-              setSelectedThreadId={setSelectedThreadId}
-              loadSourcePreview={loadSourcePreview}
-              runtimeInspection={runtimeInspection}
-              runtimeInspectionMode={runtimeInspectionMode}
-              runtimeInspectorPackage={runtimeInspectorPackage}
-              runtimeInspectorSymbol={runtimeInspectorSymbol}
-              runtimeSummary={runtimeSummary}
-              selectedDomain={selectedBrowserDomain}
-              setRuntimeInspectionMode={updateRuntimeInspectionMode}
-              setRuntimeInspectorPackage={updateRuntimeInspectorPackage}
-              setRuntimeInspectorSymbol={updateRuntimeInspectorSymbol}
-              sourcePreview={sourcePreview}
-              sourceDraft={sourceDraft}
-              setSourceDraft={setSourceDraft}
-              isEditingSource={isEditingSource}
-              setIsEditingSource={setIsEditingSource}
-              isStagingSource={isStagingSource}
-              isReloadingSource={isReloadingSource}
-              sourceMutationResult={sourceMutationResult}
-              sourceReloadResult={sourceReloadResult}
-              stageSourceChange={stageSourceChange}
-              threads={threads}
-              reloadSourceFile={reloadSourceFile}
-              workItems={workItems}
-            />
-          ) : activeWorkspace === "documentation" ? (
-            <DocumentationWorkspace
-              documentationPages={documentationPages}
-              openPublishedDocumentation={() =>
-                window.sbclAgentDesktop.desktop.openExternalLink(PUBLISHED_DOCUMENTATION_URL)
-              }
-              selectedDocumentationPage={selectedDocumentationPage}
-              selectedDocumentationSlug={selectedDocumentationSlug}
-              setSelectedDocumentationSlug={setSelectedDocumentationSlug}
-              loadDocumentationPage={loadDocumentationPage}
-            />
-          ) : activeWorkspace === "configuration" ? (
-            <ConfigurationWorkspace
-              lispParenColors={lispParenColors}
-              resolvedTheme={resolvedTheme}
-              selectedSection={selectedConfigurationSection}
-              systemTheme={systemTheme}
-              themePreference={themePreference}
-              updateThemePreference={applyThemePreference}
-              updateLispParenColor={updateLispParenColor}
-            />
-          ) : activeWorkspace === "runtime" ? (
-            selectedExecutionSection === "approvals" ? (
-              <ApprovalsWorkspace
-                approvalDecision={approvalDecision}
-                approvalRequests={approvalRequests}
-                isDecidingApproval={isDecidingApproval}
-                selectedApproval={selectedApproval}
-                selectedApprovalId={selectedApprovalId}
-                setSelectedApprovalId={setSelectedApprovalId}
-                submitApprovalDecision={submitApprovalDecision}
+
+          {activeWorkspace === "environment" ||
+          activeWorkspace === "browser" ||
+          activeWorkspace === "configuration" ||
+          activeWorkspace === "runtime" ||
+          activeWorkspace === "conversations" ? null : (
+            <section className="panel workspace-context-brief">
+              <div className="signal-digest-grid execution-objective-digest">
+                <div className="signal-digest-card">
+                  <span className="context-label">Project</span>
+                  <strong>{projects.find((project) => project.projectId === currentProjectId)?.title ?? "Current Environment"}</strong>
+                  <p>
+                    {projects.find((project) => project.projectId === currentProjectId)?.summary ??
+                      "Project scope is still implicit until the bound environment is saved into the desktop registry."}
+                  </p>
+                </div>
+                <button className="signal-digest-card project-session-card" onClick={() => void navigateToConversationSection("threads")} type="button">
+                  <span className="context-label">Conversation Sessions</span>
+                  <strong>{currentProjectConversationSessionCount}</strong>
+                  <p>
+                    {currentProjectConversationFocus
+                      ? `${currentProjectConversationFocus.title} is the retained conversation focus for this project.`
+                      : "No retained conversation session is currently selected for this project."}
+                  </p>
+                </button>
+                <button className="signal-digest-card project-session-card" onClick={() => void navigateToExecutionSection("listener")} type="button">
+                  <span className="context-label">REPL Sessions</span>
+                  <strong>{currentProjectReplSessions.length}</strong>
+                  <p>
+                    {currentProjectReplFocus
+                      ? `${currentProjectReplFocus.title} is the active project listener session.`
+                      : "No retained REPL session is currently selected for this project."}
+                  </p>
+                </button>
+                <div className="signal-digest-card">
+                  <span className="context-label">Environment</span>
+                  <strong>{summary?.environmentLabel ?? "Unbound"}</strong>
+                  <p>{summary?.activeContext.environmentRoot ?? binding?.environmentId ?? "No environment root bound."}</p>
+                </div>
+                <div className="signal-digest-card">
+                  <span className="context-label">Thread</span>
+                  <strong>{summary?.activeContext.currentThreadTitle ?? "No active thread"}</strong>
+                  <p>{summary?.activeContext.focusSummary ?? "No active continuation summary."}</p>
+                </div>
+                <div className="signal-digest-card">
+                  <span className="context-label">Runtime</span>
+                  <strong>{summary?.activeContext.runtimePackage ?? status?.runtimeState ?? "unknown"}</strong>
+                  <p>{status?.workflowState ?? "No workflow state available."}</p>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {errorMessage ? <div className="error-banner">{errorMessage}</div> : null}
+
+          <section
+            className={`${isWorkspaceTransitioning ? "workspace-frame transitioning" : "workspace-frame"}${
+              activeWorkspace === "conversations" ? " workspace-frame-conversations" : ""
+            }`}
+          >
+            {activeWorkspace === "conversations" ? null : (
+              <WorkspaceTransitionBanner
+                activeWorkspace={canonicalWorkspace(activeWorkspace)}
+                isTransitioning={isWorkspaceTransitioning}
+                resolution={workspaceResolution}
               />
-            ) : selectedExecutionSection === "work" ? (
-              <WorkWorkspace
-                selectedWorkItem={selectedWorkItem}
-                selectedWorkflowRecord={selectedWorkflowRecord}
-                selectedWorkItemId={selectedWorkItemId}
-                setSelectedWorkItemId={setSelectedWorkItemId}
+            )}
+            {activeWorkspace === "environment" ? (
+              <OperateWorkspace
+                artifacts={artifacts}
+                navigateToBrowserDomain={navigateToBrowserDomain}
+                navigateToConversationSection={navigateToConversationSection}
+                navigateToEvidenceSection={navigateToEvidenceSection}
+                navigateToExecutionSection={navigateToExecutionSection}
+                navigateToRecoverySection={navigateToRecoverySection}
+                selectedSection={selectedOperateSection}
+                approvalRequests={approvalRequests}
+                incidents={incidents}
+                selectedApproval={selectedApproval}
+                status={status}
+                summary={summary}
                 workItems={workItems}
               />
-            ) : (
-              <ExecutionWorkspace
+            ) : activeWorkspace === "conversations" ? (
+              <ConversationsWorkspace
+                conversationSessionTitleDraft={conversationSessionTitleDraft}
+                conversationDraft={conversationDraft}
+                conversationSendError={conversationSendError}
+                conversationStream={conversationStream}
+                createConversationSession={handleCreateConversationSession}
+                sendConversationMessage={handleSendConversationMessage}
+                isSendingConversation={isSendingConversation}
+                selectedSection={selectedConversationSection}
+                selectedConversationMessageId={selectedConversationMessageId}
+                selectedThread={selectedThread}
+                selectedThreadId={selectedThreadId}
+                selectedTurn={selectedTurn}
+                selectedTurnId={selectedTurnId}
+                setConversationDraft={setConversationDraft}
+                setSelectedConversationMessageId={setSelectedConversationMessageId}
+                setConversationSessionTitleDraft={setConversationSessionTitleDraft}
+                setSelectedThreadId={setSelectedThreadId}
+                setSelectedTurnId={setSelectedTurnId}
+                threads={threads}
+              />
+            ) : activeWorkspace === "browser" ? (
+              <BrowserWorkspace
                 approvalRequests={approvalRequests}
-                currentReplSessionId={currentReplSessionId}
-                replSessions={currentProjectReplSessions}
-                createReplSession={handleCreateReplSession}
-                evaluateRuntimeForm={evaluateRuntimeForm}
-                replSessionTitleDraft={replSessionTitleDraft}
-                setReplSessionTitleDraft={setReplSessionTitleDraft}
-                switchReplSession={handleSwitchReplSession}
-                isEvaluating={isEvaluating}
+                artifacts={artifacts}
+                browseRuntimeEntity={browseRuntimeEntity}
+                incidents={incidents}
                 inspectRuntimeSymbol={inspectRuntimeSymbol}
                 isInspectingRuntime={isInspectingRuntime}
+                navigateToWorkspace={navigateToWorkspace}
+                parenDepthColors={lispParenColors}
+                packageBrowser={packageBrowser}
+                conversationDraft={conversationDraft}
+                runtimeEntityDetail={runtimeEntityDetail}
+                runtimeForm={runtimeForm}
+                setConversationDraft={setConversationDraft}
+                setRuntimeForm={setRuntimeForm}
+                selectedThread={selectedThread}
+                selectedThreadId={selectedThreadId}
+                selectedPackageName={selectedPackageName}
+                setSelectedPackageName={setSelectedPackageName}
+                setSelectedThreadId={setSelectedThreadId}
+                loadSourcePreview={loadSourcePreview}
                 runtimeInspection={runtimeInspection}
                 runtimeInspectionMode={runtimeInspectionMode}
                 runtimeInspectorPackage={runtimeInspectorPackage}
                 runtimeInspectorSymbol={runtimeInspectorSymbol}
-                runtimeForm={runtimeForm}
-                runtimeResult={runtimeResult}
                 runtimeSummary={runtimeSummary}
+                selectedDomain={selectedBrowserDomain}
                 setRuntimeInspectionMode={updateRuntimeInspectionMode}
                 setRuntimeInspectorPackage={updateRuntimeInspectorPackage}
                 setRuntimeInspectorSymbol={updateRuntimeInspectorSymbol}
-                selectedWorkItem={selectedWorkItem}
-                selectedWorkItemId={selectedWorkItemId}
-                selectedWorkflowRecord={selectedWorkflowRecord}
-                setRuntimeForm={setRuntimeForm}
+                sourcePreview={sourcePreview}
+                sourceDraft={sourceDraft}
+                setSourceDraft={setSourceDraft}
+                isEditingSource={isEditingSource}
+                setIsEditingSource={setIsEditingSource}
+                isStagingSource={isStagingSource}
+                isReloadingSource={isReloadingSource}
+                sourceMutationResult={sourceMutationResult}
+                sourceReloadResult={sourceReloadResult}
+                stageSourceChange={stageSourceChange}
+                threads={threads}
+                reloadSourceFile={reloadSourceFile}
                 workItems={workItems}
               />
-            )
-          ) : activeWorkspace === "incidents" ? (
-            <IncidentsWorkspace
-              incidents={incidents}
-              selectedIncident={selectedIncident}
-              selectedIncidentId={selectedIncidentId}
-              setSelectedIncidentId={setSelectedIncidentId}
-            />
-          ) : activeWorkspace === "artifacts" ? (
-            selectedEvidenceSection === "observation" ? (
-              <ActivityWorkspace
-                eventFamilyFilter={eventFamilyFilter}
-                eventVisibilityFilter={eventVisibilityFilter}
-                events={environmentEvents}
-                selectedEvent={selectedEvent}
-                selectedEventCursor={selectedEventCursor}
-                setEventFamilyFilter={setEventFamilyFilter}
-                setEventVisibilityFilter={setEventVisibilityFilter}
-                setSelectedEventCursor={setSelectedEventCursor}
+            ) : activeWorkspace === "documentation" ? (
+              <DocumentationWorkspace
+                documentationPages={documentationPages}
+                openPublishedDocumentation={() =>
+                  window.sbclAgentDesktop.desktop.openExternalLink(PUBLISHED_DOCUMENTATION_URL)
+                }
+                selectedDocumentationPage={selectedDocumentationPage}
+                selectedDocumentationSlug={selectedDocumentationSlug}
+                setSelectedDocumentationSlug={setSelectedDocumentationSlug}
+                loadDocumentationPage={loadDocumentationPage}
               />
-            ) : selectedEvidenceSection === "artifacts" ? (
-              <ArtifactsWorkspace
-                artifacts={artifacts}
-                selectedArtifact={selectedArtifact}
-                selectedArtifactId={selectedArtifactId}
-                setSelectedArtifactId={setSelectedArtifactId}
+            ) : activeWorkspace === "configuration" ? (
+              <ConfigurationWorkspace
+                lispParenColors={lispParenColors}
+                resolvedTheme={resolvedTheme}
+                selectedSection={selectedConfigurationSection}
+                systemTheme={systemTheme}
+                themePreference={themePreference}
+                updateThemePreference={applyThemePreference}
+                updateLispParenColor={updateLispParenColor}
               />
+            ) : activeWorkspace === "runtime" ? (
+              selectedExecutionSection === "approvals" ? (
+                <ApprovalsWorkspace
+                  approvalDecision={approvalDecision}
+                  approvalRequests={approvalRequests}
+                  isDecidingApproval={isDecidingApproval}
+                  selectedApproval={selectedApproval}
+                  selectedApprovalId={selectedApprovalId}
+                  setSelectedApprovalId={setSelectedApprovalId}
+                  submitApprovalDecision={submitApprovalDecision}
+                />
+              ) : selectedExecutionSection === "work" ? (
+                <WorkWorkspace
+                  selectedWorkItem={selectedWorkItem}
+                  selectedWorkflowRecord={selectedWorkflowRecord}
+                  selectedWorkItemId={selectedWorkItemId}
+                  setSelectedWorkItemId={setSelectedWorkItemId}
+                  workItems={workItems}
+                />
+              ) : (
+                <ExecutionWorkspace
+                  approvalRequests={approvalRequests}
+                  currentReplSessionId={currentReplSessionId}
+                  replSessions={currentProjectReplSessions}
+                  createReplSession={handleCreateReplSession}
+                  evaluateRuntimeForm={evaluateRuntimeForm}
+                  replSessionTitleDraft={replSessionTitleDraft}
+                  setReplSessionTitleDraft={setReplSessionTitleDraft}
+                  switchReplSession={handleSwitchReplSession}
+                  isEvaluating={isEvaluating}
+                  inspectRuntimeSymbol={inspectRuntimeSymbol}
+                  isInspectingRuntime={isInspectingRuntime}
+                  runtimeInspection={runtimeInspection}
+                  runtimeInspectionMode={runtimeInspectionMode}
+                  runtimeInspectorPackage={runtimeInspectorPackage}
+                  runtimeInspectorSymbol={runtimeInspectorSymbol}
+                  runtimeForm={runtimeForm}
+                  runtimeResult={runtimeResult}
+                  runtimeSummary={runtimeSummary}
+                  setRuntimeInspectionMode={updateRuntimeInspectionMode}
+                  setRuntimeInspectorPackage={updateRuntimeInspectorPackage}
+                  setRuntimeInspectorSymbol={updateRuntimeInspectorSymbol}
+                  selectedWorkItem={selectedWorkItem}
+                  selectedWorkItemId={selectedWorkItemId}
+                  selectedWorkflowRecord={selectedWorkflowRecord}
+                  setRuntimeForm={setRuntimeForm}
+                  workItems={workItems}
+                />
+              )
+            ) : activeWorkspace === "incidents" ? (
+              <IncidentsWorkspace
+                incidents={incidents}
+                selectedIncident={selectedIncident}
+                selectedIncidentId={selectedIncidentId}
+                setSelectedIncidentId={setSelectedIncidentId}
+              />
+            ) : activeWorkspace === "artifacts" ? (
+              selectedEvidenceSection === "observation" ? (
+                <ActivityWorkspace
+                  eventFamilyFilter={eventFamilyFilter}
+                  eventVisibilityFilter={eventVisibilityFilter}
+                  events={environmentEvents}
+                  selectedEvent={selectedEvent}
+                  selectedEventCursor={selectedEventCursor}
+                  setEventFamilyFilter={setEventFamilyFilter}
+                  setEventVisibilityFilter={setEventVisibilityFilter}
+                  setSelectedEventCursor={setSelectedEventCursor}
+                />
+              ) : selectedEvidenceSection === "artifacts" ? (
+                <ArtifactsWorkspace
+                  artifacts={artifacts}
+                  selectedArtifact={selectedArtifact}
+                  selectedArtifactId={selectedArtifactId}
+                  setSelectedArtifactId={setSelectedArtifactId}
+                />
+              ) : (
+                <EvidenceWorkspace
+                  artifacts={artifacts}
+                  eventFamilyFilter={eventFamilyFilter}
+                  eventVisibilityFilter={eventVisibilityFilter}
+                  events={environmentEvents}
+                  selectedArtifact={selectedArtifact}
+                  selectedArtifactId={selectedArtifactId}
+                  selectedEvent={selectedEvent}
+                  selectedEventCursor={selectedEventCursor}
+                  setEventFamilyFilter={setEventFamilyFilter}
+                  setEventVisibilityFilter={setEventVisibilityFilter}
+                  setSelectedArtifactId={setSelectedArtifactId}
+                  setSelectedEventCursor={setSelectedEventCursor}
+                />
+              )
             ) : (
-              <EvidenceWorkspace
-                artifacts={artifacts}
-                eventFamilyFilter={eventFamilyFilter}
-                eventVisibilityFilter={eventVisibilityFilter}
-                events={environmentEvents}
-                selectedArtifact={selectedArtifact}
-                selectedArtifactId={selectedArtifactId}
-                selectedEvent={selectedEvent}
-                selectedEventCursor={selectedEventCursor}
-                setEventFamilyFilter={setEventFamilyFilter}
-                setEventVisibilityFilter={setEventVisibilityFilter}
-                setSelectedArtifactId={setSelectedArtifactId}
-                setSelectedEventCursor={setSelectedEventCursor}
-              />
-            )
-          ) : (
-            <PlannedWorkspace workspaceId={activeWorkspace} />
-          )}
-        </section>
-      </main>
+              <PlannedWorkspace workspaceId={activeWorkspace} />
+            )}
+          </section>
+        </main>
+      ) : (
+        <aside className="canvas canvas-collapsed-rail" aria-label="Collapsed workspace canvas">
+          <button
+            aria-label={`Show ${workspaceDescriptor.title} workspace`}
+            className="collapsed-canvas-toggle"
+            onClick={() => void toggleCanvasPinned()}
+            title={workspaceDescriptor.title}
+            type="button"
+          >
+            <span>Show Workspace</span>
+          </button>
+        </aside>
+      )}
 
       {inspectorPinned ? (
         <WorkspaceInspector
           activeWorkspace={activeWorkspace}
           artifacts={artifacts}
           binding={binding}
+          isResizing={isInspectorResizing}
+          onStartResize={startInspectorResize}
+          selectedBrowserDomain={selectedBrowserDomain}
           conversationDraft={conversationDraft}
           environmentEvents={environmentEvents}
           runtimeForm={runtimeForm}
+          runtimeEntityDetail={runtimeEntityDetail}
           runtimeInspection={runtimeInspection}
           runtimeSummary={runtimeSummary}
           selectedApproval={selectedApproval}
@@ -3467,8 +3656,10 @@ export function App() {
         currentProject={projects.find((project) => project.projectId === currentProjectId) ?? null}
         hostStatus={hostStatus}
         sidebarPinned={sidebarPinned}
+        canvasPinned={canvasPinned}
         inspectorPinned={inspectorPinned}
         onToggleSidebar={() => void toggleSidebarPinned()}
+        onToggleCanvas={() => void toggleCanvasPinned()}
         onToggleInspector={() => void toggleInspectorPinned()}
         status={status}
       />
@@ -3673,12 +3864,15 @@ function CommandCenter({
 function WorkspaceInspector({
   activeWorkspace,
   binding,
+  onStartResize,
+  isResizing,
   summary,
   status,
   selectedThread,
   selectedTurn,
   conversationDraft,
   selectedConversationSection,
+  runtimeEntityDetail,
   runtimeSummary,
   runtimeInspection,
   runtimeForm,
@@ -3690,6 +3884,7 @@ function WorkspaceInspector({
   selectedArtifact,
   selectedConversationMessage,
   selectedEvent,
+  selectedBrowserDomain,
   selectedOperateSection,
   selectedDocumentationPage,
   selectedEvidenceSection,
@@ -3699,12 +3894,15 @@ function WorkspaceInspector({
 }: {
   activeWorkspace: WorkspaceId;
   binding: BindingDto | null;
+  onStartResize: (event: React.PointerEvent<HTMLButtonElement>) => void;
+  isResizing: boolean;
   summary: EnvironmentSummaryDto | null;
   status: EnvironmentStatusDto | null;
   selectedThread: ThreadDetailDto | null;
   selectedTurn: TurnDetailDto | null;
   conversationDraft: string;
   selectedConversationSection: ConversationSection;
+  runtimeEntityDetail: QueryResultDto<RuntimeEntityDetailDto> | null;
   runtimeSummary: RuntimeSummaryDto | null;
   runtimeInspection: QueryResultDto<RuntimeInspectionResultDto> | null;
   runtimeForm: string;
@@ -3716,6 +3914,7 @@ function WorkspaceInspector({
   selectedArtifact: ArtifactDetailDto | null;
   selectedConversationMessage: MessageDto | null;
   selectedEvent: EnvironmentEventDto | null;
+  selectedBrowserDomain: BrowserDomain;
   selectedOperateSection: OperateSection;
   selectedDocumentationPage: DocumentationPageDto | null;
   selectedEvidenceSection: EvidenceSection;
@@ -3765,10 +3964,298 @@ function WorkspaceInspector({
                 : selectedArtifact?.summary ?? "Select an artifact to inspect provenance and evidentiary posture."
               : activeWorkspace === "configuration"
                 ? "Theme and desktop preferences belong here, not hidden behind shell scaffolding."
-                : summary?.activeContext.focusSummary ?? "Environment posture is not yet available.";
+              : summary?.activeContext.focusSummary ?? "Environment posture is not yet available.";
+
+  const inspectorTabs: Array<{ id: string; label: string; content: React.ReactNode }> =
+    activeWorkspace === "environment"
+      ? [
+          {
+            id: "context",
+            label: "Context",
+            content: (
+              <div className="entity-list">
+                <div className="entity-row">
+                  <div>
+                    <strong>{summary?.activeContext.currentThreadTitle ?? "No active thread"}</strong>
+                    <p>{summary?.activeContext.focusSummary ?? "No current continuation summary."}</p>
+                  </div>
+                </div>
+                <div className="entity-row">
+                  <div>
+                    <strong>{summary?.activeWorkers[0]?.label ?? "No active worker"}</strong>
+                    <p>{summary?.activeWorkers[0]?.responsibility ?? "Actors appear here when the environment exposes them."}</p>
+                  </div>
+                </div>
+              </div>
+            )
+          },
+          {
+            id: "pressure",
+            label: "Pressure",
+            content: (
+              <dl className="detail-list">
+                <DetailRow label="Approvals" value={String(summary?.attention.approvalsAwaiting ?? 0)} />
+                <DetailRow label="Incidents" value={String(summary?.attention.openIncidents ?? 0)} />
+                <DetailRow label="Blocked Work" value={String(summary?.attention.blockedWork ?? 0)} />
+                <DetailRow label="Artifacts" value={String(summary?.recentArtifacts.length ?? 0)} />
+              </dl>
+            )
+          }
+        ]
+      : activeWorkspace === "conversations"
+        ? [
+            {
+              id: "context",
+              label: "Context",
+              content: (
+                <dl className="detail-list">
+                  <DetailRow label="Thread" value={selectedThread?.title ?? "No thread selected"} />
+                  <DetailRow label="State" value={selectedThread?.state ?? "idle"} />
+                  <DetailRow label="Turns" value={String(selectedThread?.turns.length ?? 0)} />
+                  <DetailRow label="Linked Entities" value={String(selectedThread?.linkedEntities.length ?? 0)} />
+                </dl>
+              )
+            },
+            {
+              id: "detail",
+              label: "Turn",
+              content:
+                selectedConversationSection === "draft" ? (
+                  <pre className="runtime-preview">{conversationDraft || "No draft continuation prepared."}</pre>
+                ) : (
+                  <dl className="detail-list">
+                    <DetailRow label="Turn" value={selectedTurn?.title ?? "No turn selected"} />
+                    <DetailRow label="Turn State" value={selectedTurn?.state ?? "idle"} />
+                    <DetailRow label="Operations" value={String(selectedTurn?.operationIds.length ?? 0)} />
+                    <DetailRow label="Artifacts" value={String(selectedTurn?.artifactIds.length ?? 0)} />
+                    <DetailRow label="Approvals" value={String(selectedTurn?.approvalIds.length ?? 0)} />
+                  </dl>
+                )
+            },
+            {
+              id: "entry",
+              label: "Entry",
+              content: selectedConversationMessage ? (
+                <dl className="detail-list">
+                  <DetailRow label="Source" value={selectedConversationMessage.role} />
+                  <DetailRow label="Timestamp" value={selectedConversationMessage.createdAt} />
+                </dl>
+              ) : (
+                <p className="inspector-copy">
+                  Select a transcript entry to inspect its source and timestamp without repeating that metadata on every bubble.
+                </p>
+              )
+            },
+            {
+              id: "linked",
+              label: "Linked",
+              content: selectedThread ? (
+                <LinkedEntityList entities={selectedThread.linkedEntities} />
+              ) : (
+                <p className="inspector-copy">
+                  Select a conversation session to inspect the artifacts, approvals, incidents, and work attached to it.
+                </p>
+              )
+            }
+          ]
+        : activeWorkspace === "browser"
+          ? [
+              {
+                id: "context",
+                label: "Context",
+                content: (
+                  <dl className="detail-list">
+                    <DetailRow
+                      label="Domain"
+                      value={browserDomains.find((domain) => domain.id === selectedBrowserDomain)?.label ?? selectedBrowserDomain}
+                    />
+                    <DetailRow label="Package" value={runtimeInspection?.data.packageName ?? runtimeSummary?.currentPackage ?? "unknown"} />
+                    <DetailRow label="Mode" value={runtimeInspection?.data.mode ?? "browse"} />
+                    <DetailRow label="Systems" value={String(runtimeSummary?.loadedSystemCount ?? 0)} />
+                    <DetailRow label="Scopes" value={String(runtimeSummary?.scopes.length ?? 0)} />
+                  </dl>
+                )
+              },
+              {
+                id: "detail",
+                label: "Detail",
+                content: runtimeEntityDetail ? (
+                  <>
+                    <dl className="detail-list">
+                      <DetailRow label="Kind" value={runtimeEntityDetail.data.entityKind} />
+                      <DetailRow label="Package" value={runtimeEntityDetail.data.packageName} />
+                      <DetailRow label="Signature" value={runtimeEntityDetail.data.signature ?? "No signature"} />
+                      <DetailRow label="Facets" value={String(runtimeEntityDetail.data.facets.length)} />
+                      <DetailRow label="Related Items" value={String(runtimeEntityDetail.data.relatedItems.length)} />
+                    </dl>
+                    <p className="inspector-copy">{runtimeEntityDetail.data.summary}</p>
+                    {sourcePreview?.data.path ? (
+                      <p className="inspector-copy">
+                        Source focus: {sourcePreview.data.path}
+                        {sourcePreview.data.focusLine ? `:${sourcePreview.data.focusLine}` : ""}
+                      </p>
+                    ) : null}
+                  </>
+                ) : (
+                  <p className="inspector-copy">
+                    Select a package, symbol, method, class, or runtime object to inspect its semantic runtime detail here.
+                  </p>
+                )
+              },
+              {
+                id: "source",
+                label: "Source",
+                content: (
+                  <dl className="detail-list">
+                    <DetailRow label="Source" value={sourcePreview?.data.path ?? "No source artifact selected"} />
+                    <DetailRow label="Focus Line" value={String(sourcePreview?.data.focusLine ?? 0)} />
+                    <DetailRow label="Work Items" value={String(workItems.length)} />
+                    <DetailRow label="Artifacts" value={String(artifacts.length)} />
+                  </dl>
+                )
+              },
+              {
+                id: "handoff",
+                label: "Handoff",
+                content: (
+                  <div className="inspector-tab-stack">
+                    <div>
+                      <p className="context-label">Listener Input</p>
+                      <pre className="runtime-preview">{runtimeForm || "No listener handoff prepared."}</pre>
+                    </div>
+                    <div>
+                      <p className="context-label">Draft Continuation</p>
+                      <pre className="runtime-preview">{conversationDraft || "No conversation handoff prepared."}</pre>
+                    </div>
+                  </div>
+                )
+              }
+            ]
+          : activeWorkspace === "runtime"
+            ? [
+                {
+                  id: "context",
+                  label: "Context",
+                  content: (
+                    <dl className="detail-list">
+                      <DetailRow label="Loaded Systems" value={String(runtimeSummary?.loadedSystemCount ?? 0)} />
+                      <DetailRow label="Pending Approval" value={selectedApproval?.title ?? "None"} />
+                      <DetailRow label="Selected Work" value={selectedWorkItem?.title ?? "None"} />
+                      <DetailRow label="Closure" value={selectedWorkflowRecord?.closureReadiness ?? "unknown"} />
+                    </dl>
+                  )
+                },
+                {
+                  id: "input",
+                  label: "Input",
+                  content: <pre className="runtime-preview">{runtimeForm || "No listener form prepared."}</pre>
+                }
+              ]
+            : activeWorkspace === "incidents"
+              ? [
+                  {
+                    id: "context",
+                    label: "Context",
+                    content: (
+                      <dl className="detail-list">
+                        <DetailRow label="Severity" value={selectedIncident?.severity ?? "clear"} />
+                        <DetailRow label="Recovery State" value={selectedIncident?.recoveryState ?? "idle"} />
+                        <DetailRow label="Artifacts" value={String(selectedIncident?.artifactIds.length ?? 0)} />
+                        <DetailRow label="Linked Entities" value={String(selectedIncident?.linkedEntities.length ?? 0)} />
+                      </dl>
+                    )
+                  },
+                  {
+                    id: "next",
+                    label: "Next",
+                    content: (
+                      <p className="inspector-copy">
+                        {selectedIncident?.nextAction ?? "Select an incident to see the current recovery move."}
+                      </p>
+                    )
+                  }
+                ]
+              : activeWorkspace === "artifacts"
+                ? [
+                    {
+                      id: "context",
+                      label: "Context",
+                      content: (
+                        <dl className="detail-list">
+                          {selectedEvidenceSection === "observation" ? (
+                            <>
+                              <DetailRow label="Cursor" value={String(selectedEvent?.cursor ?? 0)} />
+                              <DetailRow label="Family" value={selectedEvent?.family ?? "unknown"} />
+                              <DetailRow label="Visibility" value={selectedEvent?.visibility ?? "unspecified"} />
+                              <DetailRow label="Events" value={String(environmentEvents.length)} />
+                            </>
+                          ) : (
+                            <>
+                              <DetailRow label="Kind" value={selectedArtifact?.kind ?? "unknown"} />
+                              <DetailRow label="State" value={selectedArtifact?.state ?? "unknown"} />
+                              <DetailRow label="Authority" value={selectedArtifact?.authority ?? "unknown"} />
+                              <DetailRow label="Artifacts" value={String(artifacts.length)} />
+                            </>
+                          )}
+                        </dl>
+                      )
+                    },
+                    {
+                      id: "provenance",
+                      label: "Provenance",
+                      content: (
+                        <p className="inspector-copy">
+                          {selectedEvidenceSection === "observation"
+                            ? selectedEvent?.summary ?? "Select an event to inspect its evidentiary role."
+                            : selectedArtifact?.provenance ?? "Select an artifact to inspect provenance."}
+                        </p>
+                      )
+                    }
+                  ]
+                : activeWorkspace === "configuration"
+                  ? [
+                      {
+                        id: "context",
+                        label: "Context",
+                        content: (
+                          <p className="inspector-copy">
+                            Configuration should stay concise: current preference, resolved behavior, and any environment-level effect.
+                          </p>
+                        )
+                      }
+                    ]
+                  : activeWorkspace === "documentation"
+                    ? [
+                        {
+                          id: "context",
+                          label: "Context",
+                          content: (
+                            <p className="inspector-copy">
+                              {selectedDocumentationPage?.summary ??
+                                "Documentation is deliberate and separate from the operational workspaces so learning material stays available without competing with active engineering surfaces."}
+                            </p>
+                          )
+                        }
+                      ]
+                    : [];
+  const [activeInspectorTab, setActiveInspectorTab] = useState<string>(inspectorTabs[0]?.id ?? "context");
+
+  useEffect(() => {
+    if (!inspectorTabs.some((tab) => tab.id === activeInspectorTab)) {
+      setActiveInspectorTab(inspectorTabs[0]?.id ?? "context");
+    }
+  }, [activeInspectorTab, inspectorTabs]);
+
+  const selectedInspectorTab = inspectorTabs.find((tab) => tab.id === activeInspectorTab) ?? inspectorTabs[0] ?? null;
 
   return (
     <aside className="inspector">
+      <button
+        aria-label="Resize inspector"
+        className={`shell-column-resizer${isResizing ? " active" : ""}`}
+        onPointerDown={onStartResize}
+        type="button"
+      />
       <section className="inspector-card">
         <p className="eyebrow">Current Focus</p>
         <h3>{currentFocusTitle}</h3>
@@ -3780,212 +4267,25 @@ function WorkspaceInspector({
           <DetailRow label="Workflow" value={status?.workflowState ?? "unknown"} />
         </dl>
       </section>
-
-      {activeWorkspace === "environment" ? (
-        <>
-          <section className="inspector-card">
-            <p className="eyebrow">Environment Context</p>
-            <h3>{selectedOperateSection === "journeys" ? "Dominant Journeys" : "Orientation"}</h3>
-            <div className="entity-list">
-              <div className="entity-row">
-                <div>
-                  <strong>{summary?.activeContext.currentThreadTitle ?? "No active thread"}</strong>
-                  <p>{summary?.activeContext.focusSummary ?? "No current continuation summary."}</p>
-                </div>
-              </div>
-              <div className="entity-row">
-                <div>
-                  <strong>{summary?.activeWorkers[0]?.label ?? "No active worker"}</strong>
-                  <p>{summary?.activeWorkers[0]?.responsibility ?? "Actors appear here when the environment exposes them."}</p>
-                </div>
-              </div>
-            </div>
-          </section>
-          <section className="inspector-card">
-            <p className="eyebrow">Open Pressure</p>
-            <h3>What Still Matters</h3>
-            <dl className="detail-list">
-              <DetailRow label="Approvals" value={String(summary?.attention.approvalsAwaiting ?? 0)} />
-              <DetailRow label="Incidents" value={String(summary?.attention.openIncidents ?? 0)} />
-              <DetailRow label="Blocked Work" value={String(summary?.attention.blockedWork ?? 0)} />
-              <DetailRow label="Artifacts" value={String(summary?.recentArtifacts.length ?? 0)} />
-            </dl>
-          </section>
-        </>
-      ) : null}
-
-      {activeWorkspace === "conversations" ? (
-        <>
-          <section className="inspector-card">
-            <p className="eyebrow">Conversation Context</p>
-            <h3>{selectedConversationSection === "draft" ? "Draft Continuation" : "Selected Thread"}</h3>
-            <dl className="detail-list">
-              <DetailRow label="Thread" value={selectedThread?.title ?? "No thread selected"} />
-              <DetailRow label="State" value={selectedThread?.state ?? "idle"} />
-              <DetailRow label="Turns" value={String(selectedThread?.turns.length ?? 0)} />
-              <DetailRow label="Linked Entities" value={String(selectedThread?.linkedEntities.length ?? 0)} />
-            </dl>
-          </section>
-          <section className="inspector-card">
-            <p className="eyebrow">Turn Detail</p>
-            <h3>{selectedTurn?.title ?? "No turn selected"}</h3>
-            {selectedConversationSection === "draft" ? (
-              <pre className="runtime-preview">{conversationDraft || "No draft continuation prepared."}</pre>
-            ) : (
-              <dl className="detail-list">
-                <DetailRow label="Turn State" value={selectedTurn?.state ?? "idle"} />
-                <DetailRow label="Operations" value={String(selectedTurn?.operationIds.length ?? 0)} />
-                <DetailRow label="Artifacts" value={String(selectedTurn?.artifactIds.length ?? 0)} />
-                <DetailRow label="Approvals" value={String(selectedTurn?.approvalIds.length ?? 0)} />
-              </dl>
-            )}
-          </section>
-          <section className="inspector-card">
-            <p className="eyebrow">Selected Entry</p>
-            <h3>{selectedConversationMessage ? "Transcript Metadata" : "No message selected"}</h3>
-            {selectedConversationMessage ? (
-              <dl className="detail-list">
-                <DetailRow label="Source" value={selectedConversationMessage.role} />
-                <DetailRow label="Timestamp" value={selectedConversationMessage.createdAt} />
-              </dl>
-            ) : (
-              <p className="inspector-copy">
-                Select a transcript entry to inspect its source and timestamp without repeating that metadata on every bubble.
-              </p>
-            )}
-          </section>
-          <section className="inspector-card">
-            <p className="eyebrow">Linked Entities</p>
-            <h3>{selectedThread ? `${selectedThread.linkedEntities.length} attached references` : "No thread selected"}</h3>
-            {selectedThread ? (
-              <LinkedEntityList entities={selectedThread.linkedEntities} />
-            ) : (
-              <p className="inspector-copy">
-                Select a conversation session to inspect the artifacts, approvals, incidents, and work attached to it.
-              </p>
-            )}
-          </section>
-        </>
-      ) : null}
-
-      {activeWorkspace === "browser" ? (
-        <>
-          <section className="inspector-card">
-            <p className="eyebrow">Browser Context</p>
-            <h3>{runtimeInspection?.data.symbol ?? runtimeSummary?.currentPackage ?? "No entity selected"}</h3>
-            <dl className="detail-list">
-              <DetailRow label="Package" value={runtimeInspection?.data.packageName ?? runtimeSummary?.currentPackage ?? "unknown"} />
-              <DetailRow label="Mode" value={runtimeInspection?.data.mode ?? "browse"} />
-              <DetailRow label="Systems" value={String(runtimeSummary?.loadedSystemCount ?? 0)} />
-              <DetailRow label="Scopes" value={String(runtimeSummary?.scopes.length ?? 0)} />
-            </dl>
-          </section>
-          <section className="inspector-card">
-            <p className="eyebrow">Source And Governance</p>
-            <h3>{sourcePreview?.data.path ? "Source Attached" : "No Source Open"}</h3>
-            <dl className="detail-list">
-              <DetailRow label="Source" value={sourcePreview?.data.path ?? "No source artifact selected"} />
-              <DetailRow label="Focus Line" value={String(sourcePreview?.data.focusLine ?? 0)} />
-              <DetailRow label="Work Items" value={String(workItems.length)} />
-              <DetailRow label="Artifacts" value={String(artifacts.length)} />
-            </dl>
-          </section>
-        </>
-      ) : null}
-
-      {activeWorkspace === "runtime" ? (
-        <>
-          <section className="inspector-card">
-            <p className="eyebrow">Listener Context</p>
-            <h3>{runtimeSummary?.currentPackage ?? "SBCL Listener"}</h3>
-            <dl className="detail-list">
-              <DetailRow label="Loaded Systems" value={String(runtimeSummary?.loadedSystemCount ?? 0)} />
-              <DetailRow label="Pending Approval" value={selectedApproval?.title ?? "None"} />
-              <DetailRow label="Selected Work" value={selectedWorkItem?.title ?? "None"} />
-              <DetailRow label="Closure" value={selectedWorkflowRecord?.closureReadiness ?? "unknown"} />
-            </dl>
-          </section>
-          <section className="inspector-card">
-            <p className="eyebrow">Prefilled Form</p>
-            <h3>Execution Input</h3>
-            <pre className="runtime-preview">{runtimeForm || "No listener form prepared."}</pre>
-          </section>
-        </>
-      ) : null}
-
-      {activeWorkspace === "incidents" ? (
-        <>
-          <section className="inspector-card">
-            <p className="eyebrow">Recovery Context</p>
-            <h3>{selectedIncident?.title ?? "No incident selected"}</h3>
-            <dl className="detail-list">
-              <DetailRow label="Severity" value={selectedIncident?.severity ?? "clear"} />
-              <DetailRow label="Recovery State" value={selectedIncident?.recoveryState ?? "idle"} />
-              <DetailRow label="Artifacts" value={String(selectedIncident?.artifactIds.length ?? 0)} />
-              <DetailRow label="Linked Entities" value={String(selectedIncident?.linkedEntities.length ?? 0)} />
-            </dl>
-          </section>
-          <section className="inspector-card">
-            <p className="eyebrow">Next Action</p>
-            <h3>Recovery Move</h3>
-            <p className="inspector-copy">{selectedIncident?.nextAction ?? "Select an incident to see the current recovery move."}</p>
-          </section>
-        </>
-      ) : null}
-
-      {activeWorkspace === "artifacts" ? (
-        <>
-          <section className="inspector-card">
-            <p className="eyebrow">{selectedEvidenceSection === "observation" ? "Observed Event" : "Selected Artifact"}</p>
-            <h3>{selectedEvidenceSection === "observation" ? selectedEvent?.kind ?? "No event selected" : selectedArtifact?.title ?? "No artifact selected"}</h3>
-            <dl className="detail-list">
-              {selectedEvidenceSection === "observation" ? (
-                <>
-                  <DetailRow label="Cursor" value={String(selectedEvent?.cursor ?? 0)} />
-                  <DetailRow label="Family" value={selectedEvent?.family ?? "unknown"} />
-                  <DetailRow label="Visibility" value={selectedEvent?.visibility ?? "unspecified"} />
-                  <DetailRow label="Events" value={String(environmentEvents.length)} />
-                </>
-              ) : (
-                <>
-                  <DetailRow label="Kind" value={selectedArtifact?.kind ?? "unknown"} />
-                  <DetailRow label="State" value={selectedArtifact?.state ?? "unknown"} />
-                  <DetailRow label="Authority" value={selectedArtifact?.authority ?? "unknown"} />
-                  <DetailRow label="Artifacts" value={String(artifacts.length)} />
-                </>
-              )}
-            </dl>
-          </section>
-          <section className="inspector-card">
-            <p className="eyebrow">Provenance</p>
-            <h3>Why It Matters</h3>
-            <p className="inspector-copy">
-              {selectedEvidenceSection === "observation"
-                ? selectedEvent?.summary ?? "Select an event to inspect its evidentiary role."
-                : selectedArtifact?.provenance ?? "Select an artifact to inspect provenance."}
-            </p>
-          </section>
-        </>
-      ) : null}
-
-      {activeWorkspace === "configuration" ? (
-        <section className="inspector-card">
-          <p className="eyebrow">Configuration Context</p>
-          <h3>Desktop Preferences</h3>
-          <p className="inspector-copy">
-            Configuration should stay concise: current preference, resolved behavior, and any environment-level effect.
-          </p>
-        </section>
-      ) : null}
-
-      {activeWorkspace === "documentation" ? (
-        <section className="inspector-card">
-          <p className="eyebrow">Documentation Context</p>
-          <h3>{selectedDocumentationPage?.title ?? "User Documentation"}</h3>
-          <p className="inspector-copy">
-            {selectedDocumentationPage?.summary ??
-              "Documentation is deliberate and separate from the operational workspaces so learning material stays available without competing with active engineering surfaces."}
-          </p>
+      {selectedInspectorTab ? (
+        <section className="inspector-card inspector-tabs-card">
+          <div className="inspector-tabs" role="tablist" aria-label="Inspector panels">
+            {inspectorTabs.map((tab) => (
+              <button
+                aria-selected={tab.id === selectedInspectorTab.id}
+                className={tab.id === selectedInspectorTab.id ? "inspector-tab active" : "inspector-tab"}
+                key={tab.id}
+                onClick={() => setActiveInspectorTab(tab.id)}
+                role="tab"
+                type="button"
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+          <div className="inspector-tab-panel" role="tabpanel">
+            {selectedInspectorTab.content}
+          </div>
         </section>
       ) : null}
     </aside>
@@ -5501,14 +5801,15 @@ function BrowserDataTable<Row>({
       <div className="browser-table-toolbar">
         <input
           className="filter-input browser-table-search"
+          aria-label={searchPlaceholder}
           onChange={(event) => setSearchTerm(event.target.value)}
           placeholder={searchPlaceholder}
           value={searchTerm}
         />
         <label className="browser-table-select-group">
-          <span>{filterLabel}</span>
           <select
             className="filter-input browser-table-select"
+            aria-label={filterLabel}
             onChange={(event) => setActiveFilter(event.target.value)}
             value={activeFilter}
           >
@@ -5521,9 +5822,9 @@ function BrowserDataTable<Row>({
           </select>
         </label>
         <label className="browser-table-select-group">
-          <span>Page Size</span>
           <select
             className="filter-input browser-table-select"
+            aria-label="Page Size"
             onChange={(event) => setPageSize(Number(event.target.value))}
             value={String(pageSize)}
           >
@@ -5606,6 +5907,36 @@ function BrowserDataTable<Row>({
         </div>
       </div>
     </section>
+  );
+}
+
+function BrowserModePicker({
+  label,
+  options,
+  value,
+  onChange
+}: {
+  label: string;
+  options: Array<{ value: string; label: string }>;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="browser-mode-picker">
+      <span>{label}</span>
+      <select
+        className="filter-input browser-table-select browser-mode-select"
+        aria-label={label}
+        onChange={(event) => onChange(event.target.value)}
+        value={value}
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </div>
   );
 }
 
@@ -5706,6 +6037,7 @@ function BrowserWorkspace({
   >("function");
   const [classMethodMode, setClassMethodMode] = useState<"classes" | "generic-functions">("classes");
   const [xrefMode, setXrefMode] = useState<"incoming" | "outgoing">("incoming");
+  const [symbolInspectorExpanded, setSymbolInspectorExpanded] = useState(false);
   const [selectedSystemName, setSelectedSystemName] = useState<string | null>(null);
   const [selectedScopeId, setSelectedScopeId] = useState<string | null>(null);
   const [selectedSourceEntryKey, setSelectedSourceEntryKey] = useState<string | null>(null);
@@ -5730,7 +6062,33 @@ function BrowserWorkspace({
 
   const filteredExternalSymbols = packageBrowser?.data.externalSymbols ?? [];
   const filteredInternalSymbols = packageBrowser?.data.internalSymbols ?? [];
-  const packageSymbols = [...filteredExternalSymbols, ...filteredInternalSymbols];
+  const inspectedSymbolKind: PackageBrowserSymbolDto["kind"] =
+    runtimeEntityDetail?.data.entityKind ??
+    (runtimeInspection?.data.mode === "methods"
+      ? "generic-function"
+      : runtimeInspection?.data.mode === "describe"
+        ? "variable"
+        : runtimeInspection?.data.mode === "definitions" || runtimeInspection?.data.mode === "callers"
+          ? "function"
+          : "unknown");
+  const supplementalBrowserSymbols: PackageBrowserSymbolDto[] = runtimeInspection?.data.symbol
+    ? [
+        {
+          symbol: runtimeInspection.data.symbol,
+          kind: inspectedSymbolKind,
+          visibility: "internal"
+        }
+      ]
+    : [];
+  const packageSymbols = [...filteredExternalSymbols, ...filteredInternalSymbols, ...supplementalBrowserSymbols].filter(
+    (entry, index, entries) =>
+      entries.findIndex(
+        (candidate) =>
+          candidate.symbol === entry.symbol &&
+          candidate.kind === entry.kind &&
+          candidate.visibility === entry.visibility
+      ) === index
+  );
   const focusedPackageSymbol =
     packageSymbols.find((entry) => entry.symbol === (runtimeInspection?.data.symbol ?? runtimeInspectorSymbol)) ??
     null;
@@ -5754,47 +6112,39 @@ function BrowserWorkspace({
         key: "generic-function",
         title: "Generic Functions",
         subtitle: "Method-oriented live dispatch surfaces.",
-        symbols: [...filteredExternalSymbols, ...filteredInternalSymbols].filter(
-          (entry) => entry.kind === "generic-function"
-        ),
+        symbols: packageSymbols.filter((entry) => entry.kind === "generic-function"),
         mode: "methods" as RuntimeInspectionMode
       },
       {
         key: "class",
         title: "Classes",
         subtitle: "CLOS classes and related runtime structure.",
-        symbols: [...filteredExternalSymbols, ...filteredInternalSymbols].filter(
-          (entry) => entry.kind === "class"
-        ),
+        symbols: packageSymbols.filter((entry) => entry.kind === "class"),
         mode: "definitions" as RuntimeInspectionMode
       },
       {
         key: "macro",
         title: "Macros",
         subtitle: "Compile-time shaping forms in the selected package.",
-        symbols: [...filteredExternalSymbols, ...filteredInternalSymbols].filter(
-          (entry) => entry.kind === "macro"
-        ),
+        symbols: packageSymbols.filter((entry) => entry.kind === "macro"),
         mode: "definitions" as RuntimeInspectionMode
       },
       {
         key: "function",
         title: "Functions",
         subtitle: "Callable definitions and unresolved runtime call surfaces.",
-        symbols: [...filteredExternalSymbols, ...filteredInternalSymbols].filter(
-          (entry) => entry.kind === "function" || entry.kind === "unknown"
-        ),
+        symbols: packageSymbols.filter((entry) => entry.kind === "function" || entry.kind === "unknown"),
         mode: "definitions" as RuntimeInspectionMode
       },
       {
         key: "variable",
         title: "Variables",
         subtitle: "Special variables, runtime bindings, and inspectable symbol values.",
-        symbols: [...filteredExternalSymbols, ...filteredInternalSymbols].filter((entry) => entry.kind === "variable"),
+        symbols: packageSymbols.filter((entry) => entry.kind === "variable"),
         mode: "describe" as RuntimeInspectionMode
       }
     ],
-    [filteredExternalSymbols, filteredInternalSymbols]
+    [packageSymbols]
   );
   const classBucket = kindBuckets.find((bucket) => bucket.key === "class") ?? null;
   const genericFunctionBucket = kindBuckets.find((bucket) => bucket.key === "generic-function") ?? null;
@@ -6083,6 +6433,38 @@ function BrowserWorkspace({
   }, [activeListenerForm, runtimeForm, setRuntimeForm]);
 
   useEffect(() => {
+    if (selectedDomain !== "symbols" || activeSymbolBucket.symbols.length > 0) {
+      return;
+    }
+
+    const fallbackBucket = kindBuckets.find((bucket) => bucket.symbols.length > 0);
+    if (fallbackBucket && fallbackBucket.key !== symbolWorkspaceMode) {
+      setSymbolWorkspaceMode(fallbackBucket.key as typeof symbolWorkspaceMode);
+    }
+  }, [activeSymbolBucket.symbols.length, kindBuckets, selectedDomain, symbolWorkspaceMode]);
+
+  useEffect(() => {
+    if (selectedDomain !== "symbols" || !runtimeInspection?.data.symbol) {
+      return;
+    }
+
+    if (runtimeInspection.data.mode === "methods" && symbolWorkspaceMode !== "generic-function") {
+      setSymbolWorkspaceMode("generic-function");
+      return;
+    }
+
+    if (runtimeEntityDetail?.data.entityKind === "class" && symbolWorkspaceMode !== "class") {
+      setSymbolWorkspaceMode("class");
+    }
+  }, [
+    runtimeEntityDetail?.data.entityKind,
+    runtimeInspection?.data.mode,
+    runtimeInspection?.data.symbol,
+    selectedDomain,
+    symbolWorkspaceMode
+  ]);
+
+  useEffect(() => {
     if (conversationDraft !== conversationHandoffPrompt) {
       setConversationDraft(conversationHandoffPrompt);
     }
@@ -6098,42 +6480,26 @@ function BrowserWorkspace({
       <div className="browser-layout">
         <div className="browser-main-stack browser-main-stack-full">
           <section className="panel browser-detail-panel browser-domain-pane browser-inspector-panel">
-            <div className="panel-header">
+            <div className="browser-domain-header">
               <div>
-                <p className="eyebrow">Domain Workspace</p>
+                <p className="eyebrow">Browser</p>
                 <h3>{domainDescriptor.label}</h3>
               </div>
               <Badge tone="active">{runtimeSummary?.currentPackage ?? "CL-USER"}</Badge>
             </div>
-            <div className="browser-domain-summary">
-              <p className="lead-copy">{domainDescriptor.summary}</p>
-            </div>
             {selectedDomain === "packages" ? (
               <div className="browser-domain-stack">
                 <div className="browser-domain-toolbar">
-                  <div className="browser-action-strip">
-                    <button
-                      className={packageWorkspaceMode === "packages" ? "starter-chip active" : "starter-chip"}
-                      onClick={() => setPackageWorkspaceMode("packages")}
-                      type="button"
-                    >
-                      Packages
-                    </button>
-                    <button
-                      className={packageWorkspaceMode === "exports" ? "starter-chip active" : "starter-chip"}
-                      onClick={() => setPackageWorkspaceMode("exports")}
-                      type="button"
-                    >
-                      Exports
-                    </button>
-                    <button
-                      className={packageWorkspaceMode === "internals" ? "starter-chip active" : "starter-chip"}
-                      onClick={() => setPackageWorkspaceMode("internals")}
-                      type="button"
-                    >
-                      Internals
-                    </button>
-                  </div>
+                  <BrowserModePicker
+                    label="Package View"
+                    onChange={(value) => setPackageWorkspaceMode(value as typeof packageWorkspaceMode)}
+                    options={[
+                      { value: "packages", label: "Packages" },
+                      { value: "exports", label: "Exports" },
+                      { value: "internals", label: "Internals" }
+                    ]}
+                    value={packageWorkspaceMode}
+                  />
                 </div>
                 {packageWorkspaceMode === "packages" ? (
                   <BrowserDataTable
@@ -6216,55 +6582,22 @@ function BrowserWorkspace({
               </div>
             ) : selectedDomain === "symbols" ? (
               <div className="browser-domain-stack">
-                <div className="runtime-inspector-controls">
-                  <input
-                    className="filter-input"
-                    onChange={(event) => setRuntimeInspectorSymbol(event.target.value)}
-                    placeholder="Symbol or package"
-                    value={runtimeInspectorSymbol}
-                  />
-                  <input
-                    className="filter-input"
-                    onChange={(event) => setRuntimeInspectorPackage(event.target.value)}
-                    placeholder={runtimeSummary?.currentPackage ?? "Package"}
-                    value={runtimeInspectorPackage}
-                  />
-                  <select
-                    className="filter-input"
-                    onChange={(event) => setRuntimeInspectionMode(event.target.value as RuntimeInspectionMode)}
-                    value={runtimeInspectionMode}
-                  >
-                    <option value="describe">Describe</option>
-                    <option value="definitions">Definitions</option>
-                    <option value="callers">Callers</option>
-                    <option value="methods">Methods</option>
-                    <option value="divergence">Drift</option>
-                  </select>
-                  <button
-                    className="action-button"
-                    disabled={isInspectingRuntime || runtimeInspectorSymbol.trim().length === 0}
-                    onClick={() => void inspectRuntimeSymbol()}
-                    type="button"
-                  >
-                    {isInspectingRuntime ? "Inspecting..." : "Browse Entity"}
-                  </button>
-                </div>
                 <div className="browser-domain-toolbar">
-                  <div className="browser-action-strip">
-                    {kindBuckets.map((bucket) => (
-                      <button
-                        className={symbolWorkspaceMode === bucket.key ? "starter-chip active" : "starter-chip"}
-                        key={bucket.key}
-                        onClick={() => setSymbolWorkspaceMode(bucket.key as typeof symbolWorkspaceMode)}
-                        type="button"
-                      >
-                        {bucket.title}
-                      </button>
-                    ))}
-                  </div>
+                  <BrowserModePicker
+                    label="Symbol Lane"
+                    onChange={(value) => setSymbolWorkspaceMode(value as typeof symbolWorkspaceMode)}
+                    options={kindBuckets.map((bucket) => ({
+                      value: bucket.key,
+                      label: bucket.title
+                    }))}
+                    value={symbolWorkspaceMode}
+                  />
                 </div>
                 <section className="browser-symbol-panel">
-                  <PanelHeader title={activeSymbolBucket.title} subtitle={activeSymbolBucket.subtitle} />
+                  <div className="browser-symbol-header">
+                    <strong>{activeSymbolBucket.title}</strong>
+                    <span>{activeSymbolBucket.subtitle}</span>
+                  </div>
                   <BrowserDataTable
                     key={`symbols-${symbolWorkspaceMode}`}
                     columnTemplate="minmax(0, 1.3fr) minmax(0, 0.8fr) minmax(0, 1fr)"
@@ -6300,26 +6633,84 @@ function BrowserWorkspace({
                     searchPlaceholder="Search symbols"
                     selectedKey={runtimeInspection?.data.symbol ?? runtimeEntityDetail?.data.symbol ?? null}
                   />
+                  {activeSymbolRows.length === 0 && runtimeInspection?.data.symbol ? (
+                    <div className="browser-package-card">
+                      <strong>{runtimeInspection.data.symbol}</strong>
+                      <p>
+                        The live runtime focus is available even though the current package browser lane is sparse. Continue
+                        from this inspected symbol while the broader package view catches up.
+                      </p>
+                      <div className="ref-list">
+                        <span className="thread-flag">{runtimeInspection.data.packageName ?? selectedPackageName ?? "runtime"}</span>
+                        <span className="thread-flag">{runtimeInspection.data.mode}</span>
+                      </div>
+                    </div>
+                  ) : null}
+                </section>
+                <section className="browser-secondary-card">
+                  <div className="browser-secondary-card-header">
+                    <div>
+                      <p className="eyebrow">Manual Inspect</p>
+                      <h4>Direct Runtime Query</h4>
+                    </div>
+                    <button
+                      className="starter-chip"
+                      onClick={() => setSymbolInspectorExpanded((current) => !current)}
+                      type="button"
+                    >
+                      {symbolInspectorExpanded ? "Hide" : "Show"}
+                    </button>
+                  </div>
+                  {symbolInspectorExpanded ? (
+                    <div className="runtime-inspector-controls browser-manual-inspector-controls">
+                      <input
+                        className="filter-input"
+                        onChange={(event) => setRuntimeInspectorSymbol(event.target.value)}
+                        placeholder="Symbol or package"
+                        value={runtimeInspectorSymbol}
+                      />
+                      <input
+                        className="filter-input"
+                        onChange={(event) => setRuntimeInspectorPackage(event.target.value)}
+                        placeholder={runtimeSummary?.currentPackage ?? "Package"}
+                        value={runtimeInspectorPackage}
+                      />
+                      <select
+                        className="filter-input"
+                        onChange={(event) => setRuntimeInspectionMode(event.target.value as RuntimeInspectionMode)}
+                        value={runtimeInspectionMode}
+                      >
+                        <option value="describe">Describe</option>
+                        <option value="definitions">Definitions</option>
+                        <option value="callers">Callers</option>
+                        <option value="methods">Methods</option>
+                        <option value="divergence">Drift</option>
+                      </select>
+                      <button
+                        className="action-button"
+                        disabled={isInspectingRuntime || runtimeInspectorSymbol.trim().length === 0}
+                        onClick={() => void inspectRuntimeSymbol()}
+                        type="button"
+                      >
+                        {isInspectingRuntime ? "Inspecting..." : "Browse Entity"}
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="inspector-copy">Ad hoc symbol, package, and XREF queries stay available here when needed.</p>
+                  )}
                 </section>
               </div>
             ) : selectedDomain === "classes-methods" ? (
               <div className="browser-domain-stack">
-                <div className="browser-action-strip">
-                  <button
-                    className={classMethodMode === "classes" ? "starter-chip active" : "starter-chip"}
-                    onClick={() => setClassMethodMode("classes")}
-                    type="button"
-                  >
-                    Classes
-                  </button>
-                  <button
-                    className={classMethodMode === "generic-functions" ? "starter-chip active" : "starter-chip"}
-                    onClick={() => setClassMethodMode("generic-functions")}
-                    type="button"
-                    >
-                      Generic Functions
-                    </button>
-                  </div>
+                <BrowserModePicker
+                  label="Entity Set"
+                  onChange={(value) => setClassMethodMode(value as typeof classMethodMode)}
+                  options={[
+                    { value: "classes", label: "Classes" },
+                    { value: "generic-functions", label: "Generic Functions" }
+                  ]}
+                  value={classMethodMode}
+                />
                 <BrowserDataTable
                   key={`classes-methods-${classMethodMode}`}
                   columnTemplate="minmax(0, 1.25fr) minmax(0, 0.8fr) minmax(0, 0.9fr)"
@@ -6489,35 +6880,18 @@ function BrowserWorkspace({
                   searchPlaceholder="Search source artifacts"
                   selectedKey={selectedSourceEntry ? `${selectedSourceEntry.path}:${selectedSourceEntry.line ?? 0}` : null}
                 />
-                {selectedSourceEntry ? (
-                  <div className="browser-package-card">
-                    <strong>{selectedSourceEntry.label}</strong>
-                    <p>{selectedSourceEntry.detail}</p>
-                    <div className="ref-list">
-                      {selectedSourceEntry.path ? <span className="thread-flag">{selectedSourceEntry.path}</span> : null}
-                      {selectedSourceEntry.line ? <span className="thread-flag">line {selectedSourceEntry.line}</span> : null}
-                    </div>
-                  </div>
-                ) : null}
               </div>
             ) : selectedDomain === "xref" ? (
               <div className="browser-domain-stack">
-                <div className="browser-action-strip">
-                  <button
-                    className={xrefMode === "incoming" ? "starter-chip active" : "starter-chip"}
-                    onClick={() => setXrefMode("incoming")}
-                    type="button"
-                  >
-                    Incoming
-                  </button>
-                  <button
-                    className={xrefMode === "outgoing" ? "starter-chip active" : "starter-chip"}
-                    onClick={() => setXrefMode("outgoing")}
-                    type="button"
-                    >
-                      Outgoing
-                    </button>
-                </div>
+                <BrowserModePicker
+                  label="Reference Direction"
+                  onChange={(value) => setXrefMode(value as typeof xrefMode)}
+                  options={[
+                    { value: "incoming", label: "Incoming" },
+                    { value: "outgoing", label: "Outgoing" }
+                  ]}
+                  value={xrefMode}
+                />
                 <BrowserDataTable
                   key={`xref-${xrefMode}`}
                   columnTemplate="minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 1.35fr)"
@@ -6670,439 +7044,13 @@ function BrowserWorkspace({
             ) : (
               <div className="browser-package-card">
                 <strong>{domainDescriptor.label}</strong>
-                <p>{domainDescriptor.summary}</p>
+                <p>Choose a browser domain to inspect its live runtime surface.</p>
               </div>
             )}
           </section>
 
-          <section className="panel browser-source-panel browser-detail-stack browser-active-context">
-              <PanelHeader
-                title="Active Work Context"
-                subtitle="Focus, source, listener, and conversation continuation stay attached to one live development context."
-              />
-              <div className="browser-focus-card">
-                <div>
-                  <p className="context-label">In Focus</p>
-                  <strong>{runtimeInspection?.data.symbol ?? (runtimeInspectorSymbol || "No entity selected")}</strong>
-                  <p>
-                    {runtimeInspection
-                      ? `${runtimeInspection.data.mode} in ${runtimeInspection.data.packageName}`
-                      : "Select a package, system, symbol, artifact, or work item to browse it live."}
-                  </p>
-                </div>
-                <div className="ref-list">
-                  {runtimeInspection?.data.runtimePresence ? (
-                    <span className="thread-flag">{runtimeInspection.data.runtimePresence}</span>
-                  ) : null}
-                  {runtimeInspection?.data.divergence ? (
-                    <span className="thread-flag">{runtimeInspection.data.divergence}</span>
-                  ) : null}
-                </div>
-              </div>
-              <section className="browser-context-section">
-                <div className="browser-action-strip">
-                  <button
-                    className="starter-chip"
-                    disabled={isInspectingRuntime || focusedSymbol.trim().length === 0}
-                    onClick={() => void browseRuntimeEntity(focusedSymbol, focusedPackage || undefined, "describe")}
-                    type="button"
-                  >
-                    Describe
-                  </button>
-                  <button
-                    className="starter-chip"
-                    disabled={isInspectingRuntime || focusedSymbol.trim().length === 0}
-                    onClick={() => void browseRuntimeEntity(focusedSymbol, focusedPackage || undefined, "definitions")}
-                    type="button"
-                  >
-                    Definitions
-                  </button>
-                  <button
-                    className="starter-chip"
-                    disabled={isInspectingRuntime || focusedSymbol.trim().length === 0}
-                    onClick={() => void browseRuntimeEntity(focusedSymbol, focusedPackage || undefined, "callers")}
-                    type="button"
-                  >
-                    Callers
-                  </button>
-                  <button
-                    className="starter-chip"
-                    disabled={isInspectingRuntime || focusedSymbol.trim().length === 0}
-                    onClick={() => void browseRuntimeEntity(focusedSymbol, focusedPackage || undefined, "methods")}
-                    type="button"
-                  >
-                    Methods
-                  </button>
-                  <button
-                    className="starter-chip"
-                    disabled={isInspectingRuntime || focusedSymbol.trim().length === 0}
-                    onClick={() => void browseRuntimeEntity(focusedSymbol, focusedPackage || undefined, "divergence")}
-                    type="button"
-                  >
-                    Drift
-                  </button>
-                  <button
-                    className="starter-chip"
-                    disabled={!sourceBackedDetailItem?.path}
-                    onClick={() => {
-                      if (sourceBackedDetailItem?.path) {
-                        void loadSourcePreview(sourceBackedDetailItem.path, sourceBackedDetailItem.line ?? undefined);
-                      }
-                    }}
-                    type="button"
-                  >
-                    Open Source
-                  </button>
-                </div>
-                <div className="browser-semantic-card">
-                  <div>
-                    <p className="context-label">Runtime Entity Detail</p>
-                    <strong>
-                      {runtimeEntityDetail?.data.entityKind ?? focusedPackageSymbol?.kind ?? "unknown"}
-                    </strong>
-                    <p>
-                      {runtimeEntityDetail?.data.summary ??
-                        "Select a live entity to project its actual runtime shape into the browser."}
-                    </p>
-                  </div>
-                  <Badge tone="steady">
-                    {runtimeEntityDetail?.data.signature ?? "No signature"}
-                  </Badge>
-                </div>
-              </section>
-              <div className="browser-workflow-grid">
-                <section className="browser-entity-panel browser-listener-panel">
-                  <PanelHeader
-                    title="Listener Handoff"
-                    subtitle="Browser selections should produce an executable next step in the live image."
-                  />
-                  <div className="browser-source-status">
-                    <strong>Prefilled Listener Form</strong>
-                    <p>Current browser focus is projected into the REPL so inspection can continue interactively.</p>
-                  </div>
-                  <LispCodeBlock
-                    className="browser-listener-preview"
-                    code={activeListenerForm}
-                    parenDepthColors={parenDepthColors}
-                  />
-                  <div className="browser-action-strip">
-                    <button
-                      className="starter-chip"
-                      onClick={() => navigateToWorkspace("runtime")}
-                      type="button"
-                    >
-                      Open In Listener
-                    </button>
-                    {entityQuickForms.map((item) => (
-                      <button
-                        className="starter-chip"
-                        key={item.id}
-                        onClick={() => {
-                          setListenerActionMode("custom");
-                          setCustomListenerForm(item.form);
-                          setRuntimeForm(item.form);
-                        }}
-                        type="button"
-                      >
-                        {item.label}
-                      </button>
-                    ))}
-                  </div>
-                </section>
-                <section className="browser-entity-panel browser-conversation-panel">
-                  <PanelHeader
-                    title="Conversation Handoff"
-                    subtitle="Browser context should seed the next structured continuation, not disappear at the workspace boundary."
-                  />
-                  <div className="browser-source-status">
-                    <strong>Draft Continuation</strong>
-                    <p>The current focus is also projected into a reusable conversation prompt.</p>
-                  </div>
-                  <pre className="runtime-preview browser-conversation-preview">{conversationHandoffPrompt}</pre>
-                  <div className="browser-action-strip">
-                    <button
-                      className="starter-chip"
-                      onClick={() => {
-                        setConversationDraft(conversationHandoffPrompt);
-                        navigateToWorkspace("conversations");
-                      }}
-                      type="button"
-                    >
-                      Open In Conversations
-                    </button>
-                  </div>
-                </section>
-              </div>
-              {runtimeEntityDetail ? (
-                <div className="browser-entity-detail-grid">
-                  <section className="browser-entity-panel">
-                    <PanelHeader
-                      title="Entity Facets"
-                      subtitle="Runtime-backed semantic detail, not inferred dashboard text."
-                    />
-                    <div className="entity-list">
-                      {runtimeEntityDetail.data.facets.map((facet) => (
-                        <div className="thread-row static-row" key={`${facet.label}:${facet.value}`}>
-                          <div className="thread-row-top">
-                            <strong>{facet.label}</strong>
-                          </div>
-                          <p>{facet.value}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
-                  <section className="browser-entity-panel">
-                    <PanelHeader
-                      title="Related Runtime Structure"
-                      subtitle="Methods, slots, and definitions stay attached to the selected entity."
-                    />
-                    <div className="entity-list">
-                      {runtimeEntityDetail.data.relatedItems.length > 0 ? (
-                        runtimeEntityDetail.data.relatedItems.map((item) => (
-                          <button
-                            className="thread-row"
-                            key={`${item.label}:${item.detail}:${item.line ?? 0}`}
-                            onClick={() => {
-                              if (item.path) {
-                                void loadSourcePreview(item.path, item.line ?? undefined);
-                              }
-                            }}
-                            type="button"
-                          >
-                            <div className="thread-row-top">
-                              <strong>{item.label}</strong>
-                              {item.emphasis ? <Badge tone="steady">{item.emphasis}</Badge> : null}
-                            </div>
-                            <p>{item.detail}</p>
-                            {item.path ? (
-                              <div className="thread-row-meta">
-                                <span>{item.path}</span>
-                                {item.line ? <span>line {item.line}</span> : null}
-                              </div>
-                            ) : null}
-                          </button>
-                        ))
-                      ) : (
-                        <p className="list-empty">No related runtime structure was returned for this entity yet.</p>
-                      )}
-                    </div>
-                  </section>
-                </div>
-              ) : null}
-              <section className="browser-context-section">
-                <PanelHeader
-                  title="Source Pane"
-                  subtitle="The selected live entity should reveal, edit, and reload source from the same browser surface."
-                />
-                {sourcePreview ? (
-                  <div className="runtime-result-stack">
-                    <div className="thread-row-meta">
-                      <span>{sourcePreview.data.path}</span>
-                      {sourcePreview.data.focusLine ? <span>line {sourcePreview.data.focusLine}</span> : null}
-                    </div>
-                    <div className="browser-action-strip">
-                      <button
-                        className="starter-chip"
-                        onClick={() => {
-                          setListenerActionMode("inspect");
-                          setRuntimeForm(sourceOperationForms.inspect);
-                        }}
-                        type="button"
-                      >
-                        Inspect In Listener
-                      </button>
-                      <button
-                        className="starter-chip"
-                        onClick={() => {
-                          setListenerActionMode("reload");
-                          setRuntimeForm(sourceOperationForms.reload);
-                        }}
-                        type="button"
-                      >
-                        Reload In Listener
-                      </button>
-                      <button
-                        className="starter-chip"
-                        onClick={() => {
-                          setListenerActionMode("evaluate");
-                          setRuntimeForm(sourceOperationForms.evaluate);
-                        }}
-                        type="button"
-                      >
-                        Evaluate Near Focus
-                      </button>
-                    </div>
-                    <div className="browser-source-actions">
-                      <button
-                        className="starter-chip"
-                        onClick={() => setIsEditingSource(!isEditingSource)}
-                        type="button"
-                      >
-                        {isEditingSource ? "Preview" : "Edit"}
-                      </button>
-                      <button
-                        className="starter-chip"
-                        disabled={!isEditingSource}
-                        onClick={() => {
-                          setSourceDraft(sourcePreview.data.editableContent);
-                          setIsEditingSource(false);
-                        }}
-                        type="button"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        className="starter-chip"
-                        disabled={!isEditingSource || !sourceDraftDirty || isStagingSource}
-                        onClick={() => void stageSourceChange()}
-                        type="button"
-                      >
-                        {isStagingSource ? "Staging..." : "Stage Change"}
-                      </button>
-                      <button
-                        className="starter-chip"
-                        disabled={isEditingSource || isReloadingSource}
-                        onClick={() => void reloadSourceFile()}
-                        type="button"
-                      >
-                        {isReloadingSource ? "Reloading..." : "Reload File"}
-                      </button>
-                    </div>
-                    {sourceMutationResult ? (
-                      <div className="browser-source-status">
-                        <strong>Stage Result</strong>
-                        <p>{sourceMutationResult.data.summary}</p>
-                      </div>
-                    ) : null}
-                    {sourceReloadResult ? (
-                      <div className="browser-source-status">
-                        <strong>Reload Result</strong>
-                        <p>{sourceReloadResult.data.summary}</p>
-                      </div>
-                    ) : null}
-                    {isEditingSource ? (
-                      <textarea
-                        className="source-editor"
-                        onChange={(event) => setSourceDraft(event.target.value)}
-                        spellCheck={false}
-                        value={sourceDraft}
-                      />
-                    ) : (
-                      <LispCodeBlock code={sourcePreview.data.content} parenDepthColors={parenDepthColors} />
-                    )}
-                  </div>
-                ) : (
-                  <p className="list-empty">Select a definition or caller entry to view source here.</p>
-                )}
-              </section>
-              {selectedDomain === "governance" ? (
-                <section className="browser-entity-panel">
-                  <PanelHeader
-                    title="Governance Attachment"
-                    subtitle="Approvals, incidents, and work remain attached to the focused environment entity."
-                  />
-                  <div className="entity-list">
-                    {governanceEntries.slice(0, 4).map((entry) => (
-                      <div className="thread-row static-row" key={`attachment:${entry.id}`}>
-                        <div className="thread-row-top">
-                          <strong>{entry.label}</strong>
-                          <Badge tone="steady">{entry.badge}</Badge>
-                        </div>
-                        <p>{entry.detail}</p>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              ) : null}
-              {selectedDomain === "linked-conversations" ? (
-                <section className="browser-entity-panel">
-                  <PanelHeader
-                    title="Linked Conversations"
-                    subtitle="Conversation continuations attached to the current environment focus."
-                  />
-                  <div className="entity-list">
-                    {linkedConversationEntries.slice(0, 4).map((entry) => (
-                      <div className="thread-row static-row" key={`conversation:${entry.id}`}>
-                        <div className="thread-row-top">
-                          <strong>{entry.label}</strong>
-                          <Badge tone="steady">{entry.badge}</Badge>
-                        </div>
-                        <p>{entry.detail}</p>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              ) : null}
-          </section>
         </div>
       </div>
-      <section className="panel browser-objective-panel">
-        <div className="panel-header">
-          <div>
-            <p className="eyebrow">Current Browser Objective</p>
-            <h3>{runtimeInspectorSymbol || runtimeSummary?.currentPackage || "System Browser"}</h3>
-          </div>
-          <Badge tone={runtimeInspection ? "active" : "steady"}>{runtimeInspectionMode}</Badge>
-        </div>
-        <p className="lead-copy">{browserObjective}</p>
-        <div className="signal-digest-grid execution-objective-digest">
-          <div className="signal-digest-card">
-            <span className="context-label">Systems</span>
-            <strong>{runtimeSummary?.loadedSystemCount ?? 0}</strong>
-            <p>{runtimeSummary?.loadedSystems[0] ?? "No system loaded yet."}</p>
-          </div>
-          <div className="signal-digest-card">
-            <span className="context-label">Artifacts</span>
-            <strong>{artifacts.length}</strong>
-            <p>{artifacts[0]?.title ?? "No artifact selected."}</p>
-          </div>
-          <div className="signal-digest-card">
-            <span className="context-label">Governed Work</span>
-            <strong>{workItems.length}</strong>
-            <p>{workItems[0]?.title ?? "No work item loaded."}</p>
-          </div>
-        </div>
-        <div className="browser-package-strip">
-          {packageNames.map((packageName) => (
-            <button
-              className={packageName === selectedPackageName ? "starter-chip active" : "starter-chip"}
-              key={packageName}
-              onClick={() => {
-                setSelectedPackageName(packageName);
-                void browseRuntimeEntity(packageName, packageName, "definitions");
-              }}
-              type="button"
-            >
-              {packageName}
-            </button>
-          ))}
-        </div>
-      </section>
-      <JourneyStageStrip
-        eyebrow="System Browser"
-        summary="The browser should expose the living Lisp system directly: packages, symbols, source, and governed artifacts in one inspectable environment."
-        steps={[
-          {
-            id: "browse-system",
-            title: "Browse System",
-            summary: "Start from loaded systems and runtime scopes, not a detached file tree.",
-            tone: runtimeSummary ? "active" : "warning"
-          },
-          {
-            id: "inspect-entity",
-            title: "Inspect Entity",
-            summary: "Packages, symbols, methods, callers, and drift become browseable runtime entities.",
-            tone: runtimeInspection ? "active" : "steady"
-          },
-          {
-            id: "view-source",
-            title: "View Source",
-            summary: "Source follows the selected live entity and stays attached to the current environment truth.",
-            tone: sourcePreview ? "active" : "steady"
-          }
-        ]}
-        title="Browser Journey"
-      />
     </div>
   );
 }
@@ -8791,9 +8739,11 @@ function StatusDock({
   currentProject,
   hostStatus,
   sidebarPinned,
+  canvasPinned,
   status,
   inspectorPinned,
   onToggleSidebar,
+  onToggleCanvas,
   onToggleInspector
 }: {
   activeWorkspace: WorkspaceId;
@@ -8801,9 +8751,11 @@ function StatusDock({
   currentProject: ProjectProfileDto | null;
   hostStatus: HostStatusDto | null;
   sidebarPinned: boolean;
+  canvasPinned: boolean;
   status: EnvironmentStatusDto | null;
   inspectorPinned: boolean;
   onToggleSidebar: () => void;
+  onToggleCanvas: () => void;
   onToggleInspector: () => void;
 }) {
   return (
@@ -8836,6 +8788,9 @@ function StatusDock({
         <span className="status-dock-hint">1-8 quick header switch</span>
         <button className="dock-button" onClick={onToggleSidebar} type="button">
           {sidebarPinned ? "Hide Navigation" : "Show Navigation"}
+        </button>
+        <button className="dock-button" onClick={onToggleCanvas} type="button">
+          {canvasPinned ? "Hide Workspace" : "Show Workspace"}
         </button>
         <button className="dock-button" onClick={onToggleInspector} type="button">
           {inspectorPinned ? "Collapse Inspector" : "Show Inspector"}

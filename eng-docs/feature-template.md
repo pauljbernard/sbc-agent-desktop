@@ -121,6 +121,29 @@ Include:
 - linked entity traversal
 - live event behavior
 - attention model implications
+- primary surface ownership
+- inspector and supporting-context placement
+- collapse behavior for transient navigation or support panels
+- explicit scroll ownership
+
+### Primary View
+
+Describe the main workspace or primary surface explicitly.
+
+State:
+
+- what the dominant work surface is
+- what selected detail sits directly below or beside it
+- what context belongs in inspector or collapsible support surfaces
+- which region owns scroll as the main work object grows
+
+Also answer:
+
+1. What is the dominant work surface?
+2. Which information is always visible?
+3. Which information moves into inspector or selected detail?
+4. What can collapse without harming orientation?
+5. What should remain fixed while the main work object grows?
 
 ### Command And Query Shape
 
@@ -131,6 +154,14 @@ Describe the likely service-level interface:
 - key returned state
 - key event emissions
 
+### Primary Queries
+
+List the primary read/query calls that power the feature.
+
+### Primary Commands
+
+List the primary command/mutation calls that power the feature.
+
 ### Acceptance Criteria
 
 Provide concrete acceptance criteria.
@@ -140,6 +171,9 @@ These must include:
 - user-visible outcome
 - domain or service correctness
 - thesis-alignment check
+- space and focus check
+- scroll ownership check when the feature includes growing content
+- metadata disclosure check when the feature includes dense records or transcripts
 
 ### Open Questions
 
@@ -154,3 +188,6 @@ A feature proposal should be rejected or revised if:
 - truth domains are not identified
 - governed execution implications are unclear
 - the proposal mainly describes familiar UI without domain reasoning
+- the proposal does not identify the primary work surface
+- the proposal leaves scroll behavior to page-default behavior
+- the proposal depends on repeated explanatory text instead of structural clarity

@@ -81,6 +81,28 @@ async function openWorkspaceSubpage(page: Page, parent: string, child: string): 
   await parentNode.getByRole("button", { name: child, exact: true }).click();
 }
 
+async function openBrowserManualInspect(page: Page): Promise<{
+  symbolInput: ReturnType<Page["locator"]>;
+  packageInput: ReturnType<Page["locator"]>;
+  modeSelect: ReturnType<Page["locator"]>;
+  browseButton: ReturnType<Page["locator"]>;
+}> {
+  await openWorkspace(page, "Browser");
+  const manualInspectCard = page.locator(".browser-secondary-card");
+  const showButton = manualInspectCard.getByRole("button", { name: "Show", exact: true });
+  if (await showButton.isVisible()) {
+    await showButton.click();
+  }
+
+  const controls = manualInspectCard.locator(".runtime-inspector-controls");
+  return {
+    symbolInput: controls.locator("input").nth(0),
+    packageInput: controls.locator("input").nth(1),
+    modeSelect: controls.locator("select"),
+    browseButton: controls.locator(".action-button")
+  };
+}
+
 test.describe("live sbcl-agent desktop shell", () => {
   test("exposes the conversation creation command on the desktop bridge", async () => {
     const { app, page } = await launchDesktop();
@@ -317,20 +339,21 @@ test.describe("live sbcl-agent desktop shell", () => {
   test("renders runtime-backed browser entity detail for inspected symbols", async () => {
     const { app, page } = await launchDesktop();
     try {
-      await openWorkspace(page, "Browser");
-      const inspectorInputs = page.locator(".runtime-inspector-controls input");
-      const browseButton = page.locator(".runtime-inspector-controls .action-button");
+      const { symbolInput, packageInput, modeSelect, browseButton } = await openBrowserManualInspect(page);
 
-      await inspectorInputs.nth(0).fill("PRINT-OBJECT");
-      await inspectorInputs.nth(1).fill("COMMON-LISP");
-      await page.locator(".runtime-inspector-controls select").selectOption("methods");
+      await symbolInput.fill("PRINT-OBJECT");
+      await packageInput.fill("COMMON-LISP");
+      await modeSelect.selectOption("methods");
       await browseButton.focus();
       await page.keyboard.press("Enter");
 
-      await expect(page.locator("body")).toContainText("Runtime Entity Detail");
-      await expect(page.locator("body")).toContainText("Entity Facets");
-      await expect(page.locator("body")).toContainText("Related Runtime Structure");
-      await expect(page.locator("body")).toContainText("generic-function");
+      const inspector = page.locator(".inspector");
+      await expect(inspector).toContainText("Runtime Entity Detail");
+      await expect(inspector).toContainText("PRINT-OBJECT");
+      await expect(inspector).toContainText("Kind");
+      await expect(inspector).toContainText("live generic function");
+      await expect(inspector).toContainText("Execution Handoff");
+      await expect(inspector).toContainText("COMMON-LISP::PRINT-OBJECT");
     } finally {
       await app.close();
     }
@@ -339,94 +362,70 @@ test.describe("live sbcl-agent desktop shell", () => {
   test("renders class relationships in the browser entity detail", async () => {
     const { app, page } = await launchDesktop();
     try {
-      await openWorkspace(page, "Browser");
-      const inspectorInputs = page.locator(".runtime-inspector-controls input");
-      const browseButton = page.locator(".runtime-inspector-controls .action-button");
+      const { symbolInput, packageInput, modeSelect, browseButton } = await openBrowserManualInspect(page);
 
-      await inspectorInputs.nth(0).fill("STANDARD-OBJECT");
-      await inspectorInputs.nth(1).fill("COMMON-LISP");
-      await page.locator(".runtime-inspector-controls select").selectOption("definitions");
+      await symbolInput.fill("STANDARD-OBJECT");
+      await packageInput.fill("COMMON-LISP");
+      await modeSelect.selectOption("definitions");
       await browseButton.focus();
       await page.keyboard.press("Enter");
 
-      await expect(page.locator("body")).toContainText("Runtime Entity Detail");
-      await expect(page.locator("body")).toContainText("Superclass Count");
-      await expect(page.locator("body")).toContainText("Related Runtime Structure");
-      await expect(page.locator("body")).toContainText("Superclass");
+      const inspector = page.locator(".inspector");
+      await expect(inspector).toContainText("Runtime Entity Detail");
+      await expect(inspector).toContainText("STANDARD-OBJECT");
+      await expect(inspector).toContainText("class");
+      await expect(inspector).toContainText("Related Items");
     } finally {
       await app.close();
     }
   });
 
-  test("supports direct browser action pivots for the focused entity", async () => {
+  test("keeps manual inspect secondary while updating browser inspector context", async () => {
     const { app, page } = await launchDesktop();
     try {
-      await openWorkspace(page, "Browser");
-      const inspectorInputs = page.locator(".runtime-inspector-controls input");
-      const browseButton = page.locator(".runtime-inspector-controls .action-button");
-      const modeSelect = page.locator(".runtime-inspector-controls select");
+      const { symbolInput, packageInput, modeSelect, browseButton } = await openBrowserManualInspect(page);
+      const manualInspectCard = page.locator(".browser-secondary-card");
 
-      await inspectorInputs.nth(0).fill("PRINT-OBJECT");
-      await inspectorInputs.nth(1).fill("COMMON-LISP");
+      await expect(manualInspectCard).toContainText("Direct Runtime Query");
+      await symbolInput.fill("PRINT-OBJECT");
+      await packageInput.fill("COMMON-LISP");
       await modeSelect.selectOption("methods");
       await expect(modeSelect).toHaveValue("methods");
       await browseButton.focus();
       await page.keyboard.press("Enter");
-      await expect(page.locator(".browser-focus-card")).toContainText("methods in COMMON-LISP");
 
       await modeSelect.selectOption("callers");
       await expect(modeSelect).toHaveValue("callers");
       await browseButton.focus();
       await page.keyboard.press("Enter");
-      await expect(page.locator(".browser-focus-card")).toContainText("callers in COMMON-LISP");
-      await expect(page.locator(".browser-objective-panel")).toContainText("Current Browser Objective");
-      await expect(page.locator(".browser-objective-panel")).toContainText("callers");
 
-      await page.locator(".browser-action-strip").getByRole("button", { name: "Definitions", exact: true }).click({ force: true });
-      await expect(page.locator("body")).toContainText("source definitions are available");
-
-      await inspectorInputs.nth(0).fill("START-SHELL");
-      await inspectorInputs.nth(1).fill("SBCL-AGENT-USER");
-      await modeSelect.selectOption("definitions");
-      await expect(modeSelect).toHaveValue("definitions");
-      await browseButton.focus();
-      await page.keyboard.press("Enter");
-      await expect(page.getByRole("button", { name: "Open Source" })).toBeEnabled();
-      await page.getByRole("button", { name: "Open Source" }).click();
-      await expect(page.locator("body")).toContainText("Source Pane");
-      await expect(page.locator("body")).toContainText("line");
+      const inspector = page.locator(".inspector");
+      await expect(inspector).toContainText("Browser Context");
+      await expect(inspector).toContainText("Mode");
+      await expect(inspector).toContainText("callers");
+      await expect(manualInspectCard.getByRole("button", { name: "Hide", exact: true })).toBeVisible();
+      await manualInspectCard.getByRole("button", { name: "Hide", exact: true }).click();
+      await expect(manualInspectCard).toContainText("Ad hoc symbol, package, and XREF queries stay available here when needed.");
     } finally {
       await app.close();
     }
   });
 
-  test("supports source pane edit mode without executing a live mutation", async () => {
+  test("syncs browser symbol tables to the inspected package", async () => {
     const { app, page } = await launchDesktop();
     try {
-      await openWorkspace(page, "Browser");
-      const inspectorInputs = page.locator(".runtime-inspector-controls input");
-      const browseButton = page.locator(".runtime-inspector-controls .action-button");
-      const modeSelect = page.locator(".runtime-inspector-controls select");
+      const { symbolInput, packageInput, modeSelect, browseButton } = await openBrowserManualInspect(page);
 
-      await inspectorInputs.nth(0).fill("START-SHELL");
-      await inspectorInputs.nth(1).fill("SBCL-AGENT-USER");
-      await modeSelect.selectOption("definitions");
+      await symbolInput.fill("PRINT-OBJECT");
+      await packageInput.fill("COMMON-LISP");
+      await modeSelect.selectOption("methods");
       await browseButton.focus();
       await page.keyboard.press("Enter");
-      await expect(page.getByRole("button", { name: "Open Source" })).toBeEnabled();
-      await page.getByRole("button", { name: "Open Source" }).click();
 
-      const sourceActionButtons = page.locator(".browser-source-actions .starter-chip");
-      await expect(sourceActionButtons.filter({ hasText: "Edit" })).toBeVisible();
-      await sourceActionButtons.filter({ hasText: "Edit" }).click();
-      await expect(page.locator(".source-editor")).toBeVisible();
-      await expect(page.getByRole("button", { name: "Reload File" })).toBeDisabled();
-
-      await page.locator(".source-editor").fill("(in-package #:sbcl-agent-user)\n\n(defun staged-edit-test () :ok)\n");
-      await expect(page.getByRole("button", { name: "Stage Change" })).toBeEnabled();
-
-      await sourceActionButtons.filter({ hasText: "Cancel" }).click();
-      await expect(sourceActionButtons.filter({ hasText: "Edit" })).toBeVisible();
+      await expect(page.locator(".browser-domain-pane")).toContainText("PRINT-OBJECT");
+      await expect(page.locator(".browser-domain-pane")).toContainText("live runtime focus is available");
+      await expect(page.locator(".inspector")).toContainText("Package");
+      await expect(page.locator(".inspector")).toContainText("COMMON-LISP");
     } finally {
       await app.close();
     }
@@ -445,9 +444,8 @@ test.describe("live sbcl-agent desktop shell", () => {
       await expect(page.locator(".browser-domain-pane")).toContainText("Environment Orientation");
       await page.locator(".browser-domain-pane").getByRole("button", { name: /Environment Orientation/i }).click({ force: true });
       await expect(page.locator(".browser-domain-pane")).toContainText("active");
-      await page.keyboard.press("2");
-      await expect(page.locator("body")).toContainText("Conversation Threads");
-      await expect(page.locator("body")).toContainText("Conversation Context");
+      await openWorkspace(page, "Conversations");
+      await expect(page.locator(".inspector")).toContainText("Conversation Context");
       await expect(page.locator("body")).toContainText("Environment Orientation");
     } finally {
       await app.close();
@@ -464,7 +462,6 @@ test.describe("live sbcl-agent desktop shell", () => {
       await expect(page.locator(".browser-domain-pane")).toContainText("sbcl-agent");
       await expect(page.locator(".browser-domain-pane")).toContainText("Page 1 / 1");
       await expect(page.locator(".browser-domain-pane")).toContainText("Type");
-      await expect(page.locator(".browser-domain-pane")).toContainText("Page Size");
     } finally {
       await app.close();
     }
@@ -473,135 +470,47 @@ test.describe("live sbcl-agent desktop shell", () => {
   test("prefills the listener from browser selections", async () => {
     const { app, page } = await launchDesktop();
     try {
-      await openWorkspace(page, "Browser");
-      const inspectorInputs = page.locator(".runtime-inspector-controls input");
-      const browseButton = page.locator(".runtime-inspector-controls .action-button");
-      const modeSelect = page.locator(".runtime-inspector-controls select");
+      const { symbolInput, packageInput, modeSelect, browseButton } = await openBrowserManualInspect(page);
 
-      await inspectorInputs.nth(0).fill("PRINT-OBJECT");
-      await inspectorInputs.nth(1).fill("COMMON-LISP");
+      await symbolInput.fill("PRINT-OBJECT");
+      await packageInput.fill("COMMON-LISP");
       await modeSelect.selectOption("methods");
       await browseButton.focus();
       await page.keyboard.press("Enter");
 
-      await expect(page.locator(".browser-focus-card")).toContainText("methods in COMMON-LISP");
-      await expect(page.locator(".browser-listener-preview")).toContainText("COMMON-LISP::PRINT-OBJECT");
-      await expect(page.locator(".browser-listener-preview")).toContainText("fdefinition");
-
-      await page.getByRole("button", { name: "Open In Listener" }).click();
-      await expect(page.locator("body")).toContainText("Current Execution Objective");
-      await expect(page.locator(".runtime-editor")).toHaveValue(/COMMON-LISP::PRINT-OBJECT/);
+      const inspector = page.locator(".inspector");
+      await expect(inspector).toContainText("Execution Handoff");
+      await expect(inspector).toContainText("COMMON-LISP::PRINT-OBJECT");
+      await expect(inspector).toContainText("fdefinition");
+      await expect(inspector).toContainText("Conversation Handoff");
+      await expect(inspector).toContainText("Continue the linked thread");
     } finally {
       await app.close();
     }
   });
 
-  test("projects source-backed browser focus into listener and conversation handoffs", async () => {
-    const { app, page } = await launchDesktop();
-    try {
-      await openWorkspace(page, "Browser");
-      const inspectorInputs = page.locator(".runtime-inspector-controls input");
-      const browseButton = page.locator(".runtime-inspector-controls .action-button");
-      const modeSelect = page.locator(".runtime-inspector-controls select");
-
-      await inspectorInputs.nth(0).fill("START-SHELL");
-      await inspectorInputs.nth(1).fill("SBCL-AGENT-USER");
-      await modeSelect.selectOption("definitions");
-      await browseButton.focus();
-      await page.keyboard.press("Enter");
-      await page.getByRole("button", { name: "Open Source" }).click();
-
-      await expect(page.locator(".browser-listener-preview")).toContainText("Source:");
-      await expect(page.locator(".browser-listener-preview")).toContainText("SBCL-AGENT-USER::START-SHELL");
-      await expect(page.locator(".browser-conversation-preview")).toContainText("Review source artifact");
-      await expect(page.locator(".browser-conversation-preview")).toContainText("START-SHELL");
-
-      const detailStack = page.locator(".browser-detail-stack");
-      await detailStack.getByRole("button", { name: "Reload In Listener" }).click({ force: true });
-      await page.getByRole("button", { name: "Open In Listener" }).click();
-      await expect(page.locator(".runtime-editor")).toHaveValue(/Reload request/);
-
-      await page.keyboard.press("3");
-      await page.getByRole("button", { name: "Open In Conversations" }).click();
-      await expect(page.locator("body")).toContainText("Conversation Threads");
-      await expect(page.locator("body")).toContainText("Conversation Context");
-      await openWorkspaceSubpage(page, "Conversations", "Draft");
-      await expect(page.locator(".conversation-draft-editor")).toHaveValue(/Review source artifact/);
-    } finally {
-      await app.close();
-    }
-  });
-
-  test("offers entity-aware listener quick actions for class focus", async () => {
-    const { app, page } = await launchDesktop();
-    try {
-      await openWorkspace(page, "Browser");
-      const inspectorInputs = page.locator(".runtime-inspector-controls input");
-      const browseButton = page.locator(".runtime-inspector-controls .action-button");
-      const modeSelect = page.locator(".runtime-inspector-controls select");
-
-      await inspectorInputs.nth(0).fill("STANDARD-OBJECT");
-      await inspectorInputs.nth(1).fill("COMMON-LISP");
-      await modeSelect.selectOption("definitions");
-      await browseButton.focus();
-      await page.keyboard.press("Enter");
-
-      const detailStack = page.locator(".browser-detail-stack");
-      await expect(detailStack.getByRole("button", { name: "Inspect Class Slots" })).toBeVisible();
-      await detailStack.getByRole("button", { name: "Inspect Class Slots" }).focus();
-      await page.keyboard.press("Enter");
-      await expect(page.locator(".browser-listener-preview")).toContainText("find-class 'COMMON-LISP::STANDARD-OBJECT");
-      await detailStack.getByRole("button", { name: "Open In Listener" }).click({ force: true });
-      await expect(page.locator(".runtime-editor")).toHaveValue(/find-class 'COMMON-LISP::STANDARD-OBJECT/);
-    } finally {
-      await app.close();
-    }
-  });
-
-  test("offers entity-aware listener quick actions for generic function focus", async () => {
-    const { app, page } = await launchDesktop();
-    try {
-      await openWorkspace(page, "Browser");
-      const inspectorInputs = page.locator(".runtime-inspector-controls input");
-      const browseButton = page.locator(".runtime-inspector-controls .action-button");
-      const modeSelect = page.locator(".runtime-inspector-controls select");
-
-      await inspectorInputs.nth(0).fill("PRINT-OBJECT");
-      await inspectorInputs.nth(1).fill("COMMON-LISP");
-      await modeSelect.selectOption("methods");
-      await browseButton.focus();
-      await page.keyboard.press("Enter");
-
-      const detailStack = page.locator(".browser-detail-stack");
-      await expect(detailStack.getByRole("button", { name: "Inspect Dispatch" })).toBeVisible();
-      await detailStack.getByRole("button", { name: "Inspect Dispatch" }).click({ force: true });
-      await detailStack.getByRole("button", { name: "Open In Listener" }).click({ force: true });
-      await expect(page.locator(".runtime-editor")).toHaveValue(/type-of \(fdefinition 'COMMON-LISP::PRINT-OBJECT\)/);
-    } finally {
-      await app.close();
-    }
-  });
-
-  test("renders browser tables ahead of the stacked detail workspace", async () => {
+  test("keeps browser tables first and inspector context separate", async () => {
     const { app, page } = await launchDesktop();
     try {
       await openWorkspaceSubpage(page, "Browser", "Systems");
 
       const domainPane = page.locator(".browser-domain-pane");
-      const detailStack = page.locator(".browser-detail-stack");
+      const inspector = page.locator(".inspector");
 
-      await expect(domainPane.getByText("Domain Workspace")).toBeVisible();
-      await expect(domainPane.locator(".browser-table")).toBeVisible();
-      await expect(detailStack.getByText("Active Work Context")).toBeVisible();
+      await expect(domainPane.getByText("Browser")).toBeVisible();
+      await expect(domainPane.getByRole("heading", { name: "Systems", exact: true })).toBeVisible();
+      await expect(domainPane.locator(".browser-table-shell")).toBeVisible();
+      await expect(inspector).toContainText("Browser Context");
 
       const domainBox = await domainPane.boundingBox();
-      const detailBox = await detailStack.boundingBox();
+      const inspectorBox = await inspector.boundingBox();
 
       expect(domainBox).not.toBeNull();
-      expect(detailBox).not.toBeNull();
+      expect(inspectorBox).not.toBeNull();
 
-      if (domainBox && detailBox) {
-        expect(domainBox.y).toBeLessThan(detailBox.y);
+      if (domainBox && inspectorBox) {
+        expect(Math.abs(domainBox.y - inspectorBox.y)).toBeLessThan(200);
+        expect(domainBox.x).toBeLessThan(inspectorBox.x);
       }
     } finally {
       await app.close();
