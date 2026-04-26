@@ -1,6 +1,7 @@
 export type HostState = "starting" | "ready" | "degraded" | "unavailable";
 
 export type WorkspaceId =
+  | "dashboard"
   | "environment"
   | "conversations"
   | "browser"
@@ -534,6 +535,45 @@ export interface EnvironmentStatusDto {
   lastUpdatedAt: string;
 }
 
+export interface WorkspaceAttentionItemDto {
+  kind: string;
+  title: string;
+  summary: string;
+  tone: "active" | "warning" | "danger" | "steady";
+  actionLabel?: string | null;
+  destinationWorkspace?: WorkspaceId | null;
+  objectType?: string | null;
+  objectId?: string | null;
+  count?: number | null;
+  priority?: number | null;
+}
+
+export interface WorkspaceAttentionQueueDto {
+  count: number;
+  topItem: WorkspaceAttentionItemDto | null;
+  items: WorkspaceAttentionItemDto[];
+}
+
+export interface WorkspaceNodeModeDto {
+  employmentModel: string;
+  trustProfile: string;
+  visibilityProfile: string;
+  billingProfile: string;
+  acceptedPolicyProfileCount: number;
+  [key: string]: unknown;
+}
+
+export interface WorkspaceSummaryDto {
+  nodeMode: WorkspaceNodeModeDto;
+  runtimeContext: Record<string, unknown>;
+  assignmentTerms: Record<string, unknown>;
+  evidencePosture: Record<string, unknown>;
+  usageSummary: Record<string, unknown>;
+  attentionQueue: WorkspaceAttentionQueueDto;
+  publicationSummary: Record<string, unknown>;
+  businessSummary: Record<string, unknown>;
+}
+
 export interface DesktopPreferencesDto {
   lastWorkspace: WorkspaceId;
   sidebarPinned: boolean;
@@ -601,6 +641,7 @@ export interface HostApi {
 export interface QueryApi {
   environmentSummary(environmentId?: string): Promise<QueryResultDto<EnvironmentSummaryDto>>;
   environmentStatus(environmentId?: string): Promise<QueryResultDto<EnvironmentStatusDto>>;
+  workspaceSummary(environmentId?: string): Promise<QueryResultDto<WorkspaceSummaryDto>>;
   environmentEvents(input: EventSubscriptionInput): Promise<QueryResultDto<EnvironmentEventDto[]>>;
   artifactList(environmentId?: string): Promise<QueryResultDto<ArtifactSummaryDto[]>>;
   artifactDetail(artifactId: string, environmentId?: string): Promise<QueryResultDto<ArtifactDetailDto>>;

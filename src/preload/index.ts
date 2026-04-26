@@ -57,6 +57,8 @@ const api: SbclAgentDesktopApi = {
       ipcRenderer.invoke("query:environment-summary", environmentId),
     environmentStatus: (environmentId?: string) =>
       ipcRenderer.invoke("query:environment-status", environmentId),
+    workspaceSummary: (environmentId?: string) =>
+      ipcRenderer.invoke("query:workspace-summary", environmentId),
     environmentEvents: (input) => ipcRenderer.invoke("query:environment-events", input),
     artifactList: (environmentId?: string) => ipcRenderer.invoke("query:artifact-list", environmentId),
     artifactDetail: (artifactId: string, environmentId?: string) =>

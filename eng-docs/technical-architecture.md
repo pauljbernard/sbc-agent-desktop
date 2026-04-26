@@ -31,6 +31,14 @@ The system should be organized into four layers:
 3. Electron desktop application core
 4. platform adaptation layer
 
+For the federated employee/contractor node model, the desktop is additionally locked to a strict boundary:
+
+- it remains a pure client of `sbcl-agent`
+- it does not call `RGP` directly in the first pass
+- federated node posture must be surfaced through local `sbcl-agent` service DTOs
+
+That boundary is defined more explicitly in `eng-docs/federated-workspace-service-boundary.md`.
+
 ## Layer 1: Environment Kernel
 
 This remains in `sbcl-agent`.

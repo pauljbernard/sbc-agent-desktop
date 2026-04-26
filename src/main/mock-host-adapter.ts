@@ -10,6 +10,7 @@ import type {
   EventSubscriptionInput,
   EnvironmentStatusDto,
   EnvironmentSummaryDto,
+  WorkspaceSummaryDto,
   HostStatusDto,
   ThreadSummaryDto,
   QueryResultDto,
@@ -42,6 +43,7 @@ import {
   queryEnvironmentEvents,
   queryEnvironmentStatus,
   queryEnvironmentSummary,
+  queryWorkspaceSummary,
   queryIncidentDetail,
   queryIncidentList,
   queryPackageBrowser,
@@ -159,6 +161,12 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
     environmentId?: string
   ): Promise<QueryResultDto<EnvironmentStatusDto>> {
     return queryEnvironmentStatus(this.resolveEnvironmentId(environmentId));
+  }
+
+  async workspaceSummary(
+    environmentId?: string
+  ): Promise<QueryResultDto<WorkspaceSummaryDto>> {
+    return queryWorkspaceSummary(this.resolveEnvironmentId(environmentId));
   }
 
   async environmentEvents(

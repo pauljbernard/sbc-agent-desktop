@@ -11,6 +11,10 @@
 
 (defparameter *project-root* nil)
 
+(defun getenv (name)
+  #+sbcl (sb-ext:posix-getenv name)
+  #-sbcl nil)
+
 (defun sbcl-agent-symbol (name)
   (or (find-symbol name "SBCL-AGENT")
       (error "Unable to resolve SBCL-AGENT symbol ~A" name)))
@@ -98,6 +102,10 @@
 (defun plist (&rest entries)
   entries)
 
+(defun desktop-bootstrap-scenario ()
+  (or (getenv "SBCL_AGENT_DESKTOP_SCENARIO")
+      "default"))
+
 (defun seed-completed-thread (session)
   (let* ((thread (sbcl-agent-call "CREATE-THREAD"
                                   session
@@ -149,23 +157,33 @@
                        assistant-message
                        :status :completed))))
 
-(defun seed-approval-thread (session)
+(defun seed-approval-thread (session &key
+                                     (title "Governed Mutation Review")
+                                     (summary "A governed mutation remains paused on explicit approval.")
+                                     (prompt "Prepare a workspace patch for the desktop attention model.")
+                                     (goal "Desktop attention model refinement")
+                                     (path "src/renderer/src/App.tsx")
+                                     (operation-name "workspace-write")
+                                     (policy-id :workspace-write)
+                                     (policy-reason "Workspace mutation requires operator approval.")
+                                     (approval-reason "Desktop bootstrap seeded a governed write candidate.")
+                                     (assistant-content "The patch is prepared and waiting for workspace-write approval."))
   (let* ((thread (sbcl-agent-call "CREATE-THREAD"
                                   session
-                                  :title "Governed Mutation Review"
-                                  :summary "A governed mutation remains paused on explicit approval."))
+                                  :title title
+                                  :summary summary))
          (user-message (sbcl-agent-call "CREATE-MESSAGE"
                                         session
                                         thread
                                         :user
-                                        "Prepare a workspace patch for the desktop attention model."))
+                                        prompt))
          (turn (sbcl-agent-call "START-TURN"
                                 session
                                 thread
                                 user-message))
          (work-item (sbcl-agent-call "CREATE-WORK-ITEM"
                                      session
-                                     "Desktop attention model refinement"
+                                     goal
                                      :mutation-intent (plist :thread-id (sbcl-agent-call "THREAD-ID" thread)
                                                              :turn-id (sbcl-agent-call "TURN-ID" turn))
                                      :transaction-scope :workspace-mutation))
@@ -174,17 +192,17 @@
                                      thread
                                      turn
                                      :tool
-                                     "workspace-write"
-                                     (plist :path "src/renderer/src/App.tsx")
+                                     operation-name
+                                     (plist :path path)
                                      :policy-decision (plist :decision :approval-required
-                                                             :policy-id :workspace-write
-                                                             :reason "Workspace mutation requires operator approval.")
+                                                             :policy-id policy-id
+                                                             :reason policy-reason)
                                      :metadata (plist :work-item-id (sbcl-agent-call "WORK-ITEM-ID" work-item)))))
     (sbcl-agent-call "REQUEST-WORK-ITEM-APPROVAL"
                      session
                      work-item
-                     :workspace-write
-                     :reason "Desktop bootstrap seeded a governed write candidate.")
+                     policy-id
+                     :reason approval-reason)
     (sbcl-agent-call "COMPLETE-OPERATION"
                      session
                      thread
@@ -202,12 +220,12 @@
                      :title "Mutation Review Packet"
                      :summary "The planned mutation and its guardrails were captured as evidence."
                      :work-item-id (sbcl-agent-call "WORK-ITEM-ID" work-item)
-                     :metadata (plist :bootstrap-p t :policy-id :workspace-write))
+                     :metadata (plist :bootstrap-p t :policy-id policy-id))
     (let ((assistant-message (sbcl-agent-call "CREATE-MESSAGE"
                                               session
                                               thread
                                               :assistant
-                                              "The patch is prepared and waiting for workspace-write approval."
+                                              assistant-content
                                               :turn-id (sbcl-agent-call "TURN-ID" turn))))
       (sbcl-agent-call "COMPLETE-TURN"
                        session
@@ -216,6 +234,19 @@
                        assistant-message
                        :status :awaiting-approval
                        :metadata (plist :work-item-id (sbcl-agent-call "WORK-ITEM-ID" work-item))))))
+
+(defun seed-additional-approval-thread (session)
+  (seed-approval-thread session
+                        :title "Governed Source Review"
+                        :summary "A source-backed governed mutation is awaiting explicit approval."
+                        :prompt "Prepare a source patch for the host transport contract."
+                        :goal "Stabilize host transport contract"
+                        :path "src/main/live-host-adapter.ts"
+                        :operation-name "source-write"
+                        :policy-id :workspace-write
+                        :policy-reason "Source mutation requires operator approval."
+                        :approval-reason "Desktop bootstrap seeded a second governed write candidate."
+                        :assistant-content "The source patch is prepared and waiting for workspace-write approval."))
 
 (defun seed-incident-thread (session)
   (let* ((thread (sbcl-agent-call "CREATE-THREAD"
@@ -293,6 +324,60 @@
                        :error-state "Interrupted runtime reload."
                        :metadata (plist :work-item-id (sbcl-agent-call "WORK-ITEM-ID" work-item))))))
 
+(defun seed-interrupted-thread (session)
+  (let* ((thread (sbcl-agent-call "CREATE-THREAD"
+                                  session
+                                  :title "Interrupted Reconciliation"
+                                  :summary "A governed reconciliation thread was interrupted and needs supervised continuation."))
+         (user-message (sbcl-agent-call "CREATE-MESSAGE"
+                                        session
+                                        thread
+                                        :user
+                                        "Reconcile the mutation plan and report the interrupted state."))
+         (turn (sbcl-agent-call "START-TURN"
+                                session
+                                thread
+                                user-message))
+         (operation (sbcl-agent-call "START-OPERATION"
+                                     session
+                                     thread
+                                     turn
+                                     :assistant
+                                     "reconcile-mutation-plan"
+                                     (plist :intent "reconcile" :mode "governed"))))
+    (sbcl-agent-call "COMPLETE-OPERATION"
+                     session
+                     thread
+                     turn
+                     operation
+                     (plist :summary "Reconciliation was interrupted before closure.")
+                     :status :interrupted
+                     :metadata (plist :interrupted-during-load-p t))
+    (let ((assistant-message (sbcl-agent-call "CREATE-MESSAGE"
+                                              session
+                                              thread
+                                              :assistant
+                                              "The reconciliation was interrupted and needs a supervised restart."
+                                              :turn-id (sbcl-agent-call "TURN-ID" turn))))
+      (sbcl-agent-call "COMPLETE-TURN"
+                       session
+                       thread
+                       turn
+                       assistant-message
+                       :status :interrupted
+                       :error-state "Interrupted governed reconciliation."))))
+
+(defun seed-quarantined-work-item (session)
+  (let ((work-item (sbcl-agent-call "CREATE-WORK-ITEM"
+                                    session
+                                    "Quarantined mutation follow-through"
+                                    :transaction-scope :workspace-mutation)))
+    (sbcl-agent-call "QUARANTINE-WORK-ITEM"
+                     session
+                     work-item
+                     "Mutation follow-through requires operator review before continuation.")
+    work-item))
+
 (defun bootstrap-desktop-environment (environment)
   (let ((session (bridge-session environment)))
     (when (and (zerop (length (or (sbcl-agent-call "AGENT-SESSION-EVENTS" session) '())))
@@ -301,9 +386,27 @@
       (sbcl-agent-call "UPDATE-SESSION-PLAN"
                        session
                        "Operate from the environment root, keep governed work explicit, and preserve durable evidence.")
-      (seed-completed-thread session)
-      (seed-approval-thread session)
-      (seed-incident-thread session))
+      (let ((scenario (string-downcase (desktop-bootstrap-scenario))))
+        (cond
+          ((string= scenario "approval-heavy")
+           (seed-completed-thread session)
+           (seed-approval-thread session)
+           (seed-additional-approval-thread session))
+          ((string= scenario "mixed-pressure")
+           (seed-completed-thread session)
+           (seed-approval-thread session)
+           (seed-additional-approval-thread session)
+           (seed-incident-thread session))
+          ((string= scenario "thread-work-pressure")
+           (seed-completed-thread session)
+           (seed-interrupted-thread session)
+           (seed-quarantined-work-item session))
+          ((string= scenario "calm-evidence")
+           (seed-completed-thread session))
+          (t
+           (seed-completed-thread session)
+           (seed-approval-thread session)
+           (seed-incident-thread session)))))
     environment))
 
 (defun request-object (request-json)
@@ -610,6 +713,8 @@
        (sbcl-agent-call "QUERY-ENVIRONMENT-SUMMARY-SERVICE" environment))
       ((string= operation "environment.status")
        (sbcl-agent-call "QUERY-ENVIRONMENT-STATUS-SERVICE" environment))
+      ((string= operation "workspace.summary")
+       (sbcl-agent-call "QUERY-RGP-WORKSPACE-SERVICE" environment))
       ((string= operation "runtime.summary")
        (let ((session (bridge-session environment)))
          (sbcl-agent-call "QUERY-RUNTIME-SUMMARY-SERVICE" session)))

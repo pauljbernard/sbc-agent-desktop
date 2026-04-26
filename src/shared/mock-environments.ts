@@ -38,7 +38,8 @@ import type {
   WorkflowRecordDto,
   WorkItemDetailDto,
   WorkItemSummaryDto,
-  WorkerSummaryDto
+  WorkerSummaryDto,
+  WorkspaceSummaryDto
 } from "./contracts";
 
 interface MockEnvironmentRecord {
@@ -77,6 +78,94 @@ function truthPosture(
   counts: TruthPostureDto["counts"]
 ): TruthPostureDto {
   return { domain, label, posture, summary, state, counts };
+}
+
+function buildWorkspaceSummary(environmentId: string): WorkspaceSummaryDto {
+  const environment = environments[environmentId];
+  const summary = environment.summary;
+  const attentionItems = [
+    {
+      kind: "assignment-policy",
+      title: `${summary.attention.approvalsAwaiting} approvals awaiting review`,
+      summary: "Governed approval work remains the strongest local operator obligation.",
+      tone: summary.attention.approvalsAwaiting > 0 ? "danger" : "steady",
+      destinationWorkspace: "approvals",
+      objectType: "Approval",
+      objectId: environment.approvals[0]?.requestId ?? null,
+      count: summary.attention.approvalsAwaiting,
+      priority: 400
+    },
+    {
+      kind: "assignment-decision",
+      title: `${summary.attention.blockedWork} blocked work items need direction`,
+      summary: "Blocked governed work still needs supervised direction before execution can continue.",
+      tone: summary.attention.blockedWork > 0 ? "warning" : "steady",
+      destinationWorkspace: "work",
+      objectType: "Work",
+      objectId: environment.workItems[0]?.workItemId ?? null,
+      count: summary.attention.blockedWork,
+      priority: 300
+    },
+    {
+      kind: "business-gate",
+      title: `${summary.incidents.length} recovery items remain open`,
+      summary: "Recovery pressure is still present and may block trust restoration or downstream progress.",
+      tone: summary.incidents.length > 0 ? "warning" : "steady",
+      destinationWorkspace: "incidents",
+      objectType: "Recovery",
+      objectId: summary.incidents[0]?.incidentId ?? null,
+      count: summary.incidents.length,
+      priority: 260
+    },
+    {
+      kind: "publication-backlog",
+      title: `${summary.recentArtifacts.length} recent evidence artifacts available`,
+      summary: "Evidence and artifact output is available for inspection when operational pressure permits.",
+      tone: summary.recentArtifacts.length > 0 ? "active" : "steady",
+      destinationWorkspace: "artifacts",
+      objectType: "Artifact",
+      objectId: summary.recentArtifacts[0]?.artifactId ?? null,
+      count: summary.recentArtifacts.length,
+      priority: 180
+    }
+  ].filter((item) => item.count && item.count > 0);
+
+  return {
+    nodeMode: {
+      employmentModel: "contractor",
+      trustProfile: "elevated",
+      visibilityProfile: "contractor-bounded",
+      billingProfile: "contractor-metered",
+      acceptedPolicyProfileCount: 1
+    },
+    runtimeContext: {
+      environmentId: summary.environmentId,
+      environmentLabel: summary.environmentLabel,
+      runtimeState: environment.status.runtimeState
+    },
+    assignmentTerms: {
+      count: summary.approvals.length + summary.activeTasks.length,
+      policyBlockedCount: summary.attention.blockedWork
+    },
+    evidencePosture: {
+      artifactCount: summary.recentArtifacts.length
+    },
+    usageSummary: {
+      activeWorkerCount: summary.activeWorkers.length,
+      activeTaskCount: summary.activeTasks.length
+    },
+    attentionQueue: {
+      count: attentionItems.length,
+      topItem: attentionItems[0] ?? null,
+      items: attentionItems
+    },
+    publicationSummary: {
+      attentionClass: summary.recentArtifacts.length > 0 ? "publishing" : "idle"
+    },
+    businessSummary: {
+      currentGate: summary.approvals.length > 0 ? "approval-review" : "clear"
+    }
+  };
 }
 
 function attention(
@@ -1046,6 +1135,21 @@ export function queryEnvironmentStatus(
     status: "ok",
     data: environments[environmentId].status,
     metadata: metadata(binding, "environment-status")
+  };
+}
+
+export function queryWorkspaceSummary(
+  environmentId: string
+): QueryResultDto<WorkspaceSummaryDto> {
+  const binding = { environmentId };
+  return {
+    contractVersion: 1,
+    domain: "rgp",
+    operation: "workspace.summary",
+    kind: "query",
+    status: "ok",
+    data: buildWorkspaceSummary(environmentId),
+    metadata: metadata(binding, "rgp-workspace-summary")
   };
 }
 

@@ -20,6 +20,7 @@ import type {
   EventSubscriptionInput,
   EnvironmentStatusDto,
   EnvironmentSummaryDto,
+  WorkspaceSummaryDto,
   HostStatusDto,
   IncidentDetailDto,
   IncidentSummaryDto,
@@ -488,6 +489,20 @@ function adaptEnvironmentStatusResponse(
   };
 }
 
+function adaptWorkspaceSummaryResponse(
+  response: RawServiceResponse<Record<string, unknown>>
+): QueryResultDto<WorkspaceSummaryDto> {
+  return {
+    contractVersion: response.contractVersion,
+    domain: "rgp",
+    operation: response.operation,
+    kind: "query",
+    status: response.status === "error" ? "error" : "ok",
+    data: camelizeKeys(response.data) as WorkspaceSummaryDto,
+    metadata: normalizeMetadata(response.metadata)
+  };
+}
+
 function adaptRuntimeSummaryResponse(
   response: RawServiceResponse<Record<string, unknown>>
 ): QueryResultDto<RuntimeSummaryDto> {
@@ -874,9 +889,11 @@ function adaptApprovalListResponse(
       const requirements = (item.approvalRequirements as Array<Record<string, unknown>> | undefined) ?? [];
       const primaryRequirement = requirements[0] ?? {};
       const policyId =
-        firstString(primaryRequirement.policy, item.approvalPolicy, item.policyId) ??
+        firstString(primaryRequirement.policy, item.approvalPolicy, item.approval_policy, item.policyId, item.policy_id) ??
         "governed-action";
-      const waitReason = normalizeWaitReason(item.waitReason);
+      const waitReason = normalizeWaitReason(
+        firstString(item.waitReason, item.wait_reason, item.waitingOn, item.waiting_on)
+      );
 
       return {
         requestId: String(item.id ?? "approval-request"),
@@ -898,8 +915,17 @@ function adaptApprovalDetailResponse(
   const workflowRecord = asRecord(data.workflowRecord);
   const approvalRequirements = (wait.approvalRequirements as Array<Record<string, unknown>> | undefined) ?? [];
   const primaryRequirement = approvalRequirements[0] ?? {};
-  const waitReason = normalizeWaitReason(firstString(wait.why, wait.waitReason, workItem.waitReason));
-  const policyId = firstString(primaryRequirement.policy, workItem.approvalPolicy, workflowRecord.policyId) ?? null;
+  const waitReason = normalizeWaitReason(
+    firstString(wait.why, wait.waitReason, wait.wait_reason, workItem.waitReason, workItem.wait_reason)
+  );
+  const policyId =
+    firstString(
+      primaryRequirement.policy,
+      workItem.approvalPolicy,
+      workItem.approval_policy,
+      workflowRecord.policyId,
+      workflowRecord.policy_id
+    ) ?? null;
   const requestId = String(data.id ?? workItem.id ?? "approval-request");
   const linkedEntities = [
     linkedEntity("work-item", workItem.id as string | undefined, String(workItem.goal ?? "Work Item")),
@@ -1091,7 +1117,9 @@ function adaptWorkItemListResponse(
     data: items.map((item) => {
       const pendingValidations = asStringArray(item.pendingValidations);
       const approvalRequirements = (item.approvalRequirements as Array<unknown> | undefined) ?? [];
-      const waitingReason = normalizeWaitReason(firstString(item.waitReason, item.waitingOn));
+      const waitingReason = normalizeWaitReason(
+        firstString(item.waitReason, item.wait_reason, item.waitingOn, item.waiting_on)
+      );
       const incidentCount = 0;
       return {
         workItemId: String(item.id ?? "work-item"),
@@ -1114,7 +1142,9 @@ function adaptWorkItemDetailResponse(
 ): QueryResultDto<WorkItemDetailDto> {
   const data = asRecord(response.data);
   const workflowRecord = asRecord(data.workflowRecord);
-  const waitingReason = normalizeWaitReason(firstString(data.waitReason, workflowRecord.waitingOn));
+  const waitingReason = normalizeWaitReason(
+    firstString(data.waitReason, data.wait_reason, workflowRecord.waitingOn, workflowRecord.waiting_on)
+  );
   const linkedEntities = [
     linkedEntity("operation", workflowRecord.id as string | undefined, `Workflow ${String(workflowRecord.id ?? "")}`),
     linkedEntity("work-item", data.id as string | undefined, String(data.goal ?? "Work Item"))
@@ -1149,7 +1179,7 @@ function adaptWorkflowRecordDetailResponse(
 ): QueryResultDto<WorkflowRecordDto> {
   const data = asRecord(response.data);
   const pendingValidations = asStringArray(data.pendingValidations);
-  const approvalRequirements = (data.approvalRequirements as Array<Record<string, unknown>> | undefined) ?? [];
+  const approvalRequirements = asRecordArray(data.approvalRequirements);
   const workflowPhase = normalizeWorkflowPhase(data.waitingOn);
   const blockingItems = [
     ...(workflowPhase ? [workflowPhase] : []),
@@ -1226,7 +1256,7 @@ function adaptArtifactListResponse(
       title: String(item.title ?? item.kind ?? "Artifact"),
       kind: String(item.kind ?? "artifact"),
       summary: String(item.summary ?? "Durable artifact recorded in the live environment."),
-      updatedAt: universalTimeToIso(item.createdAt)
+      updatedAt: universalTimeToIso(item.createdAt ?? item.created_at)
     })),
     metadata: normalizeMetadata(response.metadata)
   };
@@ -1616,6 +1646,14 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
       environmentId
     );
     return adaptEnvironmentStatusResponse(response);
+  }
+
+  async workspaceSummary(environmentId?: string): Promise<QueryResultDto<WorkspaceSummaryDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "workspace.summary",
+      environmentId
+    );
+    return adaptWorkspaceSummaryResponse(response);
   }
 
   async environmentEvents(

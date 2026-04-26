@@ -14,6 +14,7 @@ import type {
   EventSubscriptionInput,
   EnvironmentStatusDto,
   EnvironmentSummaryDto,
+  WorkspaceSummaryDto,
   HostStatusDto,
   IncidentDetailDto,
   IncidentSummaryDto,
@@ -43,6 +44,7 @@ export interface SbclAgentHostAdapter {
   setEnvironmentBinding(environmentId: string): Promise<CommandResultDto<BindingDto>>;
   environmentSummary(environmentId?: string): Promise<QueryResultDto<EnvironmentSummaryDto>>;
   environmentStatus(environmentId?: string): Promise<QueryResultDto<EnvironmentStatusDto>>;
+  workspaceSummary(environmentId?: string): Promise<QueryResultDto<WorkspaceSummaryDto>>;
   environmentEvents(input: EventSubscriptionInput): Promise<QueryResultDto<EnvironmentEventDto[]>>;
   artifactList(environmentId?: string): Promise<QueryResultDto<ArtifactSummaryDto[]>>;
   artifactDetail(

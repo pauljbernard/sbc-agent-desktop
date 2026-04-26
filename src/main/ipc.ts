@@ -59,6 +59,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("query:environment-status", (_event, environmentId?: string) =>
     hostAdapter.environmentStatus(environmentId)
   );
+  ipcMain.handle("query:workspace-summary", (_event, environmentId?: string) =>
+    hostAdapter.workspaceSummary(environmentId)
+  );
   ipcMain.handle("query:environment-events", (_event, input) => hostAdapter.environmentEvents(input));
   ipcMain.handle("query:artifact-list", (_event, environmentId?: string) =>
     hostAdapter.artifactList(environmentId)

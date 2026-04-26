@@ -139,6 +139,12 @@ No presentation tier may be treated as the privileged source of business logic, 
 
 The shell is a presentation adapter. The future UX is also a presentation adapter. Neither may redefine the kernel model for convenience.
 
+For the federated employee/contractor architecture, this rule is stricter still:
+
+- `sbcl-agent-desktop` is a pure client of `sbcl-agent`
+- the desktop must not call `RGP` directly in the first pass
+- if the desktop requires federated state, that state must first be made available through `sbcl-agent` service DTOs
+
 ## Article 9: Environment Authority Wins
 
 The authoritative durable state belongs to the environment domain model.
