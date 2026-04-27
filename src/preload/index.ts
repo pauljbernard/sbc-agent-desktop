@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
+  DesktopActionInput,
+  DesktopRestoreInput,
   DesktopPreferencesDto,
   DocumentationPageDto,
   DocumentationPageSummaryDto,
@@ -59,6 +61,8 @@ const api: SbclAgentDesktopApi = {
       ipcRenderer.invoke("query:environment-status", environmentId),
     workspaceSummary: (environmentId?: string) =>
       ipcRenderer.invoke("query:workspace-summary", environmentId),
+    desktopModel: (environmentId?: string) =>
+      ipcRenderer.invoke("query:desktop-model", environmentId),
     environmentEvents: (input) => ipcRenderer.invoke("query:environment-events", input),
     artifactList: (environmentId?: string) => ipcRenderer.invoke("query:artifact-list", environmentId),
     artifactDetail: (artifactId: string, environmentId?: string) =>
@@ -93,6 +97,9 @@ const api: SbclAgentDesktopApi = {
     evaluateInContext: (input) => ipcRenderer.invoke("command:evaluate-in-context", input),
     stageSourceChange: (input) => ipcRenderer.invoke("command:stage-source-change", input),
     reloadSourceFile: (input) => ipcRenderer.invoke("command:reload-source-file", input),
+    desktopAction: (input: DesktopActionInput) => ipcRenderer.invoke("command:desktop-action", input),
+    desktopRestore: (input: DesktopRestoreInput) =>
+      ipcRenderer.invoke("command:desktop-restore", input),
     approveRequest: (input) => ipcRenderer.invoke("command:approve-request", input),
     denyRequest: (input) => ipcRenderer.invoke("command:deny-request", input)
   },

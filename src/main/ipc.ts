@@ -62,6 +62,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("query:workspace-summary", (_event, environmentId?: string) =>
     hostAdapter.workspaceSummary(environmentId)
   );
+  ipcMain.handle("query:desktop-model", (_event, environmentId?: string) =>
+    hostAdapter.desktopModel(environmentId)
+  );
   ipcMain.handle("query:environment-events", (_event, input) => hostAdapter.environmentEvents(input));
   ipcMain.handle("query:artifact-list", (_event, environmentId?: string) =>
     hostAdapter.artifactList(environmentId)
@@ -132,6 +135,12 @@ export function registerIpcHandlers(): void {
   );
   ipcMain.handle("command:reload-source-file", (_event, input) =>
     hostAdapter.reloadSourceFile(input)
+  );
+  ipcMain.handle("command:desktop-action", (_event, input) =>
+    hostAdapter.desktopAction(input)
+  );
+  ipcMain.handle("command:desktop-restore", (_event, input) =>
+    hostAdapter.desktopRestore(input)
   );
   ipcMain.handle("command:approve-request", (_event, input) => hostAdapter.approveRequest(input));
   ipcMain.handle("command:deny-request", (_event, input) => hostAdapter.denyRequest(input));

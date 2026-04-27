@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document locks the role of `sbcl-agent-desktop` in the federated employee/contractor operating model.
+This document locks the role of `sbcl-agent-ux` in the federated employee/contractor operating model.
 
 The desktop is an operator-facing surface over the local `sbcl-agent` node.
 
@@ -10,7 +10,7 @@ It is not the global orchestration client.
 
 ## Boundary Rule
 
-The desktop remains a pure client of `sbcl-agent` service DTOs.
+The desktop remains a pure host/client of `sbcl-agent` service DTOs and the shell desktop contract.
 
 The desktop does not call `RGP` directly in the first federated implementation pass.
 
@@ -63,7 +63,7 @@ First-pass commercial visibility should remain operator-relevant rather than fin
 
 ## DTO Consequences
 
-If the desktop needs new federated state, that state should first be added to `sbcl-agent` service DTOs.
+If the desktop needs new federated state, that state should first be added to `sbcl-agent` service DTOs or the shell desktop contract surfaced by `sbcl-agent`.
 
 The desktop should not work around missing local contracts by reaching into `RGP` directly.
 

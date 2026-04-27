@@ -574,6 +574,114 @@ export interface WorkspaceSummaryDto {
   businessSummary: Record<string, unknown>;
 }
 
+export type DesktopPanelId = "workspace" | "governance" | "object-browser" | "inspector";
+
+export type DesktopActionKind =
+  | "activate-panel"
+  | "select-panel"
+  | "open-panel"
+  | "restore-panel";
+
+export interface DesktopActionDto {
+  actionId?: string;
+  actionKind: DesktopActionKind;
+  panelId: DesktopPanelId;
+  command: string;
+  index?: number | null;
+  executionId?: string | null;
+  objectKind?: string | null;
+  params?: Record<string, unknown>;
+}
+
+export interface DesktopPanelActionsDto {
+  activateCommand?: string;
+  selectCommand?: string;
+  openCommand?: string;
+  restoreCommand?: string;
+  activate?: DesktopActionDto | null;
+  select?: DesktopActionDto | null;
+  open?: DesktopActionDto | null;
+  restore?: DesktopActionDto | null;
+}
+
+export interface DesktopPanelStateDto {
+  panelId: DesktopPanelId;
+  count?: number;
+  focusObjectId?: string | null;
+  selectedIndex?: number | null;
+  selectedExecutionId?: string | null;
+  selectedTitle?: string | null;
+  selectedQueueKind?: string | null;
+  selectedKind?: string | null;
+  objectKind?: string | null;
+  resolvedVia?: string | null;
+  topSurface?: Record<string, unknown> | null;
+  topItem?: Record<string, unknown> | null;
+  topGroup?: Record<string, unknown> | null;
+  actions: DesktopPanelActionsDto;
+  [key: string]: unknown;
+}
+
+export interface DesktopEntryPointDto {
+  entryKind: string;
+  label: string;
+  command: string;
+  focusObjectId?: string | null;
+  objectKind?: string | null;
+}
+
+export interface DesktopModelDto {
+  workspaceId: string;
+  environmentId: string;
+  plan?: string | null;
+  focusObjectId?: string | null;
+  activePanel: DesktopPanelId;
+  surfaceCount: number;
+  governanceCount: number;
+  objectGroupCount: number;
+  topSurface?: Record<string, unknown> | null;
+  topGovernanceItem?: Record<string, unknown> | null;
+  topObjectGroup?: Record<string, unknown> | null;
+  entryPoints: DesktopEntryPointDto[];
+  panels: Record<DesktopPanelId, DesktopPanelStateDto>;
+  workspace?: Record<string, unknown>;
+  surfaceList?: Record<string, unknown>;
+  inspector?: Record<string, unknown>;
+}
+
+export interface DesktopActionInput {
+  environmentId?: string;
+  actionId?: string;
+  actionKind?: DesktopActionKind;
+  panelId?: DesktopPanelId;
+  command?: string;
+  index?: number;
+  executionId?: string;
+  objectKind?: string;
+  params?: Record<string, unknown>;
+}
+
+export interface DesktopActionResultDto {
+  action?: DesktopActionDto | null;
+  result?: Record<string, unknown> | null;
+  desktopModel: DesktopModelDto;
+  [key: string]: unknown;
+}
+
+export interface DesktopRestoreInput {
+  environmentId?: string;
+  panelId?: DesktopPanelId;
+  panelState: Record<string, unknown>;
+}
+
+export interface DesktopRestoreResultDto {
+  panelId: DesktopPanelId;
+  panelState: Record<string, unknown>;
+  result?: Record<string, unknown> | null;
+  desktopModel: DesktopModelDto;
+  [key: string]: unknown;
+}
+
 export interface DesktopPreferencesDto {
   lastWorkspace: WorkspaceId;
   sidebarPinned: boolean;
@@ -642,6 +750,7 @@ export interface QueryApi {
   environmentSummary(environmentId?: string): Promise<QueryResultDto<EnvironmentSummaryDto>>;
   environmentStatus(environmentId?: string): Promise<QueryResultDto<EnvironmentStatusDto>>;
   workspaceSummary(environmentId?: string): Promise<QueryResultDto<WorkspaceSummaryDto>>;
+  desktopModel(environmentId?: string): Promise<QueryResultDto<DesktopModelDto>>;
   environmentEvents(input: EventSubscriptionInput): Promise<QueryResultDto<EnvironmentEventDto[]>>;
   artifactList(environmentId?: string): Promise<QueryResultDto<ArtifactSummaryDto[]>>;
   artifactDetail(artifactId: string, environmentId?: string): Promise<QueryResultDto<ArtifactDetailDto>>;
@@ -696,6 +805,8 @@ export interface CommandApi {
   reloadSourceFile(
     input: SourceReloadInput
   ): Promise<CommandResultDto<SourceReloadResultDto>>;
+  desktopAction(input: DesktopActionInput): Promise<CommandResultDto<DesktopActionResultDto>>;
+  desktopRestore(input: DesktopRestoreInput): Promise<CommandResultDto<DesktopRestoreResultDto>>;
   approveRequest(input: ApprovalDecisionInput): Promise<CommandResultDto<ApprovalDecisionDto>>;
   denyRequest(input: ApprovalDecisionInput): Promise<CommandResultDto<ApprovalDecisionDto>>;
 }

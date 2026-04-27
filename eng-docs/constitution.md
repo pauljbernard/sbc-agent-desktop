@@ -137,11 +137,11 @@ The required layering is:
 
 No presentation tier may be treated as the privileged source of business logic, policy enforcement, or cross-domain truth assembly.
 
-The shell is a presentation adapter. The future UX is also a presentation adapter. Neither may redefine the kernel model for convenience.
+The shell is a presentation adapter. The desktop host is also a presentation adapter, and should increasingly consume the shell desktop contract directly. Neither may redefine the kernel model for convenience.
 
 For the federated employee/contractor architecture, this rule is stricter still:
 
-- `sbcl-agent-desktop` is a pure client of `sbcl-agent`
+- `sbcl-agent-ux` is a pure host/client of `sbcl-agent` and its shell desktop contract
 - the desktop must not call `RGP` directly in the first pass
 - if the desktop requires federated state, that state must first be made available through `sbcl-agent` service DTOs
 

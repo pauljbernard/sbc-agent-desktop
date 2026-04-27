@@ -9,7 +9,12 @@ import type {
   CommandResultDto,
   CreateConversationThreadInput,
   UpdateConversationThreadInput,
+  DesktopActionInput,
+  DesktopActionResultDto,
+  DesktopModelDto,
   DesktopPreferencesDto,
+  DesktopRestoreInput,
+  DesktopRestoreResultDto,
   EnvironmentEventDto,
   EventSubscriptionInput,
   EnvironmentStatusDto,
@@ -45,6 +50,7 @@ export interface SbclAgentHostAdapter {
   environmentSummary(environmentId?: string): Promise<QueryResultDto<EnvironmentSummaryDto>>;
   environmentStatus(environmentId?: string): Promise<QueryResultDto<EnvironmentStatusDto>>;
   workspaceSummary(environmentId?: string): Promise<QueryResultDto<WorkspaceSummaryDto>>;
+  desktopModel(environmentId?: string): Promise<QueryResultDto<DesktopModelDto>>;
   environmentEvents(input: EventSubscriptionInput): Promise<QueryResultDto<EnvironmentEventDto[]>>;
   artifactList(environmentId?: string): Promise<QueryResultDto<ArtifactSummaryDto[]>>;
   artifactDetail(
@@ -100,6 +106,12 @@ export interface SbclAgentHostAdapter {
     environmentId: string;
     path: string;
   }): Promise<CommandResultDto<SourceReloadResultDto>>;
+  desktopAction(
+    input: DesktopActionInput
+  ): Promise<CommandResultDto<DesktopActionResultDto>>;
+  desktopRestore(
+    input: DesktopRestoreInput
+  ): Promise<CommandResultDto<DesktopRestoreResultDto>>;
   approvalRequestList(environmentId?: string): Promise<QueryResultDto<ApprovalRequestSummaryDto[]>>;
   approvalRequestDetail(
     requestId: string,

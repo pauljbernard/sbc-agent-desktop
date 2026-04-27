@@ -15,7 +15,12 @@ import type {
   CommandResultDto,
   CreateConversationThreadInput,
   UpdateConversationThreadInput,
+  DesktopActionInput,
+  DesktopActionResultDto,
+  DesktopModelDto,
   DesktopPreferencesDto,
+  DesktopRestoreInput,
+  DesktopRestoreResultDto,
   EnvironmentEventDto,
   EventSubscriptionInput,
   EnvironmentStatusDto,
@@ -499,6 +504,63 @@ function adaptWorkspaceSummaryResponse(
     kind: "query",
     status: response.status === "error" ? "error" : "ok",
     data: camelizeKeys(response.data) as WorkspaceSummaryDto,
+    metadata: normalizeMetadata(response.metadata)
+  };
+}
+
+function normalizeCommandStatus(
+  status: RawServiceResponse["status"]
+): CommandResultDto<unknown>["status"] {
+  switch (status) {
+    case "awaiting-approval":
+      return "awaiting_approval";
+    case "rejected":
+      return "rejected";
+    case "error":
+      return "error";
+    default:
+      return "ok";
+  }
+}
+
+function adaptDesktopModelResponse(
+  response: RawServiceResponse<Record<string, unknown>>
+): QueryResultDto<DesktopModelDto> {
+  return {
+    contractVersion: response.contractVersion,
+    domain: "shell",
+    operation: response.operation,
+    kind: "query",
+    status: response.status === "error" ? "error" : "ok",
+    data: camelizeKeys(response.data) as DesktopModelDto,
+    metadata: normalizeMetadata(response.metadata)
+  };
+}
+
+function adaptDesktopActionResponse(
+  response: RawServiceResponse<Record<string, unknown>>
+): CommandResultDto<DesktopActionResultDto> {
+  return {
+    contractVersion: response.contractVersion,
+    domain: "shell",
+    operation: response.operation,
+    kind: "command",
+    status: normalizeCommandStatus(response.status),
+    data: camelizeKeys(response.data) as DesktopActionResultDto,
+    metadata: normalizeMetadata(response.metadata)
+  };
+}
+
+function adaptDesktopRestoreResponse(
+  response: RawServiceResponse<Record<string, unknown>>
+): CommandResultDto<DesktopRestoreResultDto> {
+  return {
+    contractVersion: response.contractVersion,
+    domain: "shell",
+    operation: response.operation,
+    kind: "command",
+    status: normalizeCommandStatus(response.status),
+    data: camelizeKeys(response.data) as DesktopRestoreResultDto,
     metadata: normalizeMetadata(response.metadata)
   };
 }
@@ -1656,6 +1718,14 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
     return adaptWorkspaceSummaryResponse(response);
   }
 
+  async desktopModel(environmentId?: string): Promise<QueryResultDto<DesktopModelDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "desktop.show",
+      environmentId
+    );
+    return adaptDesktopModelResponse(response);
+  }
+
   async environmentEvents(
     input: EventSubscriptionInput
   ): Promise<QueryResultDto<EnvironmentEventDto[]>> {
@@ -1972,6 +2042,40 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
       },
       metadata: normalizeMetadata(response.metadata)
     };
+  }
+
+  async desktopAction(
+    input: DesktopActionInput
+  ): Promise<CommandResultDto<DesktopActionResultDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "desktop.action",
+      input.environmentId,
+      camelizeKeys({
+        actionId: input.actionId,
+        actionKind: input.actionKind,
+        panelId: input.panelId,
+        command: input.command,
+        index: input.index,
+        executionId: input.executionId,
+        objectKind: input.objectKind,
+        params: input.params
+      }) as Record<string, unknown>
+    );
+    return adaptDesktopActionResponse(response);
+  }
+
+  async desktopRestore(
+    input: DesktopRestoreInput
+  ): Promise<CommandResultDto<DesktopRestoreResultDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "desktop.restore",
+      input.environmentId,
+      camelizeKeys({
+        panelId: input.panelId,
+        panelState: input.panelState
+      }) as Record<string, unknown>
+    );
+    return adaptDesktopRestoreResponse(response);
   }
 
   async approvalRequestList(

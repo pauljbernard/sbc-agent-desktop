@@ -5,7 +5,13 @@ import type {
   CommandResultDto,
   CreateConversationThreadInput,
   UpdateConversationThreadInput,
+  DesktopActionInput,
+  DesktopActionResultDto,
+  DesktopModelDto,
+  DesktopPanelId,
   DesktopPreferencesDto,
+  DesktopRestoreInput,
+  DesktopRestoreResultDto,
   EnvironmentEventDto,
   EventSubscriptionInput,
   EnvironmentStatusDto,
@@ -169,6 +175,32 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
     return queryWorkspaceSummary(this.resolveEnvironmentId(environmentId));
   }
 
+  async desktopModel(environmentId?: string): Promise<QueryResultDto<DesktopModelDto>> {
+    const resolvedEnvironmentId = this.resolveEnvironmentId(environmentId);
+    const workspace = await this.workspaceSummary(resolvedEnvironmentId);
+    const approvals = await this.approvalRequestList(resolvedEnvironmentId);
+    const panelId = this.workspaceToPanelId(this.preferences.lastWorkspace);
+
+    return {
+      contractVersion: 1,
+      domain: "shell",
+      operation: "shell.desktop_model",
+      kind: "query",
+      status: "ok",
+      data: this.buildDesktopModel(
+        resolvedEnvironmentId,
+        workspace.data,
+        panelId,
+        approvals.data.length
+      ),
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding,
+        readModel: "shell-desktop-model-v1"
+      }
+    };
+  }
+
   async environmentEvents(
     input: EventSubscriptionInput
   ): Promise<QueryResultDto<EnvironmentEventDto[]>> {
@@ -324,6 +356,75 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
     });
   }
 
+  async desktopAction(
+    input: DesktopActionInput
+  ): Promise<CommandResultDto<DesktopActionResultDto>> {
+    const resolvedEnvironmentId = this.resolveEnvironmentId(input.environmentId);
+    const panelId = input.panelId ?? "workspace";
+    this.preferences.lastWorkspace = this.panelToWorkspaceId(panelId);
+    const desktopModel = (await this.desktopModel(resolvedEnvironmentId)).data;
+
+    return {
+      contractVersion: 1,
+      domain: "shell",
+      operation: "shell.desktop_action",
+      kind: "command",
+      status: "ok",
+      data: {
+        action: {
+          actionId: input.actionId,
+          actionKind: input.actionKind ?? "activate-panel",
+          panelId,
+          command: input.command ?? "",
+          index: input.index ?? null,
+          executionId: input.executionId ?? null,
+          objectKind: input.objectKind ?? null,
+          params: input.params
+        },
+        result: {
+          panelId
+        },
+        desktopModel
+      },
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding,
+        commandModel: "shell-desktop-action-v1"
+      }
+    };
+  }
+
+  async desktopRestore(
+    input: DesktopRestoreInput
+  ): Promise<CommandResultDto<DesktopRestoreResultDto>> {
+    const panelId = (input.panelId ??
+      (typeof input.panelState.panelId === "string" ? input.panelState.panelId : "workspace")) as DesktopPanelId;
+    const resolvedEnvironmentId = this.resolveEnvironmentId(input.environmentId);
+    this.preferences.lastWorkspace = this.panelToWorkspaceId(panelId);
+    const desktopModel = (await this.desktopModel(resolvedEnvironmentId)).data;
+
+    return {
+      contractVersion: 1,
+      domain: "shell",
+      operation: "shell.desktop_restore",
+      kind: "command",
+      status: "ok",
+      data: {
+        panelId,
+        panelState: input.panelState,
+        result: {
+          panelId
+        },
+        desktopModel
+      },
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding,
+        commandModel: "shell-desktop-restore-v1"
+      }
+    };
+  }
+
   async approvalRequestList(environmentId?: string) {
     return queryApprovalRequestList(this.resolveEnvironmentId(environmentId));
   }
@@ -392,5 +493,108 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
     }
 
     return this.currentBinding?.environmentId ?? defaultEnvironmentId;
+  }
+
+  private workspaceToPanelId(workspace: WorkspaceId): DesktopPanelId {
+    switch (workspace) {
+      case "browser":
+        return "object-browser";
+      case "runtime":
+      case "incidents":
+      case "artifacts":
+      case "work":
+      case "activity":
+      case "approvals":
+        return "governance";
+      case "configuration":
+      case "documentation":
+      case "conversations":
+      case "dashboard":
+      case "environment":
+      default:
+        return "workspace";
+    }
+  }
+
+  private panelToWorkspaceId(panelId: DesktopPanelId): WorkspaceId {
+    switch (panelId) {
+      case "object-browser":
+        return "browser";
+      case "governance":
+        return "runtime";
+      case "inspector":
+        return "runtime";
+      case "workspace":
+      default:
+        return this.preferences.lastWorkspace ?? "environment";
+    }
+  }
+
+  private buildDesktopModel(
+    environmentId: string,
+    workspaceSummary: WorkspaceSummaryDto,
+    activePanel: DesktopPanelId,
+    approvalCount: number
+  ): DesktopModelDto {
+    const attentionTop = workspaceSummary.attentionQueue.topItem;
+
+    return {
+      workspaceId: "desktop-session-local",
+      environmentId,
+      plan: "Mock desktop shell model",
+      focusObjectId: null,
+      activePanel,
+      surfaceCount: workspaceSummary.attentionQueue.count,
+      governanceCount: approvalCount,
+      objectGroupCount: 1,
+      topSurface: attentionTop
+        ? {
+            title: attentionTop.title,
+            status: attentionTop.tone,
+            executionId: attentionTop.objectId ?? null
+          }
+        : null,
+      topGovernanceItem: attentionTop
+        ? {
+            title: attentionTop.title,
+            status: attentionTop.tone,
+            executionId: attentionTop.objectId ?? null
+          }
+        : null,
+      topObjectGroup: {
+        objectKind: "execution",
+        count: 1
+      },
+      entryPoints: [],
+      panels: {
+        workspace: {
+          panelId: "workspace",
+          count: workspaceSummary.attentionQueue.count,
+          selectedIndex: 0,
+          selectedExecutionId: attentionTop?.objectId ?? null,
+          actions: {}
+        },
+        governance: {
+          panelId: "governance",
+          count: approvalCount,
+          selectedIndex: 0,
+          selectedTitle: attentionTop?.title ?? null,
+          actions: {}
+        },
+        "object-browser": {
+          panelId: "object-browser",
+          count: 1,
+          selectedKind: "execution",
+          selectedIndex: 0,
+          selectedTitle: "Execution Surfaces",
+          actions: {}
+        },
+        inspector: {
+          panelId: "inspector",
+          focusObjectId: attentionTop?.objectId ?? null,
+          actions: {}
+        }
+      }
+    };
   }
 }

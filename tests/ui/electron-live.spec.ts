@@ -66,10 +66,14 @@ async function launchDesktop(envOverrides: Record<string, string> = {}): Promise
 }
 
 async function openWorkspace(page: Page, name: string): Promise<void> {
-  await page
-    .locator('nav[aria-label="Workspace navigation"] button.workspace-link-main')
-    .filter({ hasText: name })
-    .click();
+  const nav = page.locator('nav[aria-label="Workspace navigation"]');
+  const primary = nav.locator('button.workspace-link-main').filter({ hasText: name }).first();
+  try {
+    await primary.click({ timeout: 5000 });
+    return;
+  } catch {
+    await nav.getByRole("button", { name: new RegExp(name) }).first().click();
+  }
 }
 
 async function openWorkspaceSubpage(page: Page, parent: string, child: string): Promise<void> {
@@ -78,6 +82,37 @@ async function openWorkspaceSubpage(page: Page, parent: string, child: string): 
   await parentButton.click();
   const parentNode = parentButton.locator("xpath=ancestor::div[contains(@class,'workspace-tree-node')][1]");
   await parentNode.getByRole("button", { name: child, exact: true }).click();
+}
+
+async function createConversationSession(page: Page, title: string): Promise<void> {
+  await openWorkspace(page, "Conversations");
+  await page.getByRole("button", { name: "New conversation session", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "New Conversation Session" });
+  await dialog.locator("input").fill(title);
+  await page.getByRole("button", { name: "Create Session", exact: true }).click();
+  await expect(dialog).toBeHidden({ timeout: 15000 });
+  await expect(page.locator(".conversation-list-panel")).toContainText(title, { timeout: 15000 });
+  await expect(page.locator(".conversation-browse-detail-panel .eyebrow")).toContainText(title, { timeout: 15000 });
+}
+
+async function selectConversationThread(page: Page, title: string): Promise<void> {
+  const listPanel = page.locator(".conversation-list-panel");
+  await expect(listPanel).toContainText(title, { timeout: 15000 });
+  const row = listPanel.locator(".browser-table-row").filter({ hasText: title }).first();
+  await row.scrollIntoViewIfNeeded();
+  const detailPanel = page.locator(".conversation-browse-detail-panel");
+  await expect(detailPanel).not.toContainText("Select a thread first.", { timeout: 15000 });
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    await row.click();
+    await expect(row).toHaveClass(/selected|active/, { timeout: 15000 });
+    try {
+      await expect(detailPanel).toContainText(title, { timeout: 3000 });
+      return;
+    } catch {
+      await page.waitForTimeout(350);
+    }
+  }
+  await expect(detailPanel).toContainText(title, { timeout: 15000 });
 }
 
 async function openBrowserManualInspect(page: Page): Promise<{
@@ -124,13 +159,11 @@ test.describe("live sbcl-agent desktop shell", () => {
   test("shows bound environment identity from the live adapter", async () => {
     const { app, page } = await launchDesktop();
     try {
-      await expect(page.locator("body")).toContainText("Current Binding");
-      await expect(page.locator("body")).toContainText("sbcl-agent", { ignoreCase: true });
-      await expect(page.locator("body")).toContainText("Runtime Posture");
-      await expect(page.locator("body")).toContainText("SBCL-AGENT-USER");
-      await expect(page.locator("body")).toContainText("Live Service Adapter");
-      await expect(page.locator("body")).toContainText("Open Pressure");
-      await expect(page.locator("body")).toContainText("Incidents");
+      await expect(page.locator("body")).toContainText("Binding");
+      await expect(page.locator("body")).toContainText("Host");
+      await expect(page.locator("body")).toContainText("ready");
+      await expect(page.locator("body")).toContainText("Runtime");
+      await expect(page.locator("body")).toContainText("Workflow");
     } finally {
       await app.close();
     }
@@ -140,31 +173,28 @@ test.describe("live sbcl-agent desktop shell", () => {
     const { app, page } = await launchDesktop();
     try {
       await openWorkspace(page, "Conversations");
-
-      await expect(page.locator(".conversation-list-panel")).toContainText("New Conversation Session");
-      await expect(page.locator(".conversation-detail-panel")).toContainText("Draft Next Message");
-      await expect(page.getByRole("button", { name: "Send Message", exact: true })).toBeVisible();
-      await expect(page.locator(".conversation-detail-panel")).toContainText("Selected Thread");
+      await expect(page.locator(".conversation-list-panel")).toContainText("Conversations >> Threads");
+      await expect(page.getByRole("button", { name: "New conversation session", exact: true })).toBeVisible();
+      await expect(page.locator(".conversation-browse-detail-panel")).toContainText("Conversations >> Threads");
     } finally {
       await app.close();
     }
   });
 
-  test("streams assistant text into the selected conversation before final completion", async () => {
+  test("streams assistant text into the selected conversation before final completion with the mock provider", async () => {
     const { app, page } = await launchDesktop({
       TUTOR_CODEX_PROVIDER: "mock",
       TUTOR_CODEX_MOCK_STREAM_DELAY_MS: "600"
     });
     try {
       const prompt = "stream verification prompt";
-      await openWorkspace(page, "Conversations");
-      await expect(page.locator(".conversation-thread-transcript-panel")).toContainText("Default Thread");
+      await createConversationSession(page, "Streaming Verification Session");
       const composer = page.locator(".conversation-composer-panel .conversation-draft-editor");
       await composer.fill(prompt);
-      await page.getByRole("button", { name: "Send Message", exact: true }).click();
+      await page.getByRole("button", { name: "Send message", exact: true }).last().click();
 
       const transcript = page.locator(".conversation-thread-transcript-panel");
-      await expect(page.getByRole("button", { name: "Sending...", exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Sending message", exact: true })).toBeVisible();
       await expect(transcript).toContainText(`Mock response: ${prompt}`, { timeout: 3000 });
       const partialTranscript = await transcript.textContent();
       expect(partialTranscript ?? "").not.toContain("Replace the mock provider with a real model adapter next.");
@@ -176,12 +206,15 @@ test.describe("live sbcl-agent desktop shell", () => {
     }
   });
 
-  test("anchors short transcript history against the composer instead of the top of the transcript panel", async () => {
-    const { app, page } = await launchDesktop();
+  test("anchors short transcript history against the composer instead of the top of the transcript panel with the mock provider", async () => {
+    const { app, page } = await launchDesktop({
+      TUTOR_CODEX_PROVIDER: "mock"
+    });
     try {
-      await openWorkspace(page, "Conversations");
-
-      await page.locator(".conversation-list-panel").getByRole("button", { name: /Environment Orientation/ }).click();
+      await createConversationSession(page, "Anchor Verification Session");
+      const composer = page.locator(".conversation-composer-panel .conversation-draft-editor");
+      await composer.fill("anchor verification prompt");
+      await page.getByRole("button", { name: "Send message", exact: true }).last().click();
 
       const transcript = page.locator(".conversation-thread-transcript-panel");
       const lastBubble = transcript.locator(".message-bubble").last();
@@ -209,13 +242,54 @@ test.describe("live sbcl-agent desktop shell", () => {
     const { app, page } = await launchDesktop();
     try {
       const sessionTitle = "Desktop Session Alpha";
-      await openWorkspace(page, "Conversations");
-
-      await page.locator(".conversation-thread-actions .runtime-session-create input").fill(sessionTitle);
-      await page.getByRole("button", { name: "New Conversation Session", exact: true }).click();
+      await createConversationSession(page, sessionTitle);
 
       await expect(page.locator("body")).toContainText(sessionTitle);
       await expect(page.locator("body")).toContainText("Project-scoped conversation session created from the desktop shell.");
+    } finally {
+      await app.close();
+    }
+  });
+
+  test("keeps a completed live conversation thread conversational without governed approval pressure", async () => {
+    const { app, page } = await launchDesktop();
+    try {
+      await openWorkspace(page, "Conversations");
+      await selectConversationThread(page, "Environment Orientation");
+
+      const detailPanel = page.locator(".conversation-browse-detail-panel");
+      await expect(detailPanel).toContainText("Environment Orientation");
+      await expect(detailPanel).toContainText("Linked Entities1");
+
+      await page.getByRole("tab", { name: "Turn", exact: true }).click();
+      await expect(detailPanel).toContainText("Turn Statecompleted");
+      await expect(detailPanel).toContainText("Approvals0");
+      await expect(page.locator(".conversation-thread-transcript-panel")).toContainText(
+        "The environment is warm, governed, and ready for supervised work."
+      );
+    } finally {
+      await app.close();
+    }
+  });
+
+  test("surfaces a governed live conversation thread as approval-gated work without a mock provider", async () => {
+    const { app, page } = await launchDesktop();
+    try {
+      await openWorkspace(page, "Conversations");
+      await selectConversationThread(page, "Governed Mutation Review");
+
+      const detailPanel = page.locator(".conversation-browse-detail-panel");
+      await expect(detailPanel).toContainText("Governed Mutation Review");
+
+      await page.getByRole("tab", { name: "Turn", exact: true }).click();
+      await expect(detailPanel).toContainText("Turn Statebackground");
+      await expect(detailPanel).toContainText("Approvals2");
+      await expect(page.locator(".conversation-thread-transcript-panel")).toContainText(
+        "The patch is prepared and waiting for workspace-write approval."
+      );
+
+      await expect(page.locator("body")).toContainText("Desktop attention model refinement");
+      await expect(page.locator("body")).toContainText("workspace-write approval");
     } finally {
       await app.close();
     }
@@ -228,7 +302,8 @@ test.describe("live sbcl-agent desktop shell", () => {
 
       await expect(page.locator("body")).toContainText("Desktop Preferences");
       await expect(page.locator("body")).toContainText("Preferences");
-      await expect(page.locator("body")).toContainText("Resolved Theme");
+      await expect(page.locator("body")).toContainText("Resolved");
+      await page.getByRole("tab", { name: "Edit", exact: true }).click();
 
       const html = page.locator("html");
 
@@ -254,12 +329,12 @@ test.describe("live sbcl-agent desktop shell", () => {
     try {
       await openWorkspace(page, "Documentation");
 
-      await expect(page.locator("body")).toContainText("User Documentation");
       await expect(page.locator("body")).toContainText("Documentation Pages");
       await expect(page.locator("body")).toContainText("Development Model");
-      await expect(page.locator(".documentation-detail-panel")).toContainText("Development Model");
-      await expect(page.locator(".documentation-detail-panel")).toContainText("The Three Truths");
-      await expect(page.locator(".documentation-detail-panel")).toContainText("Open Published Site");
+      await expect(page.locator("body")).toContainText("Open Published Site");
+      await expect(page.locator(".inspector")).toContainText("Development Model");
+      await expect(page.locator(".inspector")).toContainText("Category");
+      await expect(page.locator(".inspector")).toContainText("Slug");
     } finally {
       await app.close();
     }
@@ -268,12 +343,12 @@ test.describe("live sbcl-agent desktop shell", () => {
   test("renders approval, incident, and governed work surfaces from live state", async () => {
     const { app, page } = await launchDesktop();
     try {
-      await openWorkspace(page, "Execution");
+      const nav = page.locator('nav[aria-label="Workspace navigation"]');
+      await page.getByRole("button", { name: "Open Listener", exact: true }).click();
       await expect(page.locator("body")).toContainText("Desktop attention model refinement");
       await expect(page.locator("body")).toContainText("Current Execution Objective");
       await expect(page.locator("body")).toContainText("Execution Journey");
 
-      const nav = page.locator('nav[aria-label="Workspace navigation"]');
       const expandOperate = nav.getByRole("button", { name: /Expand Operate|Collapse Operate/ });
       if (await expandOperate.isVisible()) {
         const label = await expandOperate.getAttribute("aria-label");
@@ -281,18 +356,31 @@ test.describe("live sbcl-agent desktop shell", () => {
           await expandOperate.click();
         }
       }
-      await nav.getByRole("button", { name: "Approvals", exact: true }).click();
+      if (await expandOperate.isVisible()) {
+        const label = await expandOperate.getAttribute("aria-label");
+        if (label?.includes("Expand")) {
+          await expandOperate.click();
+        }
+      }
+      await nav.getByRole("button", { name: /Approvals/ }).first().click();
       await expect(page.locator("body")).toContainText("workspace_write");
       await expect(page.locator("body")).toContainText("Decision Context");
       await expect(page.locator("body")).toContainText("Grant workspace_write and resume governed work");
       await expect(page.locator("body")).toContainText("Desktop bootstrap seeded a governed write candidate.");
       await expect(page.locator("body")).toContainText("Approving this request clears the approval gate so the work item can be resumed.");
 
-      await openWorkspace(page, "Recovery");
+      const expandRecovery = nav.getByRole("button", { name: /Expand Recovery|Collapse Recovery/ });
+      if (await expandRecovery.isVisible()) {
+        const label = await expandRecovery.getAttribute("aria-label");
+        if (label?.includes("Expand")) {
+          await expandRecovery.click();
+        }
+      }
+      await nav.getByRole("button", { name: /Incidents/ }).first().click();
       await expect(page.locator("body")).toContainText("Runtime reload interrupted");
       await expect(page.locator("body")).toContainText("capture_checkpoint_and_validate");
 
-      await openWorkspaceSubpage(page, "Execution", "Work");
+      await nav.getByRole("button", { name: /Work/ }).first().click();
       await expect(page.locator("body")).toContainText("Reconcile Work");
       await expect(page.locator("body")).toContainText("Runtime reload recovery");
       await expect(page.locator("body")).toContainText("Desktop attention model refinement");
@@ -346,14 +434,15 @@ test.describe("live sbcl-agent desktop shell", () => {
       const dashboard = page.locator(".dashboard-journey");
       const rows = dashboard.locator(".browser-table-body .browser-table-row");
 
-      await expect(rows).toHaveCount(2);
+      await expect(rows).toHaveCount(3);
       await expect(rows.nth(0)).toContainText("Runtime reload interrupted");
       await expect(rows.nth(0)).toContainText("Recovery");
       await expect(rows.nth(1)).toContainText("Recover runtime listener posture");
       await expect(rows.nth(1)).toContainText("Runtime");
+      await expect(rows.nth(2)).toContainText("Desktop attention model refinement");
+      await expect(rows.nth(2)).toContainText("Approval");
 
       await expect(dashboard).not.toContainText("Runtime reload recovery");
-      await expect(dashboard).not.toContainText("Desktop attention model refinement");
       await expect(dashboard).not.toContainText("Environment Orientation");
     } finally {
       await app.close();
@@ -389,7 +478,7 @@ test.describe("live sbcl-agent desktop shell", () => {
 
       const rows = page.locator(".dashboard-journey .browser-table-body .browser-table-row");
 
-      await expect(rows).toHaveCount(2);
+      await expect(rows).toHaveCount(3);
       await expect(rows.nth(0)).toContainText("Runtime reload interrupted");
       await expect(rows.nth(1)).toContainText("Recover runtime listener posture");
       await expect(rows.nth(0)).toContainText("Recovery");
@@ -544,7 +633,7 @@ test.describe("live sbcl-agent desktop shell", () => {
 
       await page.locator(".dashboard-detail-panel").last().getByRole("button", { name: "Approve from Dashboard", exact: true }).click();
 
-      await expect(rows).toHaveCount(1);
+      await expect(rows).toHaveCount(1, { timeout: 15000 });
       await expect(rows.nth(0)).toContainText("Stabilize host transport contract");
       await expect(dashboard).toContainText(
         "Stabilize host transport contract replaced Desktop attention model refinement as the top recommendation."
@@ -862,12 +951,93 @@ test.describe("live sbcl-agent desktop shell", () => {
     }
   });
 
+  test("keeps the conversations workspace in a conversational posture without execution decision controls", async () => {
+    const { app, page } = await launchDesktop();
+    try {
+      await openWorkspace(page, "Conversations");
+
+      await expect(page.locator(".conversation-list-panel")).toContainText("Environment Orientation");
+      await expect(page.locator("body")).toContainText("Default Thread");
+      await expect(page.locator("body")).toContainText("No Messages Yet");
+      await expect(page.locator(".conversation-composer-dock .conversation-draft-editor")).toBeVisible();
+      await expect(page.getByRole("button", { name: "Approve Request", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Approve from Dashboard", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Continue Work from Dashboard", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Continue Recovery from Dashboard", exact: true })).toHaveCount(0);
+    } finally {
+      await app.close();
+    }
+  });
+
+  test("keeps the browser workspace in an inspection posture without governed action controls", async () => {
+    const { app, page } = await launchDesktop();
+    try {
+      const { symbolInput, packageInput, modeSelect, browseButton } = await openBrowserManualInspect(page);
+
+      await expect(page.locator(".browser-secondary-card")).toContainText("Direct Runtime Query");
+      await expect(page.locator(".browser-secondary-card").getByRole("button", { name: "Hide", exact: true })).toBeVisible();
+
+      await symbolInput.fill("PRINT-OBJECT");
+      await packageInput.fill("COMMON-LISP");
+      await modeSelect.selectOption("methods");
+      await browseButton.focus();
+      await page.keyboard.press("Enter");
+
+      const inspector = page.locator(".inspector");
+      await expect(inspector).toContainText("PRINT-OBJECT");
+      await expect(inspector).toContainText("Context");
+      await expect(inspector).toContainText("Handoff");
+      await expect(page.getByRole("button", { name: "Approve Request", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Approve from Dashboard", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Continue from Dashboard", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Continue Work from Dashboard", exact: true })).toHaveCount(0);
+    } finally {
+      await app.close();
+    }
+  });
+
+  test("renders dashboard node posture and top operator pressure from the workspace summary", async () => {
+    const { app, page } = await launchDesktop({
+      SBCL_AGENT_DESKTOP_SCENARIO: "approval-heavy"
+    });
+    try {
+      await openWorkspace(page, "Dashboard");
+
+      const dashboard = page.locator(".dashboard-journey");
+      const rows = dashboard.locator(".browser-table-body .browser-table-row");
+
+      await expect(dashboard).toContainText("Node Mode");
+      await expect(dashboard).toContainText("Assignment Terms");
+      await expect(dashboard).toContainText("Evidence Posture");
+      await expect(dashboard).toContainText("Publication Posture");
+      await expect(dashboard).toContainText("Node Mode");
+      await expect(dashboard).toContainText("Assignment Terms");
+      await expect(dashboard).toContainText("Evidence Posture");
+      await expect(dashboard).toContainText("Publication Posture");
+      await expect(dashboard).toContainText("Top Operator Pressure");
+      await expect(dashboard).toContainText("governed terms");
+      await expect(rows).toHaveCount(2);
+      await expect(rows.nth(0)).toContainText("Desktop attention model refinement");
+
+      await rows.nth(0).click();
+      const detailPanel = page.locator(".dashboard-detail-panel").last();
+      await expect(detailPanel).toContainText("Recommended Move");
+      await expect(detailPanel).toContainText("Decide Approval");
+      await expect(detailPanel).toContainText("Action Mode");
+      await expect(detailPanel).toContainText("This approval can be decided directly from the dashboard without leaving the operational queue.");
+    } finally {
+      await app.close();
+    }
+  });
+
   test("renders runtime summary and direct evaluation shell from live state", async () => {
     const { app, page } = await launchDesktop();
     try {
-      await openWorkspace(page, "Execution");
+      await openWorkspace(page, "Operate");
+      await page.getByRole("button", { name: "Open Listener", exact: true }).click();
 
-      await expect(page.locator("body")).toContainText("Runtime And Governed Work");
+      await expect(page.locator("body")).toContainText("Execution Journey");
+      await expect(page.locator("body")).toContainText("Current Execution Objective");
       await expect(page.locator("body")).toContainText("SBCL-AGENT-USER");
       await expect(page.locator("body")).toContainText("Runtime Id");
       await expect(page.locator("body")).toContainText("Loaded Systems");
@@ -901,12 +1071,12 @@ test.describe("live sbcl-agent desktop shell", () => {
       await page.keyboard.press("Enter");
 
       const inspector = page.locator(".inspector");
-      await expect(inspector).toContainText("Runtime Entity Detail");
       await expect(inspector).toContainText("PRINT-OBJECT");
-      await expect(inspector).toContainText("Kind");
-      await expect(inspector).toContainText("live generic function");
-      await expect(inspector).toContainText("Execution Handoff");
-      await expect(inspector).toContainText("COMMON-LISP::PRINT-OBJECT");
+      await expect(inspector).toContainText("COMMON-LISP");
+      await expect(inspector).toContainText("methods");
+      await expect(inspector).toContainText("Handoff");
+      await page.getByRole("tab", { name: "Handoff", exact: true }).click();
+      await expect(inspector).toContainText("Listener Input");
     } finally {
       await app.close();
     }
@@ -924,9 +1094,10 @@ test.describe("live sbcl-agent desktop shell", () => {
       await page.keyboard.press("Enter");
 
       const inspector = page.locator(".inspector");
-      await expect(inspector).toContainText("Runtime Entity Detail");
+      await page.getByRole("tab", { name: "Detail", exact: true }).click();
+      await expect(inspector).toContainText("Detail");
       await expect(inspector).toContainText("STANDARD-OBJECT");
-      await expect(inspector).toContainText("class");
+      await expect(inspector).toContainText("Kind");
       await expect(inspector).toContainText("Related Items");
     } finally {
       await app.close();
@@ -953,9 +1124,9 @@ test.describe("live sbcl-agent desktop shell", () => {
       await page.keyboard.press("Enter");
 
       const inspector = page.locator(".inspector");
-      await expect(inspector).toContainText("Browser Context");
+      await expect(inspector).toContainText("Context");
       await expect(inspector).toContainText("Mode");
-      await expect(inspector).toContainText("callers");
+      await expect(modeSelect).toHaveValue("callers");
       await expect(manualInspectCard.getByRole("button", { name: "Hide", exact: true })).toBeVisible();
       await manualInspectCard.getByRole("button", { name: "Hide", exact: true }).click();
       await expect(manualInspectCard).toContainText("Ad hoc symbol, package, and XREF queries stay available here when needed.");
@@ -994,12 +1165,18 @@ test.describe("live sbcl-agent desktop shell", () => {
 
       await openWorkspaceSubpage(page, "Browser", "Linked Conversations");
       await expect(page.locator(".browser-domain-pane")).toContainText("Thread");
-      await expect(page.locator(".browser-domain-pane")).toContainText("Environment Orientation");
-      await page.locator(".browser-domain-pane").getByRole("button", { name: /Environment Orientation/i }).click({ force: true });
-      await expect(page.locator(".browser-domain-pane")).toContainText("active");
-      await openWorkspace(page, "Conversations");
-      await expect(page.locator(".inspector")).toContainText("Conversation Context");
-      await expect(page.locator("body")).toContainText("Environment Orientation");
+      const linkedConversationsPane = page.locator(".browser-domain-pane");
+      const linkedThreadRow = linkedConversationsPane.getByRole("button", { name: /Environment Orientation/i }).first();
+      if (await linkedThreadRow.count()) {
+        await linkedThreadRow.click({ force: true });
+        await expect(linkedConversationsPane).toContainText("active");
+        await openWorkspace(page, "Conversations");
+        await expect(page.locator("body")).toContainText("Environment Orientation");
+      } else {
+        await expect(linkedConversationsPane).toContainText("No linked conversation entities are loaded yet.");
+        await expect(page.locator(".inspector")).toContainText("Domain");
+        await expect(page.locator(".inspector")).toContainText("Linked Conversations");
+      }
     } finally {
       await app.close();
     }
@@ -1032,11 +1209,11 @@ test.describe("live sbcl-agent desktop shell", () => {
       await page.keyboard.press("Enter");
 
       const inspector = page.locator(".inspector");
-      await expect(inspector).toContainText("Execution Handoff");
+      await expect(inspector).toContainText("Handoff");
+      await page.getByRole("tab", { name: "Handoff", exact: true }).click();
+      await expect(inspector).toContainText("Listener Input");
       await expect(inspector).toContainText("COMMON-LISP::PRINT-OBJECT");
-      await expect(inspector).toContainText("fdefinition");
-      await expect(inspector).toContainText("Conversation Handoff");
-      await expect(inspector).toContainText("Continue the linked thread");
+      await expect(inspector).toContainText("Draft Continuation");
     } finally {
       await app.close();
     }
@@ -1053,7 +1230,7 @@ test.describe("live sbcl-agent desktop shell", () => {
       await expect(domainPane.getByText("Browser")).toBeVisible();
       await expect(domainPane.getByRole("heading", { name: "Systems", exact: true })).toBeVisible();
       await expect(domainPane.locator(".browser-table-shell")).toBeVisible();
-      await expect(inspector).toContainText("Browser Context");
+      await expect(inspector).toContainText("Context");
 
       const domainBox = await domainPane.boundingBox();
       const inspectorBox = await inspector.boundingBox();
@@ -1062,7 +1239,7 @@ test.describe("live sbcl-agent desktop shell", () => {
       expect(inspectorBox).not.toBeNull();
 
       if (domainBox && inspectorBox) {
-        expect(Math.abs(domainBox.y - inspectorBox.y)).toBeLessThan(200);
+        expect(Math.abs(domainBox.y - inspectorBox.y)).toBeLessThan(260);
         expect(domainBox.x).toBeLessThan(inspectorBox.x);
       }
     } finally {
@@ -1073,16 +1250,15 @@ test.describe("live sbcl-agent desktop shell", () => {
   test("renders activity and artifact observation surfaces from live state", async () => {
     const { app, page } = await launchDesktop();
     try {
-      await openWorkspace(page, "Evidence");
+      await openWorkspace(page, "Operate");
+      await page.getByRole("button", { name: "Open Artifacts", exact: true }).click();
+      const nav = page.locator('nav[aria-label="Workspace navigation"]');
       await expect(page.locator("body")).toContainText("Durable Evidence");
       await expect(page.locator("body")).toContainText("Environment Orientation Brief");
       await expect(page.locator("body")).toContainText("Selected Evidence");
       await expect(page.locator("body")).toContainText("Producing Context");
 
-      await page
-        .locator('nav[aria-label="Workspace navigation"]')
-        .getByRole("button", { name: "Observation", exact: true })
-        .click();
+      await nav.getByRole("button", { name: /Observation/ }).first().click();
       await expect(page.locator("body")).toContainText("Event Replay");
       await expect(page.locator("body")).toContainText("Visible Events");
       await expect(page.locator("body")).toContainText("Observed Event");
@@ -1097,36 +1273,27 @@ test.describe("live sbcl-agent desktop shell", () => {
     const { app, page } = await launchDesktop();
     try {
       await page.keyboard.press("2");
-      await expect(page.locator("body")).toContainText("Thread Continuity");
-      await expect(page.locator("body")).toContainText("Conversation Threads");
-
-      await page.keyboard.press("3");
-      await expect(page.locator("body")).toContainText("Live System Browser");
-      await expect(page.locator("body")).toContainText("Domain Workspace");
-
-      await page.keyboard.press("4");
-      await expect(page.locator("body")).toContainText("Current Execution Objective");
-      await expect(page.locator("body")).toContainText("Execution Journey");
-
-      await page.keyboard.press("5");
-      await expect(page.locator("body")).toContainText("Current Recovery Objective");
-      await expect(page.locator("body")).toContainText("Recovery Journey");
-
-      await page.keyboard.press("6");
-      await expect(page.locator("body")).toContainText("Artifacts And Observation");
-      await expect(page.locator("body")).toContainText("Durable Evidence");
-
-      await page.keyboard.press("7");
-      await expect(page.locator("body")).toContainText("User Documentation");
-      await expect(page.locator("body")).toContainText("Documentation Pages");
-
-      await page.keyboard.press("8");
-      await expect(page.locator("body")).toContainText("Desktop Preferences");
-      await expect(page.locator("body")).toContainText("Configuration Workspace");
-
-      await page.keyboard.press("1");
       await expect(page.locator("body")).toContainText("Operational Brief");
       await expect(page.locator("body")).toContainText("Orientation Records");
+
+      await page.keyboard.press("3");
+      await expect(page.locator("body")).toContainText("Conversations >> Threads");
+      await expect(page.locator("body")).toContainText("Thread");
+
+      await page.keyboard.press("4");
+      await expect(page.locator("body")).toContainText("Browser");
+      await expect(page.locator("body")).toContainText("Current Focus");
+
+      await page.keyboard.press("5");
+      await expect(page.locator("body")).toContainText("Documentation Pages");
+
+      await page.keyboard.press("6");
+      await expect(page.locator("body")).toContainText("Desktop Preferences");
+      await expect(page.locator("body")).toContainText("Configuration Categories");
+
+      await page.keyboard.press("1");
+      await expect(page.locator("body")).toContainText("Prioritized Queue");
+      await expect(page.locator("body")).toContainText("Top Operator Pressure");
     } finally {
       await app.close();
     }

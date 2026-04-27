@@ -714,7 +714,37 @@
       ((string= operation "environment.status")
        (sbcl-agent-call "QUERY-ENVIRONMENT-STATUS-SERVICE" environment))
       ((string= operation "workspace.summary")
-       (sbcl-agent-call "QUERY-RGP-WORKSPACE-SERVICE" environment))
+       (let ((session (bridge-session environment)))
+         (sbcl-agent-call "QUERY-RGP-WORKSPACE-SERVICE" session environment)))
+      ((string= operation "desktop.show")
+       (let ((session (bridge-session environment)))
+         (sbcl-agent-call "QUERY-SHELL-DESKTOP-MODEL-SERVICE" session :environment environment)))
+      ((string= operation "desktop.action")
+       (let* ((session (bridge-session environment))
+              (request-object (request-object request-json))
+              (action (if request-object
+                          (sbcl-agent-call "JSON-OBJECT->KEYWORD-PLIST" request-object)
+                          '())))
+         (sbcl-agent-call "COMMAND-SHELL-DESKTOP-ACTION-SERVICE"
+                          session
+                          action
+                          :environment environment)))
+      ((string= operation "desktop.restore")
+       (let* ((session (bridge-session environment))
+              (request-object (request-object request-json))
+              (panel-id (keywordish (and request-object
+                                         (sbcl-agent-call "JSON-OBJECT-VALUE" request-object "panelId"))))
+              (panel-state-object (and request-object
+                                       (sbcl-agent-call "JSON-OBJECT-VALUE" request-object "panelState")))
+              (panel-state (if (and (listp panel-state-object)
+                                    (every #'consp panel-state-object))
+                               (sbcl-agent-call "JSON-OBJECT->KEYWORD-PLIST" panel-state-object)
+                               '())))
+         (sbcl-agent-call "COMMAND-SHELL-DESKTOP-RESTORE-SERVICE"
+                          session
+                          :panel-id panel-id
+                          :panel-state panel-state
+                          :environment environment)))
       ((string= operation "runtime.summary")
        (let ((session (bridge-session environment)))
          (sbcl-agent-call "QUERY-RUNTIME-SUMMARY-SERVICE" session)))

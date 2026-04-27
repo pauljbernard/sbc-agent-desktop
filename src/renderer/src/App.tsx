@@ -8,6 +8,8 @@ import type {
   ApprovalDecisionInput,
   BindingDto,
   CommandResultDto,
+  DesktopModelDto,
+  DesktopPanelId,
   DocumentationPageDto,
   DocumentationPageSummaryDto,
   EnvironmentEventDto,
@@ -60,6 +62,27 @@ const workspaceOrder: Array<{ id: WorkspaceId; label: string; group: string; pri
 ];
 
 const keyboardWorkspaceOrder = workspaceOrder.filter((workspace) => workspace.primary).map((workspace) => workspace.id);
+
+function workspaceToDesktopPanelId(workspace: WorkspaceId): DesktopPanelId {
+  switch (workspace) {
+    case "browser":
+      return "object-browser";
+    case "runtime":
+    case "incidents":
+    case "artifacts":
+    case "work":
+    case "activity":
+    case "approvals":
+      return "governance";
+    case "dashboard":
+    case "environment":
+    case "conversations":
+    case "documentation":
+    case "configuration":
+    default:
+      return "workspace";
+  }
+}
 
 interface GlobalAttentionItem {
   id: string;
@@ -1049,6 +1072,7 @@ export function App() {
   const [summary, setSummary] = useState<EnvironmentSummaryDto | null>(null);
   const [status, setStatus] = useState<EnvironmentStatusDto | null>(null);
   const [workspaceSummary, setWorkspaceSummary] = useState<WorkspaceSummaryDto | null>(null);
+  const [desktopModel, setDesktopModel] = useState<DesktopModelDto | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [threads, setThreads] = useState<ThreadSummaryDto[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
@@ -2154,6 +2178,22 @@ export function App() {
     }));
   }, [currentProjectId, currentReplSessionIdByProject, replSessionsByProject, runtimeForm, runtimeResult, runtimeSummary?.currentPackage, runtimeSummary?.divergencePosture]);
 
+  async function loadDesktopShellModel(
+    environmentId: string,
+    restorePanelState?: Record<string, unknown> | null
+  ): Promise<DesktopModelDto> {
+    if (restorePanelState) {
+      const restoreResult = await window.sbclAgentDesktop.command.desktopRestore({
+        environmentId,
+        panelState: restorePanelState
+      });
+      return restoreResult.data.desktopModel;
+    }
+
+    const desktopModelResult = await window.sbclAgentDesktop.query.desktopModel(environmentId);
+    return desktopModelResult.data;
+  }
+
   async function loadInitialState(): Promise<void> {
     try {
       const [nextHostStatus, nextBinding, desktopPreferences] = await Promise.all([
@@ -2178,14 +2218,16 @@ export function App() {
       setCurrentReplSessionIdByProject(desktopPreferences.currentReplSessionIdByProject ?? {});
 
       if (nextBinding?.environmentId) {
-        const [summaryResult, statusResult, workspaceSummaryResult] = await Promise.all([
+        const [summaryResult, statusResult, workspaceSummaryResult, desktopModelResult] = await Promise.all([
           window.sbclAgentDesktop.query.environmentSummary(nextBinding.environmentId),
           window.sbclAgentDesktop.query.environmentStatus(nextBinding.environmentId),
-          window.sbclAgentDesktop.query.workspaceSummary(nextBinding.environmentId)
+          window.sbclAgentDesktop.query.workspaceSummary(nextBinding.environmentId),
+          window.sbclAgentDesktop.query.desktopModel(nextBinding.environmentId)
         ]);
         setSummary(summaryResult.data);
         setStatus(statusResult.data);
         setWorkspaceSummary(workspaceSummaryResult.data);
+        setDesktopModel(desktopModelResult.data);
         setBinding(statusResult.metadata.binding ?? summaryResult.metadata.binding ?? nextBinding);
         const nextProjects = ensureDesktopProjects(
           desktopPreferences.projects,
@@ -2288,15 +2330,19 @@ export function App() {
   async function loadEnvironmentBinding(environmentId: string): Promise<void> {
     const bindingResult = await window.sbclAgentDesktop.host.setEnvironmentBinding(environmentId);
     const nextBinding = bindingResult.metadata.binding ?? bindingResult.data;
+    const restorePanelState =
+      desktopModel?.panels?.[desktopModel.activePanel] ?? null;
     setBinding(nextBinding);
-    const [summaryResult, statusResult, workspaceSummaryResult] = await Promise.all([
+    const [summaryResult, statusResult, workspaceSummaryResult, nextDesktopModel] = await Promise.all([
       window.sbclAgentDesktop.query.environmentSummary(environmentId),
       window.sbclAgentDesktop.query.environmentStatus(environmentId),
-      window.sbclAgentDesktop.query.workspaceSummary(environmentId)
+      window.sbclAgentDesktop.query.workspaceSummary(environmentId),
+      loadDesktopShellModel(environmentId, restorePanelState)
     ]);
     setSummary(summaryResult.data);
     setStatus(statusResult.data);
     setWorkspaceSummary(workspaceSummaryResult.data);
+    setDesktopModel(nextDesktopModel);
     setBinding(statusResult.metadata.binding ?? summaryResult.metadata.binding ?? nextBinding);
   }
 
@@ -3353,10 +3399,26 @@ export function App() {
   async function navigateToWorkspace(workspace: WorkspaceId): Promise<void> {
     const nextWorkspace = canonicalWorkspace(workspace);
     setActiveWorkspace(nextWorkspace);
-    await Promise.all([
+    const environmentId = effectiveEnvironmentId ?? binding?.environmentId;
+    const nextPanelId = workspaceToDesktopPanelId(nextWorkspace);
+
+    const actionPromise = environmentId
+      ? window.sbclAgentDesktop.command.desktopAction({
+          environmentId,
+          actionKind: "activate-panel",
+          panelId: nextPanelId
+        })
+      : Promise.resolve(null);
+
+    const [desktopActionResult] = await Promise.all([
+      actionPromise,
       window.sbclAgentDesktop.desktop.focusWorkspace(nextWorkspace),
       window.sbclAgentDesktop.desktop.setDesktopPreferences({ lastWorkspace: nextWorkspace })
     ]);
+
+    if (desktopActionResult?.data.desktopModel) {
+      setDesktopModel(desktopActionResult.data.desktopModel);
+    }
   }
 
   async function toggleInspectorPinned(): Promise<void> {
@@ -3691,10 +3753,10 @@ export function App() {
         <aside className="sidebar">
           <div className="panel-titlebar">
             <button
-              aria-label="Hide navigation"
+              aria-label="Hide Navigation"
               className="panel-titlebar-toggle"
               onClick={() => void toggleSidebarPinned()}
-              title="Hide navigation"
+              title="Hide Navigation"
               type="button"
             >
               <span aria-hidden="true">−</span>
@@ -3875,10 +3937,10 @@ export function App() {
         <aside className="sidebar sidebar-collapsed-rail" aria-label="Collapsed workspace navigation">
           <div className="collapsed-panel-titlebar">
             <button
-              aria-label="Show navigate panel"
+              aria-label="Show Navigation"
               className="panel-titlebar-toggle collapsed-panel-toggle"
               onClick={() => void toggleSidebarPinned()}
-              title="Show navigate panel"
+              title="Show Navigation"
               type="button"
             >
               <span aria-hidden="true">+</span>
@@ -3891,10 +3953,10 @@ export function App() {
         <main className="canvas">
           <div className="panel-titlebar">
             <button
-              aria-label="Hide browse panel"
+              aria-label="Hide Navigation"
               className="panel-titlebar-toggle"
               onClick={() => void toggleCanvasPinned()}
-              title="Hide browse panel"
+              title="Hide Navigation"
               type="button"
             >
               <span aria-hidden="true">−</span>
@@ -4208,10 +4270,10 @@ export function App() {
         <aside className="canvas canvas-collapsed-rail" aria-label="Collapsed workspace canvas">
           <div className="collapsed-panel-titlebar">
             <button
-              aria-label="Show browse panel"
+              aria-label="Show Navigation"
               className="panel-titlebar-toggle collapsed-panel-toggle"
               onClick={() => void toggleCanvasPinned()}
-              title={`Show ${workspaceDescriptor.title} browse panel`}
+              title="Show Navigation"
               type="button"
             >
               <span aria-hidden="true">+</span>
@@ -4289,10 +4351,10 @@ export function App() {
         <aside className="inspector inspector-collapsed-rail" aria-label="Collapsed workspace inspector">
           <div className="collapsed-panel-titlebar">
             <button
-              aria-label="Show workspace panel"
+              aria-label="Collapse Inspector"
               className="panel-titlebar-toggle collapsed-panel-toggle"
               onClick={() => void toggleInspectorPinned()}
-              title="Show workspace panel"
+              title="Collapse Inspector"
               type="button"
             >
               <span aria-hidden="true">+</span>
@@ -5213,10 +5275,10 @@ function WorkspaceInspector({
       <aside className="inspector">
         <div className="panel-titlebar">
           <button
-            aria-label="Collapse workspace panel"
+            aria-label="Collapse Inspector"
             className="panel-titlebar-toggle"
             onClick={onToggleInspector}
-            title="Collapse workspace panel"
+            title="Collapse Inspector"
             type="button"
           >
             <span aria-hidden="true">−</span>
@@ -8722,6 +8784,7 @@ function ConversationsWorkspace({
       <div className="conversation-layout">
         <div className="conversation-threads-shell">
           <section
+            aria-label="Thread Navigation"
             className={`panel conversation-list-panel${threadTableExpanded ? "" : " conversation-list-panel-collapsed"}`}
           >
             {threadTableExpanded ? (
