@@ -4,6 +4,8 @@
 
 This document defines the technical architecture for the `sbcl-agent` desktop application.
 
+It should now be read together with `desktop-shell-and-control-panel-model.md`, which distinguishes the future desktop shell from the currently implemented control-panel application.
+
 The architecture must support:
 
 - a desktop-native macOS application initially
@@ -77,7 +79,8 @@ This is the product-specific application layer shared across platforms.
 
 It should own:
 
-- navigation state
+- shell navigation state
+- application launch and selection state
 - workspace composition
 - view models
 - event subscription coordination
@@ -91,6 +94,12 @@ This layer should be as platform-neutral as reasonably possible, while being con
 - Electron main process
 - preload bridge
 - renderer presentation layer
+
+This layer should no longer be modeled as only one monolithic application UI. It should evolve into:
+
+- desktop-shell behavior
+- hosted-application behavior
+- shared shell services such as inspector, display routing, and object switching
 
 ## Layer 4: Platform Adaptation Layer
 
@@ -131,7 +140,8 @@ The desktop app’s connection to `sbcl-agent` must use a transport and protocol
 
 The desktop application should have these internal modules:
 
-- app shell module
+- desktop shell module
+- hosted application module
 - navigation module
 - workspace module
 - entity view module
@@ -142,6 +152,8 @@ The desktop application should have these internal modules:
 - local persistence module
 - design system module
 - platform adapter module
+
+The current operational workspace should become the initial hosted application: the control panel.
 
 Recommended Electron ownership:
 

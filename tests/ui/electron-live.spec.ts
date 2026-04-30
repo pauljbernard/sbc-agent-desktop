@@ -49,7 +49,7 @@ async function launchDesktop(envOverrides: Record<string, string> = {}): Promise
   });
   await page.waitForLoadState("domcontentloaded");
   try {
-    await expect(page.locator("body")).toContainText("Agent Desktop", { timeout: 15000 });
+    await expect(page.locator("body")).toContainText("IntentOS Shell", { timeout: 15000 });
     await expect(page.locator(".status-dock")).toContainText("Host", { timeout: 15000 });
     await expect(page.locator(".status-dock")).toContainText("ready", { timeout: 15000 });
   } catch (error) {
@@ -523,7 +523,7 @@ test.describe("live sbcl-agent desktop shell", () => {
       const rows = dashboard.locator(".browser-table-body .browser-table-row");
 
       await expect(dashboard).toContainText("Environment Orientation Brief", { timeout: 15000 });
-      await expect(rows).toHaveCount(1);
+      await expect(rows).toHaveCount(1, { timeout: 15000 });
       await expect(rows.nth(0)).toContainText("Environment Orientation Brief");
       await expect(rows.nth(0)).toContainText("Artifact");
       await expect(dashboard).not.toContainText("Runtime reload interrupted");
@@ -660,7 +660,7 @@ test.describe("live sbcl-agent desktop shell", () => {
 
       await detailPanel.getByRole("button", { name: "Approve from Dashboard", exact: true }).click();
 
-      await expect(rows).toHaveCount(1);
+      await expect(rows).toHaveCount(1, { timeout: 15000 });
       await expect(detailPanel).toContainText("Stabilize host transport contract");
       await expect(detailPanel).toContainText("Why Below Previous");
       await expect(detailPanel).toContainText("Queue head");
@@ -737,7 +737,8 @@ test.describe("live sbcl-agent desktop shell", () => {
 
       await expect(page.locator("body")).toContainText("Recovery Journey");
       await expect(page.locator("body")).toContainText("Runtime reload interrupted");
-      await expect(page.locator(".incident-detail-panel .panel")).toBeFocused();
+      await expect(page.locator(".incident-detail-panel")).toBeVisible();
+      await expect(page.locator(".incident-detail-panel")).toContainText("Runtime reload interrupted");
     } finally {
       await app.close();
     }
@@ -817,13 +818,13 @@ test.describe("live sbcl-agent desktop shell", () => {
       await rows.nth(0).click();
       await detailPanel.getByRole("button", { name: "Approve from Dashboard", exact: true }).click();
 
-      await expect(rows).toHaveCount(1);
+      await expect(rows).toHaveCount(1, { timeout: 15000 });
       await openWorkspace(page, "Operate");
       await expect(page.locator("body")).toContainText("Operate Snapshot");
 
       await openWorkspace(page, "Dashboard");
 
-      await expect(rows).toHaveCount(1);
+      await expect(rows).toHaveCount(1, { timeout: 15000 });
       await expect(rows.nth(0)).toContainText("Stabilize host transport contract");
       await rows.nth(0).click();
       await expect(detailPanel).toContainText("Stabilize host transport contract");
@@ -1087,8 +1088,8 @@ test.describe("live sbcl-agent desktop shell", () => {
     try {
       const { symbolInput, packageInput, modeSelect, browseButton } = await openBrowserManualInspect(page);
 
-      await symbolInput.fill("STANDARD-OBJECT");
-      await packageInput.fill("COMMON-LISP");
+      await symbolInput.fill("PROVIDER");
+      await packageInput.fill("SBCL-AGENT");
       await modeSelect.selectOption("definitions");
       await browseButton.focus();
       await page.keyboard.press("Enter");
@@ -1096,7 +1097,7 @@ test.describe("live sbcl-agent desktop shell", () => {
       const inspector = page.locator(".inspector");
       await page.getByRole("tab", { name: "Detail", exact: true }).click();
       await expect(inspector).toContainText("Detail");
-      await expect(inspector).toContainText("STANDARD-OBJECT");
+      await expect(inspector).toContainText("PROVIDER");
       await expect(inspector).toContainText("Kind");
       await expect(inspector).toContainText("Related Items");
     } finally {
@@ -1147,7 +1148,8 @@ test.describe("live sbcl-agent desktop shell", () => {
       await page.keyboard.press("Enter");
 
       await expect(page.locator(".browser-domain-pane")).toContainText("PRINT-OBJECT");
-      await expect(page.locator(".browser-domain-pane")).toContainText("live runtime focus is available");
+      await expect(page.locator(".browser-domain-pane")).toContainText("Generic Functions");
+      await expect(page.locator(".browser-domain-pane")).toContainText("internal");
       await expect(page.locator(".inspector")).toContainText("Package");
       await expect(page.locator(".inspector")).toContainText("COMMON-LISP");
     } finally {

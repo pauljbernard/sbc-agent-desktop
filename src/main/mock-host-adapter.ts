@@ -75,6 +75,7 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
   private preferences: DesktopPreferencesDto = {
     lastWorkspace: "environment",
     sidebarPinned: true,
+    sidebarWidth: null,
     canvasPinned: true,
     inspectorPinned: true,
     inspectorWidth: null,
@@ -498,7 +499,7 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
   private workspaceToPanelId(workspace: WorkspaceId): DesktopPanelId {
     switch (workspace) {
       case "browser":
-        return "object-browser";
+        return "display";
       case "runtime":
       case "incidents":
       case "artifacts":
@@ -519,6 +520,7 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
   private panelToWorkspaceId(panelId: DesktopPanelId): WorkspaceId {
     switch (panelId) {
       case "object-browser":
+      case "display":
         return "browser";
       case "governance":
         return "runtime";
@@ -547,6 +549,7 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
       surfaceCount: workspaceSummary.attentionQueue.count,
       governanceCount: approvalCount,
       objectGroupCount: 1,
+      displayCount: 1,
       topSurface: attentionTop
         ? {
             title: attentionTop.title,
@@ -565,6 +568,12 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
         objectKind: "execution",
         count: 1
       },
+      topDisplaySurface: {
+        appId: "linux.vscode",
+        title: "Mock Display Surface",
+        status: "running",
+        executionId: attentionTop?.objectId ?? null
+      },
       entryPoints: [],
       panels: {
         workspace: {
@@ -579,6 +588,14 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
           count: approvalCount,
           selectedIndex: 0,
           selectedTitle: attentionTop?.title ?? null,
+          actions: {}
+        },
+        display: {
+          panelId: "display",
+          count: 1,
+          selectedIndex: 0,
+          selectedExecutionId: attentionTop?.objectId ?? null,
+          selectedTitle: "Mock Display Surface",
           actions: {}
         },
         "object-browser": {

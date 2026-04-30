@@ -1621,6 +1621,7 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
   private preferences: DesktopPreferencesDto = {
     lastWorkspace: "environment",
     sidebarPinned: true,
+    sidebarWidth: null,
     canvasPinned: true,
     inspectorPinned: true,
     inspectorWidth: null,
@@ -2385,7 +2386,7 @@ export function resolveLiveAdapterOptions(): LiveAdapterOptions {
     process.env.SBCL_AGENT_PROJECT_DIR ?? resolve(process.cwd(), "../sbcl-agent");
   const environmentStatePath =
     process.env.SBCL_AGENT_ENVIRONMENT_STATE_PATH ??
-    resolve(__dirname, "../../.sbcl-agent-desktop-live-environment.sexp");
+    resolve(__dirname, "../../.sbcl-agent-ux-live-environment.sexp");
 
   return {
     transport,

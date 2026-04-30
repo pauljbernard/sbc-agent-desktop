@@ -4,6 +4,10 @@
 
 This document defines the information architecture for the `sbcl-agent` macOS desktop application.
 
+It should now be read alongside `desktop-shell-and-control-panel-model.md`.
+
+That newer document clarifies that the current workspace model is best treated as the IA of the first hosted application, not the complete long-term desktop shell by itself.
+
 It is intentionally not a pixel spec. It defines the major workspaces, navigation model, and desktop structure required to make the environment legible to developers and engineers.
 
 ## IA Principles
@@ -51,6 +55,10 @@ The application should use a three-level navigation structure:
 
 ## App Structure
 
+This section currently describes the operational control-panel application more accurately than it describes the full future desktop shell.
+
+That is acceptable as an intermediate state, but it must not be mistaken for the final top-level operating-system shell.
+
 ### Global Shell
 
 The macOS application should have a persistent desktop shell containing:
@@ -60,6 +68,8 @@ The macOS application should have a persistent desktop shell containing:
 - central workspace area
 - contextual inspector or utility sidebar
 - global attention rail or status strip
+
+Longer term, this shell must also host multiple applications or application-class surfaces rather than only one workspace taxonomy.
 
 ### Primary Navigation Sections
 
@@ -77,6 +87,10 @@ The primary navigation should include:
 The order may evolve, but those domains must remain quickly reachable.
 
 ## Workspaces
+
+The workspaces below should now be interpreted as the control-panel app's primary navigation model.
+
+They are not necessarily the permanent top-level desktop navigation model once the system shell hosts multiple applications.
 
 ### 1. Environment Workspace
 

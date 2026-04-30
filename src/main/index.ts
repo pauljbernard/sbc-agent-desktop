@@ -1,11 +1,11 @@
-import { app, BrowserWindow, Menu } from "electron";
+import { app, BrowserWindow, Menu, type MenuItemConstructorOptions } from "electron";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { registerIpcHandlers } from "./ipc";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-app.setName("Agent Desktop");
+app.setName("IntentOS Shell");
 let mainWindow: BrowserWindow | null = null;
 
 function sendMenuAction(action: string): void {
@@ -17,9 +17,9 @@ function sendMenuAction(action: string): void {
 }
 
 function installApplicationMenu(): void {
-  const template = [
+  const template: MenuItemConstructorOptions[] = [
     {
-      label: "Agent Desktop",
+      label: "IntentOS Shell",
       submenu: [
         { role: "about" as const },
         { type: "separator" },
@@ -80,7 +80,7 @@ function createMainWindow(): BrowserWindow {
     }
   });
 
-  window.setTitle("sbcl-agent Desktop");
+  window.setTitle("IntentOS Shell");
 
   window.once("ready-to-show", () => window.show());
 

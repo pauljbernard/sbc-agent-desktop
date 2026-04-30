@@ -106,6 +106,30 @@ Token families:
 - iconography
 - semantic state
 
+### Window Control Iconography
+
+Floating-window chrome should prefer icon-only controls over labeled buttons when the action is part of a stable desktop control set.
+
+Rules:
+
+- use icon-only controls for repeated shell/window actions such as move, resize preset, minimize, restore, and close
+- preserve accessibility with `aria-label` and hover title text even when visible labels are omitted
+- use geometry-driven icons for window sizing and minimization instead of text abbreviations
+- keep window controls visually compact, visually subordinate to window content, and spatially consistent across all residents
+- reserve text buttons for object-specific actions inside the window body, not generic chrome actions
+
+### Shell Control Iconography
+
+Shell controls outside the floating desktop field should follow the same compression rule when they belong to a repeated desktop-control vocabulary.
+
+Rules:
+
+- use icon-only controls for stable desktop actions such as desktop switching, new desktop, layout reset, cascade, tile, and zoom
+- keep the active desktop legible through selection state and compact numeric or symbolic identity rather than full repeated text labels
+- preserve accessibility with `aria-label` and hover title text
+- keep shell controls lighter than resident-window content so they frame the desktop instead of competing with it
+- reserve text labels outside the desktop field for changing state readouts, not repeated command buttons
+
 ## Color System
 
 ### Color Role Model

@@ -574,13 +574,16 @@ export interface WorkspaceSummaryDto {
   businessSummary: Record<string, unknown>;
 }
 
-export type DesktopPanelId = "workspace" | "governance" | "object-browser" | "inspector";
+export type DesktopPanelId = "workspace" | "governance" | "object-browser" | "display" | "inspector";
 
 export type DesktopActionKind =
   | "activate-panel"
   | "select-panel"
   | "open-panel"
-  | "restore-panel";
+  | "restore-panel"
+  | "show-panel"
+  | "control-panel"
+  | "step-panel";
 
 export interface DesktopActionDto {
   actionId?: string;
@@ -639,9 +642,11 @@ export interface DesktopModelDto {
   surfaceCount: number;
   governanceCount: number;
   objectGroupCount: number;
+  displayCount?: number;
   topSurface?: Record<string, unknown> | null;
   topGovernanceItem?: Record<string, unknown> | null;
   topObjectGroup?: Record<string, unknown> | null;
+  topDisplaySurface?: Record<string, unknown> | null;
   entryPoints: DesktopEntryPointDto[];
   panels: Record<DesktopPanelId, DesktopPanelStateDto>;
   workspace?: Record<string, unknown>;
@@ -685,6 +690,7 @@ export interface DesktopRestoreResultDto {
 export interface DesktopPreferencesDto {
   lastWorkspace: WorkspaceId;
   sidebarPinned: boolean;
+  sidebarWidth?: number | null;
   canvasPinned: boolean;
   inspectorPinned: boolean;
   inspectorWidth?: number | null;

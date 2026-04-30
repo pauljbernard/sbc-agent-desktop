@@ -39,6 +39,7 @@ import type {
   WorkItemDetailDto,
   WorkItemSummaryDto,
   WorkerSummaryDto,
+  WorkspaceAttentionItemDto,
   WorkspaceSummaryDto
 } from "./contracts";
 
@@ -156,8 +157,8 @@ function buildWorkspaceSummary(environmentId: string): WorkspaceSummaryDto {
     },
     attentionQueue: {
       count: attentionItems.length,
-      topItem: attentionItems[0] ?? null,
-      items: attentionItems
+      topItem: (attentionItems[0] ?? null) as WorkspaceAttentionItemDto | null,
+      items: attentionItems as WorkspaceAttentionItemDto[]
     },
     publicationSummary: {
       attentionClass: summary.recentArtifacts.length > 0 ? "publishing" : "idle"
@@ -1372,7 +1373,7 @@ export function commandSendConversationMessage(
       content: assistantMessage,
       createdAt: timestamp
     }
-  ];
+  ] as MessageDto[];
   detail.turns = [
     ...detail.turns,
     {

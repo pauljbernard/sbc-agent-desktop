@@ -1,6 +1,6 @@
 {
   "name": "sbcl-agent-ux",
-  "productName": "Agent Desktop",
+  "productName": "IntentOS Shell",
   "version": "0.1.0",
   "private": true,
   "description": "An environment based agentic first development enviornment",
@@ -14,7 +14,25 @@
     "build:app": "npm run build && electron-builder --mac dir",
     "preview": "node node_modules/electron-vite/bin/electron-vite.js preview",
     "typecheck": "tsc --noEmit",
+    "test:unit:renderer": "mkdir -p test-results && vitest run --project renderer-unit --reporter=json --outputFile=test-results/renderer-unit.json",
+    "test:integration:adapter": "mkdir -p test-results && vitest run --project adapter-integration --reporter=json --outputFile=test-results/adapter-integration.json",
+    "test:unit": "npm run test:unit:renderer",
+    "test:integration": "npm run test:integration:adapter",
+    "test:coverage": "vitest run --coverage",
+    "test:coverage:check": "node scripts/coverage-check.mjs",
+    "test:compliance": "node scripts/compliance-check.mjs",
+    "test:report": "node scripts/report-test-results.mjs",
+    "test:ui:report": "node scripts/report-ui-results.mjs",
+    "test:index": "node scripts/write-qa-evidence-index.mjs",
+    "test:performance": "npm run build && node scripts/performance-check.mjs",
+    "test:security": "node scripts/security-check.mjs",
+    "test:qa": "npm run typecheck && npm run test:unit && npm run test:integration && npm run test:coverage && npm run test:coverage:check && npm run test:compliance && npm run test:security && npm run test:performance && npm run test:report && npm run test:index",
+    "test:qa:full": "npm run test:qa && npm run test:journey && npm run test:ui:report && npm run test:index",
     "test:spec-drift": "node scripts/spec-drift-check.mjs",
+    "test:journey": "npm run test:ui",
+    "test:journey:dashboard": "npm run test:spec-drift && npm run build && playwright test -g dashboard",
+    "test:journey:conversation": "npm run test:spec-drift && npm run build && playwright test -g \"conversation|transcript|composer\"",
+    "test:journey:browser": "npm run test:spec-drift && npm run build && playwright test -g \"browser|listener|inspected package|inspected symbols|system type\"",
     "test:ui": "npm run test:spec-drift && npm run build && playwright test",
     "test:ui:headed": "npm run test:spec-drift && npm run build && playwright test --headed"
   },
@@ -24,20 +42,25 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^24.0.1",
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
     "@vitejs/plugin-react": "^5.0.0",
+    "@vitest/coverage-v8": "^4.1.5",
     "electron": "^36.2.1",
     "electron-builder": "^26.8.1",
     "electron-vite": "^3.1.0",
+    "jsdom": "^29.1.0",
     "playwright": "^1.59.1",
     "typescript": "^5.8.3",
-    "vite": "^6.3.5"
+    "vite": "^6.3.5",
+    "vitest": "^4.1.5"
   },
   "build": {
     "appId": "com.paulbernard.agentdesktop",
-    "productName": "Agent Desktop",
+    "productName": "IntentOS Shell",
     "directories": {
       "output": "release"
     },
@@ -47,7 +70,7 @@
       "package.json"
     ],
     "mac": {
-      "artifactName": "Agent Desktop.${ext}",
+      "artifactName": "IntentOS Shell.${ext}",
       "category": "public.app-category.developer-tools",
       "target": [
         {
