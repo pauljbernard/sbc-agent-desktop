@@ -105,26 +105,36 @@ Utility surfaces:
 
 ### Global Navigation
 
-The global navigation should be environment-scoped and persistent.
+The global shell navigation should be environment-scoped, persistent, and shallow.
 
-Required navigation groups:
+The current intended top-level shell items are:
 
-- core posture
-- live interaction
-- runtime and execution
-- governed work
-- observation and oversight
+- `Operate`
+- `Conversations`
+- `Browser`
+- `Configuration`
 
-Recommended initial grouping:
+Deeper operational structure belongs inside those surfaces, not as additional top-level shell taxonomy.
 
-- Environment
-- Conversations
-- Runtime
-- Work
-- Incidents
-- Artifacts
-- Activity
-- Approvals
+Current internal consolidation:
+
+- `Operate` contains:
+  - orientation
+  - journeys
+  - evidence
+  - execution detail
+  - recovery detail
+- `Browser` contains:
+  - systems
+  - packages
+  - symbols
+  - classes and methods
+  - runtime objects
+  - source
+  - xref
+  - documentation
+  - governance introspection
+  - linked conversations
 
 ### Secondary Navigation
 
@@ -135,7 +145,7 @@ Each workspace may define local navigation for:
 - saved scopes
 - recently opened entities
 
-Secondary navigation must never obscure the global domain structure.
+Secondary navigation must never recreate a second shell.
 
 ## Workspace Definitions
 

@@ -1,19 +1,43 @@
 import { execFile, spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
 import { basename, dirname, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import type {
+  AlignmentStateDto,
   ApprovalDecisionDto,
   ApprovalDecisionInput,
   ApprovalRequestDto,
   ApprovalRequestSummaryDto,
+  AppendProjectArchitectureDecisionInput,
+  AppendProjectFeatureSpecificationInput,
+  AppendProjectQualityGateInput,
+  AppendProjectRequirementInput,
+  AppendProjectSourceRootInput,
+  AppendProjectUserJourneyInput,
   ArtifactDetailDto,
   ArtifactSummaryDto,
   BindingDto,
+  BindProjectTestingHarnessInput,
   CommandResultDto,
+  CompleteWorkItemValidationsInput,
+  ConsoleLogEntryDto,
+  ConsoleLogQueryInput,
+  ConsoleLogStreamDto,
+  CorrectiveActionDto,
+  CorrectiveContextDto,
+  CorrectiveTriggerEventDto,
+  CreateIntentInput,
+  CreateProjectInput,
   CreateConversationThreadInput,
+  DiagnosticReportDetailDto,
+  DiagnosticReportKind,
+  DiagnosticReportSummaryDto,
+  FileSystemDirectoryListingDto,
+  FileSystemEntryDto,
+  FileSystemWriteResultDto,
   UpdateConversationThreadInput,
   DesktopActionInput,
   DesktopActionResultDto,
@@ -21,6 +45,8 @@ import type {
   DesktopPreferencesDto,
   DesktopRestoreInput,
   DesktopRestoreResultDto,
+  EnvironmentImageRecordDto,
+  EnvironmentImageRegistryDto,
   EnvironmentEventDto,
   EventSubscriptionInput,
   EnvironmentStatusDto,
@@ -28,29 +54,71 @@ import type {
   WorkspaceSummaryDto,
   HostStatusDto,
   IncidentDetailDto,
+  IncidentRemediationPlanDto,
   IncidentSummaryDto,
+  IntentDetailDto,
   LinkedEntityRefDto,
   PackageBrowserDto,
+  ProjectArchitectureDecisionDto,
+  ProjectDetailDto,
+  ProjectFeatureSpecificationDto,
+  ProjectQualityGateDto,
+  ProjectQualityGateEvidenceDto,
+  ProjectQualityGateSummaryDto,
+  ProjectReleaseReadinessDto,
+  ProjectReadinessSummaryDto,
+  ProjectLinkedIncidentDto,
+  ProjectLinkedWorkItemDto,
+  ProjectListDto,
+  ProjectProfileDto,
+  ProjectRequirementDto,
+  ProjectSummaryDto,
+  ProjectTestingHarnessDto,
+  ProjectTestingStrategyDto,
+  ProjectTestingStrategySuiteExpectationDto,
+  ProjectTestingStrategyThresholdPolicyDto,
+  ProjectTraceLinkDto,
+  ProjectTraceNeighborhoodDto,
+  ProjectUserJourneyDto,
+  QuarantineWorkItemInput,
   QueryResultDto,
+  ReconciliationDecisionActionDto,
+  ReconciliationDecisionTriggerEventDto,
+  ReconciliationDecisionDto,
+  ResumeWorkItemInput,
+  RollbackWorkItemInput,
   RuntimeEvalResultDto,
   RuntimeEntityDetailDto,
   RuntimeInspectionResultDto,
   RuntimeSystemEntryDto,
   RuntimeScopeSummaryDto,
   RuntimeSummaryDto,
+  RuntimeTelemetryProcessDto,
+  RuntimeTelemetrySnapshotDto,
   SendConversationMessageInput,
   SendConversationMessageResultDto,
   ServiceMetadataDto,
   SourceMutationResultDto,
   SourceReloadResultDto,
   SourcePreviewDto,
+  SteerWorkItemInput,
   TurnState,
   ThreadDetailDto,
   ThreadSummaryDto,
   TruthPostureDto,
   TurnDetailDto,
+  UpdateProjectConstitutionInput,
+  UpdateProjectDesignSystemInput,
+  UpdateProjectReadinessObligationsInput,
+  UpdateIncidentRemediationPlanInput,
+  UpdateProjectStyleGuideInput,
+  UpdateProjectTestingStrategyInput,
+  UpdateProjectReleaseReadinessInput,
   WorkflowRecordDto,
   WorkItemDetailDto,
+  WorkItemPlanDirectiveDto,
+  WorkItemPlanDto,
+  WorkItemPlanSteeringDto,
   WorkItemSummaryDto,
   WorkspaceId
 } from "../shared/contracts";
@@ -133,6 +201,121 @@ function normalizeMetadata(metadata: Record<string, unknown> | undefined): Servi
     eventFamily: (metadata?.eventFamily as string | null | undefined) ?? null,
     visibility: (metadata?.visibility as string | null | undefined) ?? null
   };
+}
+
+function mergeDesktopPreferences(
+  current: DesktopPreferencesDto,
+  patch: Partial<DesktopPreferencesDto>
+): DesktopPreferencesDto {
+  const currentDesktopSurfaceView = current.desktopSurfaceView ?? {
+    tooltipScalePercent: 100,
+    controlIconScalePercent: 100,
+    dockIconScalePercent: 100,
+    conversationTextScalePercent: 100,
+    sourceCodeTextScalePercent: 100
+  };
+
+  return {
+    ...current,
+    ...patch,
+    desktopSurfaceView: {
+      tooltipScalePercent:
+        patch.desktopSurfaceView?.tooltipScalePercent ??
+        currentDesktopSurfaceView.tooltipScalePercent,
+      controlIconScalePercent:
+        patch.desktopSurfaceView?.controlIconScalePercent ??
+        currentDesktopSurfaceView.controlIconScalePercent,
+      dockIconScalePercent:
+        patch.desktopSurfaceView?.dockIconScalePercent ??
+        currentDesktopSurfaceView.dockIconScalePercent,
+      conversationTextScalePercent:
+        patch.desktopSurfaceView?.conversationTextScalePercent ??
+        currentDesktopSurfaceView.conversationTextScalePercent,
+      sourceCodeTextScalePercent:
+        patch.desktopSurfaceView?.sourceCodeTextScalePercent ??
+        currentDesktopSurfaceView.sourceCodeTextScalePercent
+    },
+    lispCodeView: {
+      ...current.lispCodeView,
+      ...patch.lispCodeView
+    }
+  };
+}
+
+function normalizeCommandResultLike<T>(
+  value: unknown
+): CommandResultDto<T> | null {
+  if (value === null || value === false || value === "null" || value === undefined) {
+    return null;
+  }
+
+  return value as CommandResultDto<T>;
+}
+
+function normalizeDesktopPreferencesPayload(
+  payload: Partial<DesktopPreferencesDto> | null | undefined
+): Partial<DesktopPreferencesDto> {
+  if (!payload) {
+    return {};
+  }
+
+  const normalized: Partial<DesktopPreferencesDto> = {
+    ...payload
+  };
+
+  if (payload.projects && typeof payload.projects === "object") {
+    normalized.projects = Array.isArray(payload.projects)
+      ? payload.projects
+      : Object.values(payload.projects).filter((project) => Boolean(project && typeof project === "object")) as ProjectProfileDto[];
+  }
+
+  if (payload.replSessionsByProject && typeof payload.replSessionsByProject === "object") {
+    normalized.replSessionsByProject = Object.fromEntries(
+      Object.entries(payload.replSessionsByProject).map(([projectId, sessions]) => [
+        projectId,
+        Array.isArray(sessions)
+          ? sessions.map((session) => ({
+              ...session,
+              history: Array.isArray(session.history) ? session.history : []
+            }))
+          : []
+      ])
+    );
+  }
+
+  if (payload.editorBuffersByProject && typeof payload.editorBuffersByProject === "object") {
+    normalized.editorBuffersByProject = Object.fromEntries(
+      Object.entries(payload.editorBuffersByProject).map(([projectId, buffers]) => [
+        projectId,
+        Array.isArray(buffers)
+          ? buffers.map((buffer) => ({
+              ...buffer,
+              result: normalizeCommandResultLike<RuntimeEvalResultDto>(buffer.result)
+            }))
+          : []
+      ])
+    );
+  }
+
+  if (payload.workspaceHistoryByProject && typeof payload.workspaceHistoryByProject === "object") {
+    normalized.workspaceHistoryByProject = Object.fromEntries(
+      Object.entries(payload.workspaceHistoryByProject).map(([projectId, history]) => [
+        projectId,
+        Array.isArray(history) ? history : []
+      ])
+    );
+  }
+
+  if (payload.workspaceResultByProject && typeof payload.workspaceResultByProject === "object") {
+    normalized.workspaceResultByProject = Object.fromEntries(
+      Object.entries(payload.workspaceResultByProject).map(([projectId, result]) => [
+        projectId,
+        normalizeCommandResultLike<RuntimeEvalResultDto>(result)
+      ])
+    );
+  }
+
+  return normalized;
 }
 
 function universalTimeToIso(value: unknown): string {
@@ -457,7 +640,9 @@ function adaptEnvironmentSummaryResponse(
                 state: "awaiting"
               }
             ]
-          : []
+          : [],
+      alignmentState: adaptAlignmentState(asRecord(data.alignmentState)),
+      reconciliationDecision: adaptReconciliationDecision(asRecord(data.reconciliationDecision))
     },
     metadata: normalizeMetadata(response.metadata)
   };
@@ -488,7 +673,9 @@ function adaptEnvironmentStatusResponse(
       hostState: "ready",
       runtimeState: openIncidentCount > 0 ? "recovering" : Number(activeRuntime.runtimeCount ?? 0) > 0 ? "warm" : "cooling",
       workflowState: blockedCount > 0 ? "attention_required" : "governed",
-      lastUpdatedAt: new Date().toISOString()
+      lastUpdatedAt: new Date().toISOString(),
+      alignmentState: adaptAlignmentState(asRecord(data.alignmentState)),
+      reconciliationDecision: adaptReconciliationDecision(asRecord(data.reconciliationDecision))
     },
     metadata: normalizeMetadata(response.metadata)
   };
@@ -625,6 +812,288 @@ function adaptRuntimeSummaryResponse(
   };
 }
 
+async function sampleProcessUsage(
+  pid: number | null | undefined
+): Promise<Partial<RuntimeTelemetryProcessDto>> {
+  if (!pid || !Number.isFinite(pid)) {
+    return {};
+  }
+
+  try {
+    const { stdout } = await execFileAsync("ps", [
+      "-p",
+      String(pid),
+      "-o",
+      "%cpu=,rss=,etime=,state=,command="
+    ]);
+    const line = stdout
+      .split("\n")
+      .map((entry) => entry.trim())
+      .find((entry) => entry.length > 0);
+    if (!line) {
+      return {};
+    }
+
+    const match = line.match(/^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.*)$/);
+    if (!match) {
+      return {};
+    }
+
+    return {
+      cpuPercent: Number.parseFloat(match[1]),
+      memoryMb: Number.parseFloat(match[2]) / 1024,
+      elapsed: match[3],
+      command: match[5]
+    };
+  } catch {
+    return {};
+  }
+}
+
+async function sampleOpenConnectionCount(
+  pid: number | null | undefined
+): Promise<number | null> {
+  if (!pid || !Number.isFinite(pid)) {
+    return null;
+  }
+
+  try {
+    const { stdout } = await execFileAsync("lsof", ["-nP", "-a", "-p", String(pid), "-i"]);
+    const lines = stdout
+      .split("\n")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+    return Math.max(0, lines.length - 1);
+  } catch {
+    return null;
+  }
+}
+
+async function sampleHostNetworkBytes(): Promise<{ inboundBytes: number; outboundBytes: number } | null> {
+  try {
+    const { stdout } = await execFileAsync("netstat", ["-ib"]);
+    const totals = stdout
+      .split("\n")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0 && !entry.startsWith("Name"))
+      .reduce(
+        (accumulator, line) => {
+          const columns = line.split(/\s+/);
+          if (columns.length < 10) {
+            return accumulator;
+          }
+
+          const name = columns[0];
+          if (!name || name.startsWith("lo")) {
+            return accumulator;
+          }
+
+          const inboundBytes = Number(columns[6]);
+          const outboundBytes = Number(columns[9]);
+          if (Number.isFinite(inboundBytes)) {
+            accumulator.inboundBytes += inboundBytes;
+          }
+          if (Number.isFinite(outboundBytes)) {
+            accumulator.outboundBytes += outboundBytes;
+          }
+          return accumulator;
+        },
+        { inboundBytes: 0, outboundBytes: 0 }
+      );
+
+    return totals.inboundBytes > 0 || totals.outboundBytes > 0 ? totals : null;
+  } catch {
+    return null;
+  }
+}
+
+async function sampleHostDiskThroughputKbps(): Promise<{ readKbps: number; writeKbps: number } | null> {
+  try {
+    const { stdout } = await execFileAsync("iostat", ["-d", "-K", "-w", "1", "-c", "2"]);
+    const lines = stdout
+      .split("\n")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+    const dataLines = lines.filter((line) => !line.startsWith("disk") && !line.startsWith("cpu"));
+    if (dataLines.length === 0) {
+      return null;
+    }
+
+    const sampleLine = dataLines[dataLines.length - 1];
+    const columns = sampleLine.split(/\s+/);
+    if (columns.length < 3) {
+      return null;
+    }
+
+    let readKbps = 0;
+    let writeKbps = 0;
+    for (let index = 0; index + 2 < columns.length; index += 3) {
+      const kbPerTransfer = Number(columns[index]);
+      const transfersPerSecond = Number(columns[index + 1]);
+      const mbPerSecond = Number(columns[index + 2]);
+      if (!Number.isFinite(kbPerTransfer) || !Number.isFinite(transfersPerSecond)) {
+        continue;
+      }
+
+      const aggregateKbps =
+        Number.isFinite(mbPerSecond) && mbPerSecond > 0
+          ? mbPerSecond * 1024
+          : kbPerTransfer * transfersPerSecond;
+      readKbps += aggregateKbps / 2;
+      writeKbps += aggregateKbps / 2;
+    }
+
+    if (readKbps <= 0 && writeKbps <= 0) {
+      return null;
+    }
+
+    return {
+      readKbps: Number(readKbps.toFixed(1)),
+      writeKbps: Number(writeKbps.toFixed(1))
+    };
+  } catch {
+    return null;
+  }
+}
+
+function rawProcessStateToDtoState(value: string | undefined): RuntimeTelemetryProcessDto["state"] {
+  switch (value) {
+    case "running":
+    case "active":
+      return "running";
+    case "waiting":
+    case "queued":
+      return "waiting";
+    case "idle":
+      return "idle";
+    case "blocked":
+      return "blocked";
+    case "complete":
+    case "completed":
+      return "completed";
+    case "failed":
+    case "interrupted":
+      return "failed";
+    case "stopped":
+    case "detached":
+    case "revoked":
+      return "stopped";
+    default:
+      return "idle";
+  }
+}
+
+async function adaptRuntimeTelemetryResponse(
+  response: RawServiceResponse<Record<string, unknown>>
+): Promise<QueryResultDto<RuntimeTelemetrySnapshotDto>> {
+  const data = asRecord(response.data);
+  const runtimePid = Number(data.runtimePid ?? 0) || null;
+  const processEntries = asRecordArray(data.processes);
+  const processes: RuntimeTelemetryProcessDto[] = [];
+
+  for (const entry of processEntries) {
+    const pid = Number(entry.pid ?? 0) || null;
+    const sampled = await sampleProcessUsage(pid);
+    processes.push({
+      processId: String(entry.processId ?? "process"),
+      kind:
+        (entry.kind as RuntimeTelemetryProcessDto["kind"] | undefined) ?? "runtime",
+      label: String(entry.label ?? entry.processId ?? "Process"),
+      state: rawProcessStateToDtoState(entry.state as string | undefined),
+      summary: String(entry.summary ?? "Runtime-linked process."),
+      pid,
+      cpuPercent:
+        sampled.cpuPercent ??
+        (entry.cpuPercent !== undefined ? Number(entry.cpuPercent) : null),
+      memoryMb:
+        sampled.memoryMb ??
+        (entry.memoryMb !== undefined ? Number(entry.memoryMb) : null),
+      elapsed: sampled.elapsed ?? (entry.elapsed ? String(entry.elapsed) : null),
+      command: sampled.command ?? (entry.command ? String(entry.command) : null),
+      workItemId: entry.workItemId ? String(entry.workItemId) : null,
+      threadId: entry.threadId ? String(entry.threadId) : null,
+      turnId: entry.turnId ? String(entry.turnId) : null,
+      incidentId: entry.incidentId ? String(entry.incidentId) : null,
+      workflowRecordId: entry.workflowRecordId ? String(entry.workflowRecordId) : null,
+      controlToken: entry.controlToken ? String(entry.controlToken) : null
+    });
+  }
+
+  const rssMb = processes.find((entry) => entry.pid === runtimePid)?.memoryMb ?? null;
+  const cpuPercent = processes.find((entry) => entry.pid === runtimePid)?.cpuPercent ?? null;
+  const openConnectionCount = await sampleOpenConnectionCount(runtimePid);
+  const hostNetworkBytes = await sampleHostNetworkBytes();
+  const diskThroughput = await sampleHostDiskThroughputKbps();
+  const totalMem = os.totalmem();
+  const freeMem = os.freemem();
+  const systemUsedPercent =
+    totalMem > 0 ? Number((((totalMem - freeMem) / totalMem) * 100).toFixed(1)) : null;
+
+  return {
+    contractVersion: response.contractVersion,
+    domain: "runtime",
+    operation: response.operation,
+    kind: "query",
+    status: response.status === "error" ? "error" : "ok",
+    data: {
+      runtimeId: String(data.runtimeId ?? "runtime-live"),
+      sampledAt: universalTimeToIso(data.sampledAt),
+      runtimePid,
+      cpu: {
+        utilizationPercent: cpuPercent,
+        coreCount: os.cpus().length,
+        loadAverage1m: os.loadavg()[0] ?? null,
+        loadAverage5m: os.loadavg()[1] ?? null,
+        loadAverage15m: os.loadavg()[2] ?? null,
+        summary:
+          cpuPercent !== null
+            ? `Runtime process CPU is currently ${cpuPercent.toFixed(1)}%.`
+            : "CPU telemetry is available at the host level, but no runtime process sample was captured."
+      },
+      memory: {
+        rssMb,
+        heapUsedMb: Number((process.memoryUsage().heapUsed / (1024 * 1024)).toFixed(1)),
+        heapTotalMb: Number((process.memoryUsage().heapTotal / (1024 * 1024)).toFixed(1)),
+        systemUsedPercent,
+        summary:
+          rssMb !== null
+            ? `Runtime RSS is currently ${rssMb.toFixed(1)} MB.`
+            : "Memory telemetry is available at the host level, but no runtime process sample was captured."
+      },
+      network: {
+        openConnectionCount,
+        interfaceCount: Object.keys(os.networkInterfaces()).length,
+        summary:
+          openConnectionCount !== null && hostNetworkBytes
+            ? `${openConnectionCount} open runtime connections are visible; host interfaces have moved ${Math.round(
+                hostNetworkBytes.inboundBytes / (1024 * 1024)
+              )} MB in and ${Math.round(hostNetworkBytes.outboundBytes / (1024 * 1024))} MB out since boot.`
+            : openConnectionCount !== null
+              ? `${openConnectionCount} open network connections are currently associated with the runtime process.`
+              : hostNetworkBytes
+                ? `Per-process connections are unavailable, but host interfaces have moved ${Math.round(
+                    hostNetworkBytes.inboundBytes / (1024 * 1024)
+                  )} MB in and ${Math.round(hostNetworkBytes.outboundBytes / (1024 * 1024))} MB out since boot.`
+                : "Interface-level network posture is available, but per-process connection sampling is unavailable on this host."
+      },
+      disk: {
+        readKbps: diskThroughput?.readKbps ?? null,
+        writeKbps: diskThroughput?.writeKbps ?? null,
+        summary:
+          diskThroughput
+            ? `Host disk throughput is currently about ${diskThroughput.readKbps.toFixed(0)} KB/s read and ${diskThroughput.writeKbps.toFixed(0)} KB/s write.`
+            : "Disk I/O domain is present, but host-level throughput sampling is unavailable on this host."
+      },
+      processes,
+      activitySummary: String(
+        data.activitySummary ??
+          `${processes.length} runtime-linked processes are visible from the governed environment.`
+      )
+    },
+    metadata: normalizeMetadata(response.metadata)
+  };
+}
+
 function adaptRuntimeEvalResponse(
   response: RawServiceResponse<Record<string, unknown>>,
   input: {
@@ -636,19 +1105,27 @@ function adaptRuntimeEvalResponse(
   const metadata = normalizeMetadata(response.metadata);
   const rawResult = data.result;
   const normalizedResult = camelizeKeys(rawResult);
+  const isError = response.status === "error";
+  const fallbackFailureSummary = `Evaluation of ${input.form} in ${input.packageName ?? "the active package"} failed.`;
   const valuePreview =
-    rawResult === undefined || rawResult === null
-      ? null
-      : typeof normalizedResult === "string"
-        ? normalizedResult
-        : JSON.stringify(normalizedResult, null, 2);
+    isError
+      ? (typeof data.summary === "string" && data.summary.trim().length > 0
+          ? data.summary
+          : typeof data.title === "string" && data.title.trim().length > 0
+            ? data.title
+            : fallbackFailureSummary)
+      : rawResult === undefined || rawResult === null
+        ? null
+        : typeof normalizedResult === "string"
+          ? normalizedResult
+          : JSON.stringify(normalizedResult, null, 2);
 
   return {
     contractVersion: response.contractVersion,
     domain: "runtime",
     operation: "runtime.eval",
     kind: "command",
-    status: response.status === "error" ? "error" : "ok",
+    status: isError ? "error" : "ok",
     data: {
       evaluationId:
         String(
@@ -657,11 +1134,13 @@ function adaptRuntimeEvalResponse(
             metadata.runtimeId ??
             `${input.packageName ?? "runtime"}:${input.form}`
         ),
-      outcome: response.status === "error" ? "failed" : "ok",
+      outcome: isError ? "failed" : "ok",
       summary: String(
-        rawResult === undefined
-          ? `Evaluated ${input.form} in ${input.packageName ?? "the active package"}.`
-          : `Evaluated ${input.form} in ${String(data.package ?? input.packageName ?? "the active package")}.`
+        isError
+          ? data.summary ?? data.title ?? fallbackFailureSummary
+          : rawResult === undefined
+            ? `Evaluated ${input.form} in ${input.packageName ?? "the active package"}.`
+            : `Evaluated ${input.form} in ${String(data.package ?? input.packageName ?? "the active package")}.`
       ),
       valuePreview,
       operationId: data.workItemId ? String(data.workItemId) : null,
@@ -893,6 +1372,366 @@ function adaptEventStreamResponse(
   };
 }
 
+function adaptConsoleLogStreamResponse(
+  response: RawServiceResponse<Record<string, unknown>>
+): QueryResultDto<ConsoleLogStreamDto> {
+  const data = response.data;
+  const entries = asRecordArray(data.entries).map((entry) => ({
+    entryId: String(entry.entryId ?? `${entry.cursor ?? 0}`),
+    cursor: typeof entry.cursor === "number" ? entry.cursor : Number(entry.cursor ?? 0),
+    plane: (entry.plane as ConsoleLogEntryDto["plane"] | undefined) ?? "environment",
+    timestamp: String(entry.timestamp ?? new Date().toISOString()),
+    type: (entry.type as ConsoleLogEntryDto["type"] | undefined) ?? "info",
+    category: String(entry.category ?? "environment"),
+    source: String(entry.source ?? "event"),
+    message: String(entry.message ?? "Console entry"),
+    processName: (entry.processName as string | null | undefined) ?? null,
+    pid: typeof entry.pid === "number" ? entry.pid : null,
+    threadId: firstString(entry.threadId) ?? null,
+    activityId: firstString(entry.activityId) ?? null,
+    environmentId: firstString(entry.environmentId) ?? null,
+    runtimeId: firstString(entry.runtimeId) ?? null,
+    workItemId: firstString(entry.workItemId) ?? null,
+    workflowRecordId: firstString(entry.workflowRecordId) ?? null,
+    incidentId: firstString(entry.incidentId) ?? null,
+    threadRefId: firstString(entry.threadRefId) ?? null,
+    turnRefId: firstString(entry.turnRefId) ?? null,
+    visibility: firstString(entry.visibility) ?? null,
+    detail:
+      typeof entry.detail === "string"
+        ? entry.detail
+        : entry.detail != null
+          ? JSON.stringify(entry.detail, null, 2)
+          : null
+  }));
+
+  return {
+    contractVersion: response.contractVersion,
+    domain: "console",
+    operation: response.operation,
+    kind: "query",
+    status: response.status === "error" ? "error" : "ok",
+    data: {
+      plane: (data.plane as ConsoleLogStreamDto["plane"] | undefined) ?? "environment",
+      entries,
+      nextCursor:
+        typeof data.nextCursor === "number"
+          ? data.nextCursor
+          : data.nextCursor != null
+            ? Number(data.nextCursor)
+            : null,
+      summary: String(data.summary ?? "Console stream projected from the live environment.")
+    },
+    metadata: normalizeMetadata(response.metadata)
+  };
+}
+
+function consoleTypeForEnvironmentEvent(event: EnvironmentEventDto): ConsoleLogEntryDto["type"] {
+  if (event.kind.includes("failed") || event.kind.includes("incident")) {
+    return "error";
+  }
+  if (event.kind.includes("approval") || event.kind.includes("blocked") || event.kind.includes("waiting")) {
+    return "warning";
+  }
+  if (event.family === "provider") {
+    return "debug";
+  }
+  return "info";
+}
+
+function consoleMessageForEnvironmentEvent(event: EnvironmentEventDto): string {
+  const payload = asRecord(event.payload);
+  return firstString(
+    payload.payload,
+    payload.summary,
+    payload.message,
+    event.summary,
+    `${event.family} / ${event.kind}`
+  )!;
+}
+
+function consoleEntryFromEnvironmentEvent(
+  environmentId: string | undefined,
+  runtimeId: string | undefined,
+  event: EnvironmentEventDto
+): ConsoleLogEntryDto {
+  return {
+    entryId: `${environmentId ?? "live-environment"}:${event.cursor}`,
+    cursor: event.cursor,
+    plane: "environment",
+    timestamp: event.timestamp,
+    type: consoleTypeForEnvironmentEvent(event),
+    category: event.family,
+    source: event.kind,
+    message: consoleMessageForEnvironmentEvent(event),
+    processName: "sbcl-agent",
+    pid: null,
+    threadId: null,
+    activityId: `${event.family}:${event.kind}`,
+    environmentId: environmentId ?? null,
+    runtimeId: runtimeId ?? null,
+    workItemId: null,
+    workflowRecordId: null,
+    incidentId: null,
+    threadRefId: event.threadId ?? null,
+    turnRefId: event.turnId ?? null,
+    visibility: event.visibility ?? null,
+    detail: JSON.stringify(event.payload, null, 2)
+  };
+}
+
+function diagnosticKindForPath(path: string): DiagnosticReportKind {
+  if (path.endsWith(".crash")) {
+    return "crash";
+  }
+  if (path.endsWith(".spin")) {
+    return "spin";
+  }
+  if (path.endsWith(".log")) {
+    return "log";
+  }
+  return "diagnostic";
+}
+
+interface DiagnosticPreviewMetadata {
+  appName: string | null;
+  processName: string | null;
+  pid: number | null;
+  timestamp: string | null;
+  incidentId: string | null;
+  parentProc: string | null;
+  responsibleProc: string | null;
+  bugType: string | null;
+}
+
+function processNameFromDiagnosticFile(fileName: string): string | null {
+  const [processName] = fileName.split("_");
+  return processName && processName.length > 0 ? processName : null;
+}
+
+function diagnosticPreviewMetadata(content: string): DiagnosticPreviewMetadata {
+  const firstLine = content
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length > 0) ?? "";
+
+  let header: Record<string, unknown> = {};
+  try {
+    header = firstLine.startsWith("{") ? asRecord(JSON.parse(firstLine)) : {};
+  } catch {
+    header = {};
+  }
+
+  const matchString = (pattern: RegExp): string | null => {
+    const match = pattern.exec(content);
+    return match?.[1] ?? null;
+  };
+
+  const matchNumber = (pattern: RegExp): number | null => {
+    const raw = matchString(pattern);
+    if (!raw) {
+      return null;
+    }
+    const numeric = Number(raw);
+    return Number.isFinite(numeric) ? numeric : null;
+  };
+
+  return {
+    appName: firstString(header.app_name, header.name) ?? null,
+    processName: firstString(matchString(/"procName"\s*:\s*"([^"]+)"/), header.app_name, header.name) ?? null,
+    pid: matchNumber(/"pid"\s*:\s*(\d+)/),
+    timestamp: firstString(header.timestamp, matchString(/"captureTime"\s*:\s*"([^"]+)"/)) ?? null,
+    incidentId: firstString(header.incident_id, matchString(/"incident"\s*:\s*"([^"]+)"/)) ?? null,
+    parentProc: matchString(/"parentProc"\s*:\s*"([^"]+)"/),
+    responsibleProc: matchString(/"responsibleProc"\s*:\s*"([^"]+)"/),
+    bugType: firstString(header.bug_type, matchString(/"bug_type"\s*:\s*"([^"]+)"/)) ?? null
+  };
+}
+
+function diagnosticKindFromMetadata(path: string, preview: DiagnosticPreviewMetadata): DiagnosticReportKind {
+  if (path.endsWith(".ips")) {
+    return preview.incidentId || preview.bugType ? "crash" : "analytics";
+  }
+
+  return diagnosticKindForPath(path);
+}
+
+function diagnosticSummary(
+  kind: DiagnosticReportKind,
+  processName: string | null,
+  source: string,
+  preview?: DiagnosticPreviewMetadata | null
+): string {
+  const provenance =
+    preview?.parentProc || preview?.responsibleProc
+      ? ` Parent: ${preview?.parentProc ?? "unknown"}, responsible: ${preview?.responsibleProc ?? "unknown"}.`
+      : "";
+  switch (kind) {
+    case "crash":
+      return `${processName ?? "Process"} crash report retained from ${source}.${provenance}`;
+    case "spin":
+      return `${processName ?? "Process"} spin report retained from ${source}.${provenance}`;
+    case "analytics":
+      return `${processName ?? "Process"} analytics report retained from ${source}.${provenance}`;
+    case "log":
+      return `${processName ?? "Process"} log report retained from ${source}.${provenance}`;
+    default:
+      return `Retained host diagnostic report from ${source}.${provenance}`;
+  }
+}
+
+async function collectHostDiagnosticReports(limit = 40): Promise<DiagnosticReportSummaryDto[]> {
+  const roots = [
+    resolve(os.homedir(), "Library/Logs/DiagnosticReports"),
+    "/Library/Logs/DiagnosticReports"
+  ];
+  const entries: DiagnosticReportSummaryDto[] = [];
+
+  for (const root of roots) {
+    try {
+      const names = await readdir(root);
+      for (const name of names) {
+        const fullPath = resolve(root, name);
+        try {
+          const info = await stat(fullPath);
+          if (!info.isFile()) {
+            continue;
+          }
+          let preview: DiagnosticPreviewMetadata | null = null;
+          try {
+            preview = diagnosticPreviewMetadata((await readFile(fullPath, "utf8")).slice(0, 8192));
+          } catch {
+            preview = null;
+          }
+          const processName = preview?.processName ?? processNameFromDiagnosticFile(name);
+          const kind = diagnosticKindFromMetadata(name, preview ?? diagnosticPreviewMetadata(""));
+          entries.push({
+            reportId: fullPath,
+            kind,
+            title: name,
+            summary: diagnosticSummary(kind, processName, basename(root), preview),
+            source: basename(root),
+            processName,
+            pid: preview?.pid ?? null,
+            createdAt: preview?.timestamp ?? info.mtime.toISOString(),
+            path: fullPath
+          });
+        } catch {
+          continue;
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return entries
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .slice(0, limit);
+}
+
+function consoleTypeFromHostLogLevel(level: string | undefined): ConsoleLogEntryDto["type"] {
+  switch ((level ?? "").toLowerCase()) {
+    case "debug":
+      return "debug";
+    case "notice":
+      return "notice";
+    case "error":
+      return "error";
+    case "fault":
+      return "fault";
+    case "warning":
+      return "warning";
+    default:
+      return "info";
+  }
+}
+
+function parseHostLogJsonLines(stdout: string): Array<Record<string, unknown>> {
+  const trimmed = stdout.trim();
+  if (trimmed.length === 0) {
+    return [];
+  }
+
+  if (trimmed.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      return Array.isArray(parsed) ? parsed.map((entry) => asRecord(entry)) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  return trimmed
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .flatMap((line) => {
+      try {
+        return [asRecord(JSON.parse(line))];
+      } catch {
+        return [];
+      }
+    });
+}
+
+async function collectHostConsoleEntries(limit = 80): Promise<ConsoleLogEntryDto[]> {
+  try {
+    const predicate =
+      'process == "sbcl" OR process == "Electron" OR process CONTAINS "sbcl-agent" OR subsystem CONTAINS "electron"';
+    const { stdout } = await execFileAsync("log", [
+      "show",
+      "--style",
+      "json",
+      "--last",
+      "10m",
+      "--predicate",
+      predicate
+    ]);
+    const records = parseHostLogJsonLines(stdout);
+    return records
+      .map((record, index) => {
+        const processName =
+          firstString(record.process, record.processImagePath && basename(String(record.processImagePath))) ?? "host";
+        const source = firstString(record.subsystem, record.category, processName) ?? "host";
+        const message = firstString(record.eventMessage, record.message) ?? "Host console entry";
+        const timestamp = firstString(record.timestamp, record.date) ?? new Date().toISOString();
+        return {
+          entryId: `host:${index}:${timestamp}`,
+          cursor: index,
+          plane: "host" as const,
+          timestamp,
+          type: consoleTypeFromHostLogLevel(firstString(record.messageType, record.level)),
+          category: firstString(record.category, record.subsystem) ?? "host",
+          source,
+          message,
+          processName,
+          pid:
+            typeof record.processID === "number"
+              ? record.processID
+              : typeof record.pid === "number"
+                ? record.pid
+                : null,
+          threadId: firstString(record.threadID, record.threadIdentifier) ?? null,
+          activityId: firstString(record.activityIdentifier) ?? null,
+          environmentId: null,
+          runtimeId: null,
+          workItemId: null,
+          workflowRecordId: null,
+          incidentId: null,
+          threadRefId: null,
+          turnRefId: null,
+          visibility: "operator",
+          detail: JSON.stringify(record, null, 2)
+        };
+      })
+      .slice(-limit)
+      .reverse();
+  } catch {
+    return [];
+  }
+}
+
 function adaptStreamingEnvironmentEvent(payload: unknown): EnvironmentEventDto {
   const event = asRecord(payload);
   return {
@@ -1080,6 +1919,7 @@ function adaptIncidentDetailResponse(
   const data = asRecord(response.data);
   const runtimeContext = asRecord(data.runtimeContext);
   const recoveryPlan = asRecord(data.recoveryPlan);
+  const remediationPlan = asRecord(data.remediationPlan);
   const wait = asRecord(data.wait);
   const recoveryNextAction = asRecord(recoveryPlan.nextAction);
   const recommendedAction =
@@ -1129,8 +1969,24 @@ function adaptIncidentDetailResponse(
             ? String(recoveryNextAction.type)
             : "inspect-runtime-context"),
       blockedReason: normalizeWaitReason(firstString(wait.why, wait.waitReason)),
+      remediationPlan:
+        Object.keys(remediationPlan).length > 0
+          ? {
+              status:
+                String(remediationPlan.status ?? "draft") as IncidentRemediationPlanDto["status"],
+              owner: firstString(remediationPlan.owner),
+              summary: String(remediationPlan.summary ?? ""),
+              actions: asStringArray(remediationPlan.actions),
+              validationSteps: asStringArray(remediationPlan.validationSteps),
+              blockers: asStringArray(remediationPlan.blockers)
+            }
+          : null,
       artifactIds: [],
       linkedEntities,
+      traceNeighborhood:
+        Object.keys(asRecord(data.traceNeighborhood)).length > 0
+          ? adaptProjectTraceNeighborhood(asRecord(data.traceNeighborhood))
+          : null,
       updatedAt: universalTimeToIso(data.createdAt)
     },
     metadata: normalizeMetadata(response.metadata)
@@ -1182,7 +2038,8 @@ function adaptWorkItemListResponse(
       const waitingReason = normalizeWaitReason(
         firstString(item.waitReason, item.wait_reason, item.waitingOn, item.waiting_on)
       );
-      const incidentCount = 0;
+      const incidentCount = Number(item.incidentCount ?? 0);
+      const artifactCount = Number(item.artifactCount ?? 0);
       return {
         workItemId: String(item.id ?? "work-item"),
         title: String(item.goal ?? "Work Item"),
@@ -1190,9 +2047,10 @@ function adaptWorkItemListResponse(
         waitingReason,
         approvalCount: approvalRequirements.length,
         incidentCount,
-        artifactCount: 0,
+        artifactCount,
         validationBurden: pendingValidations.length > 0 ? "pending" : "complete",
-        reconciliationBurden: item.reconciliationResult ? "complete" : item.imageReconciliation ? "required" : "none"
+        reconciliationBurden: item.reconciliationResult ? "complete" : item.imageReconciliation ? "required" : "none",
+        correctiveContext: adaptCorrectiveContext(asRecord(item.correctiveContext))
       };
     }),
     metadata: normalizeMetadata(response.metadata)
@@ -1230,7 +2088,83 @@ function adaptWorkItemDetailResponse(
         data.sourceSnapshot
           ? "This work item carries an explicit source snapshot and image snapshot reference."
           : "Source relationship has not been projected yet.",
-      linkedEntities
+      linkedEntities,
+      traceNeighborhood:
+        Object.keys(asRecord(data.traceNeighborhood)).length > 0
+          ? adaptProjectTraceNeighborhood(asRecord(data.traceNeighborhood))
+          : null,
+      correctiveContext: adaptCorrectiveContext(asRecord(data.correctiveContext))
+    },
+    metadata: normalizeMetadata(response.metadata)
+  };
+}
+
+function adaptWorkItemDetailCommandResponse(
+  response: RawServiceResponse<Record<string, unknown>>
+): CommandResultDto<WorkItemDetailDto> {
+  const result = adaptWorkItemDetailResponse(response);
+  return {
+    ...result,
+    kind: "command"
+  };
+}
+
+function adaptWorkItemPlanDirective(item: Record<string, unknown>): WorkItemPlanDirectiveDto {
+  const normalized = asRecord(camelizeKeys(item));
+  return {
+    phase: firstString(normalized.phase) ?? null,
+    nextStep: firstString(normalized.nextStep) ?? null,
+    note: firstString(normalized.note) ?? null,
+    timestamp: normalized.timestamp == null ? null : Number(normalized.timestamp)
+  };
+}
+
+function adaptWorkItemPlanSteering(item: Record<string, unknown>): WorkItemPlanSteeringDto | null {
+  const normalized = asRecord(camelizeKeys(item));
+  if (Object.keys(normalized).length === 0) {
+    return null;
+  }
+  return {
+    currentPhase: firstString(normalized.currentPhase) ?? null,
+    nextStep: firstString(normalized.nextStep) ?? null,
+    resumeAnchor: firstString(normalized.resumeAnchor) ?? null,
+    phaseCount: Number(normalized.phaseCount ?? 0),
+    planningPhases: asStringArray(normalized.planningPhases),
+    remainingPhases: asStringArray(normalized.remainingPhases),
+    completedPhaseCount: Number(normalized.completedPhaseCount ?? 0),
+    decompositionReady: Boolean(normalized.decompositionReadyP ?? normalized.decompositionReady),
+    compacted: Boolean(normalized.compactedP ?? normalized.compacted),
+    revisionReason: firstString(normalized.revisionReason) ?? null,
+    operatorDirectedPhase: firstString(normalized.operatorDirectedPhase) ?? null,
+    operatorDirectedNextStep: firstString(normalized.operatorDirectedNextStep) ?? null,
+    operatorSteeringCount: Number(normalized.operatorSteeringCount ?? 0),
+    reviewRequired: Boolean(normalized.reviewRequiredP ?? normalized.reviewRequired),
+    planHealth: firstString(normalized.planHealth) ?? null
+  };
+}
+
+function adaptWorkItemPlanResponse(
+  response: RawServiceResponse<Record<string, unknown>>
+): QueryResultDto<WorkItemPlanDto> {
+  const data = asRecord(response.data);
+  const normalized = asRecord(camelizeKeys(data));
+  return {
+    contractVersion: response.contractVersion,
+    domain: "work-item",
+    operation: response.operation,
+    kind: "query",
+    status: response.status === "error" ? "error" : "ok",
+    data: {
+      workItemId: String(normalized.id ?? "work-item"),
+      status: String(normalized.status ?? "unknown"),
+      goal: String(normalized.goal ?? "Work Item"),
+      longHorizonPlan: asRecord(normalized.longHorizonPlan),
+      planHealth: firstString(normalized.planHealth) ?? null,
+      planSteering: adaptWorkItemPlanSteering(asRecord(normalized.planSteering)),
+      operatorSteeringHistory: asRecordArray(normalized.operatorSteeringHistory).map(adaptWorkItemPlanDirective),
+      nextAction: asRecord(normalized.nextAction),
+      resumePayload: asRecord(normalized.resumePayload),
+      pendingValidations: asStringArray(normalized.pendingValidations)
     },
     metadata: normalizeMetadata(response.metadata)
   };
@@ -1273,6 +2207,554 @@ function adaptWorkflowRecordDetailResponse(
           ? `Closure is still withheld by ${blockingItems.join(", ")}.`
           : "The workflow record appears ready for closure.",
       blockingItems
+    },
+    metadata: normalizeMetadata(response.metadata)
+  };
+}
+
+function adaptProjectSummary(item: Record<string, unknown>): ProjectSummaryDto {
+  return {
+    projectId: String(item.id ?? "project"),
+    title: String(item.title ?? "Project"),
+    summary: String(item.summary ?? "Governed project record."),
+    status: String(item.status ?? "active"),
+    createdAt: universalTimeToIso(item.createdAt),
+    updatedAt: universalTimeToIso(item.updatedAt),
+    requirementCount: Number(item.requirementCount ?? 0),
+    featureSpecCount: Number(item.featureSpecCount ?? 0),
+    journeyCount: Number(item.journeyCount ?? 0),
+    architectureDecisionCount: Number(item.architectureDecisionCount ?? 0),
+    nonFunctionalRequirementCount: Number(item.nfrCount ?? 0),
+    linkedWorkItemCount: Number(item.linkedWorkItemCount ?? 0),
+    linkedIncidentCount: Number(item.linkedIncidentCount ?? 0),
+    linkedTestingHarnessCount: Number(item.linkedTestingHarnessCount ?? 0),
+    sourceRoots: asStringArray(item.sourceRoots)
+  };
+}
+
+function adaptProjectRequirement(item: Record<string, unknown>): ProjectRequirementDto {
+  return {
+    requirementId: String(item.id ?? "requirement"),
+    title: String(item.title ?? "Requirement"),
+    summary: String(item.summary ?? ""),
+    scope: String(item.scope ?? "project"),
+    kind: String(item.kind ?? "functional"),
+    priority: String(item.priority ?? "unspecified"),
+    status: String(item.status ?? "draft"),
+    verificationKind: firstString(item.verificationKind) ?? null,
+    linkedArtifactIds: asStringArray(item.linkedArtifactIds)
+  };
+}
+
+function adaptProjectFeatureSpecification(item: Record<string, unknown>): ProjectFeatureSpecificationDto {
+  return {
+    featureSpecId: String(item.id ?? "feature-spec"),
+    title: String(item.title ?? "Feature Specification"),
+    summary: String(item.summary ?? ""),
+    status: String(item.status ?? "draft"),
+    acceptanceCriteria: asStringArray(item.acceptanceCriteria),
+    linkedRequirementIds: asStringArray(item.linkedRequirementIds),
+    linkedJourneyIds: asStringArray(item.linkedJourneyIds)
+  };
+}
+
+function adaptProjectUserJourney(item: Record<string, unknown>): ProjectUserJourneyDto {
+  return {
+    journeyId: String(item.id ?? "journey"),
+    title: String(item.title ?? "Journey"),
+    summary: String(item.summary ?? ""),
+    actors: asStringArray(item.actors),
+    entrypoints: asStringArray(item.entrypoints),
+    steps: asStringArray(item.steps),
+    outcomes: asStringArray(item.outcomes),
+    edgeCases: asStringArray(item.edgeCases)
+  };
+}
+
+function adaptProjectArchitectureDecision(item: Record<string, unknown>): ProjectArchitectureDecisionDto {
+  return {
+    architectureDecisionId: String(item.id ?? "architecture-decision"),
+    title: String(item.title ?? "Architecture Decision"),
+    status: String(item.status ?? "proposed"),
+    summary: String(item.summary ?? ""),
+    drivers: asStringArray(item.drivers),
+    consequences: asStringArray(item.consequences),
+    stackChoices: asStringArray(item.stackChoices),
+    linkedRequirementIds: asStringArray(item.linkedRequirementIds)
+  };
+}
+
+function adaptProjectLinkedWorkItem(item: Record<string, unknown>): ProjectLinkedWorkItemDto {
+  return {
+    workItemId: String(item.id ?? "work-item"),
+    title: String(item.title ?? "Work Item"),
+    status: String(item.status ?? "unknown"),
+    workflowRecordId: firstString(item.workflowRecordId) ?? null,
+    pendingValidations: asStringArray(item.pendingValidations),
+    sourceMutationCount: Number(item.sourceMutationCount ?? 0)
+  };
+}
+
+function adaptProjectLinkedIncident(item: Record<string, unknown>): ProjectLinkedIncidentDto {
+  return {
+    incidentId: String(item.id ?? "incident"),
+    title: String(item.title ?? "Incident"),
+    summary: String(item.summary ?? ""),
+    status: String(item.status ?? "unknown"),
+    kind: String(item.kind ?? "incident"),
+    workItemId: firstString(item.workItemId) ?? null,
+    workflowRecordId: firstString(item.workflowRecordId) ?? null
+  };
+}
+
+function adaptProjectTestingHarness(item: Record<string, unknown>): ProjectTestingHarnessDto {
+  const rawHarnessId = String(item.id ?? "harness");
+  return {
+    harnessId: rawHarnessId.replace(/^:/, "").toLowerCase(),
+    label: String(item.label ?? "Harness"),
+    entrypoint: String(item.entrypoint ?? ""),
+    kind: String(item.kind ?? "unknown").replace(/^:/, "").toLowerCase(),
+    categories: asStringArray(item.categories).map((category) => category.replace(/^:/, "").toLowerCase())
+  };
+}
+
+function adaptProjectTestingStrategyThresholdPolicy(
+  item: Record<string, unknown>
+): ProjectTestingStrategyThresholdPolicyDto | null {
+  if (Object.keys(item).length === 0) {
+    return null;
+  }
+  return {
+    maxFailedTests: item.maxFailedTests == null ? null : Number(item.maxFailedTests),
+    maxSayTurnLatencySeconds: item.maxSayTurnLatencySeconds == null ? null : Number(item.maxSayTurnLatencySeconds),
+    maxEnvironmentSaveLoadSeconds:
+      item.maxEnvironmentSaveLoadSeconds == null ? null : Number(item.maxEnvironmentSaveLoadSeconds),
+    requireCoverage: Boolean(item.requireCoverage),
+    requireRecoveryReady: Boolean(item.requireRecoveryReady)
+  };
+}
+
+function adaptProjectTestingStrategy(item: Record<string, unknown>): ProjectTestingStrategyDto | null {
+  if (Object.keys(item).length === 0) {
+    return null;
+  }
+  const normalized = asRecord(camelizeKeys(item));
+  return {
+    requiredEvidence: asStringArray(normalized.requiredEvidence),
+    suiteExpectations: asRecordArray(normalized.suiteExpectations)
+      .map((entry): ProjectTestingStrategySuiteExpectationDto => ({
+        harnessId: String(entry.harnessId ?? "").trim(),
+        purpose: firstString(entry.purpose) ?? null,
+        evidenceKinds: asStringArray(entry.evidenceKinds)
+      }))
+      .filter((entry) => entry.harnessId.length > 0 || (entry.purpose ?? '').length > 0 || entry.evidenceKinds.length > 0),
+    thresholdPolicy: adaptProjectTestingStrategyThresholdPolicy(asRecord(normalized.thresholdPolicy))
+  };
+}
+
+function adaptProjectTestingEvidenceStatus(item: Record<string, unknown>) {
+  const normalized = asRecord(camelizeKeys(item));
+  if (Object.keys(normalized).length === 0) {
+    return null;
+  }
+  return {
+    requiredEvidence: asStringArray(normalized.requiredEvidence),
+    availableEvidence: asStringArray(normalized.availableEvidence),
+    missingEvidence: asStringArray(normalized.missingEvidence),
+    status: String(normalized.status ?? "unknown")
+  };
+}
+
+function adaptProjectTestingEvidenceSuiteStatus(item: Record<string, unknown>) {
+  const normalized = asRecord(camelizeKeys(item));
+  return {
+    harnessId: String(normalized.harnessId ?? "").replace(/^:/, "").replace(/_/g, "-").toLowerCase(),
+    purpose: firstString(normalized.purpose) ?? null,
+    linked: Boolean(normalized.linkedP ?? normalized.linked),
+    evidenceKinds: asStringArray(normalized.evidenceKinds),
+    satisfiedEvidenceKinds: asStringArray(normalized.satisfiedEvidenceKinds),
+    missingEvidenceKinds: asStringArray(normalized.missingEvidenceKinds),
+    status: String(normalized.status ?? "unknown")
+  };
+}
+
+function adaptProjectQualityGate(item: Record<string, unknown>): ProjectQualityGateDto {
+  return {
+    gateId: String(item.id ?? "quality-gate"),
+    title: String(item.title ?? "Quality Gate"),
+    summary: String(item.summary ?? ""),
+    status: String(item.status ?? "unknown"),
+    requiredHarnessIds: asStringArray(item.requiredHarnessIds),
+    minimumLinkedWorkItems: Number(item.minimumLinkedWorkItems ?? 0),
+    minimumLinkedIncidents: Number(item.minimumLinkedIncidents ?? 0),
+    requireSourceRoots: Boolean(item.requireSourceRootsP ?? item.requireSourceRoots),
+    requiredTraceTargetKinds: asStringArray(item.requiredTraceTargetKinds),
+    maximumFailedTests: item.maximumFailedTests == null ? null : Number(item.maximumFailedTests),
+    requireCoverage: Boolean(item.requireCoverageP ?? item.requireCoverage),
+    maximumSayTurnLatencySeconds:
+      item.maximumSayTurnLatencySeconds == null ? null : Number(item.maximumSayTurnLatencySeconds),
+    maximumEnvironmentSaveLoadSeconds:
+      item.maximumEnvironmentSaveLoadSeconds == null ? null : Number(item.maximumEnvironmentSaveLoadSeconds),
+    requireRecoveryReady: Boolean(item.requireRecoveryReadyP ?? item.requireRecoveryReady)
+  };
+}
+
+function adaptProjectQualityGateSummary(item: Record<string, unknown>): ProjectQualityGateSummaryDto {
+  return {
+    gateCount: Number(item.gateCount ?? 0),
+    blockedCount: Number(item.blockedCount ?? 0),
+    readyCount: Number(item.readyCount ?? 0),
+    readiness: String(item.readiness ?? "unknown")
+  };
+}
+
+function adaptProjectQualityGateEvidence(item: Record<string, unknown>): ProjectQualityGateEvidenceDto {
+  return {
+    qualityGates: asRecordArray(item.qualityGates).map(adaptProjectQualityGate),
+    qualityGateSummary:
+      Object.keys(asRecord(item.qualityGateSummary)).length > 0
+        ? adaptProjectQualityGateSummary(asRecord(item.qualityGateSummary))
+        : null
+  };
+}
+
+function adaptProjectReleaseReadiness(item: Record<string, unknown>): ProjectReleaseReadinessDto | null {
+  const normalized = asRecord(camelizeKeys(item));
+  if (Object.keys(normalized).length === 0) {
+    return null;
+  }
+  return {
+    stage: firstString(normalized.stage) ?? null,
+    signoffStatus: firstString(normalized.signoffStatus) ?? null,
+    targetWindow: firstString(normalized.targetWindow) ?? null,
+    requiredApprovers: asStringArray(normalized.requiredApprovers),
+    observationPlan: asStringArray(normalized.observationPlan),
+    openRisks: asStringArray(normalized.openRisks)
+  };
+}
+
+function adaptProjectReadinessObligation(item: Record<string, unknown>) {
+  const normalized = asRecord(camelizeKeys(item));
+  return {
+    obligationId: String(normalized.id ?? normalized.obligationId ?? ""),
+    title: String(normalized.title ?? ""),
+    summary: String(normalized.summary ?? ""),
+    status: String(normalized.status ?? "unknown"),
+    owner: firstString(normalized.owner) ?? null,
+    dueWindow: firstString(normalized.dueWindow) ?? null,
+    blocking: Boolean(normalized.blockingP ?? normalized.blocking),
+    evidenceKinds: asStringArray(normalized.evidenceKinds)
+  };
+}
+
+function adaptProjectReadinessSummary(item: Record<string, unknown>): ProjectReadinessSummaryDto | null {
+  const normalized = asRecord(camelizeKeys(item));
+  if (Object.keys(normalized).length === 0) {
+    return null;
+  }
+  return {
+    status: String(normalized.status ?? "unknown"),
+    testingReadiness: String(normalized.testingReadiness ?? "unknown"),
+    qualityGateReadiness: String(normalized.qualityGateReadiness ?? "unknown"),
+    recoveryReadiness: String(normalized.recoveryReadiness ?? "unknown"),
+    releaseReadinessStatus: String(normalized.releaseReadinessStatus ?? "unknown"),
+    releaseReviewState: String(normalized.releaseReviewState ?? "unknown"),
+    releaseSignoffState: String(normalized.releaseSignoffState ?? "unknown"),
+    releaseSignoffReady: Boolean(normalized.releaseSignoffReadyP ?? normalized.releaseSignoffReady ?? false),
+    releaseSignoffSummary: firstString(normalized.releaseSignoffSummary) ?? null,
+    releaseRequiredApprovers: asStringArray(normalized.releaseRequiredApprovers),
+    releaseApprovedApprovers: asStringArray(normalized.releaseApprovedApprovers),
+    releasePendingApprovers: asStringArray(normalized.releasePendingApprovers),
+    releaseUnassignedApprovers: asStringArray(normalized.releaseUnassignedApprovers),
+    releaseSignoffOwnershipReady: Boolean(normalized.releaseSignoffOwnershipReadyP ?? normalized.releaseSignoffOwnershipReady ?? false),
+    releaseCurrentPhase: normalized.releaseCurrentPhase == null ? null : String(normalized.releaseCurrentPhase),
+    releaseTargetPhase: normalized.releaseTargetPhase == null ? null : String(normalized.releaseTargetPhase),
+    releaseTransitionReady: Boolean(normalized.releaseTransitionReadyP ?? normalized.releaseTransitionReady ?? false),
+    releaseTransitionSummary: firstString(normalized.releaseTransitionSummary) ?? null,
+    suiteBlockedCount: Number(normalized.suiteBlockedCount ?? 0),
+    suiteReadyCount: Number(normalized.suiteReadyCount ?? 0),
+    releaseStage: firstString(normalized.releaseStage) ?? null,
+    releaseSignoffStatus: firstString(normalized.releaseSignoffStatus) ?? null,
+    readinessObligationCount: Number(normalized.readinessObligationCount ?? 0),
+    blockedReadinessObligationCount: Number(normalized.blockedReadinessObligationCount ?? 0),
+    readyReadinessObligationCount: Number(normalized.readyReadinessObligationCount ?? 0),
+    releaseNextActions: asStringArray(normalized.releaseNextActions),
+    unmetObligations: asStringArray(normalized.unmetObligations)
+  };
+}
+
+function adaptProjectTraceLink(item: Record<string, unknown>): ProjectTraceLinkDto {
+  return {
+    traceLinkId: String(item.id ?? "trace-link"),
+    relation: String(item.relation ?? "related"),
+    sourceKind: String(item.sourceKind ?? "unknown"),
+    sourceId: String(item.sourceId ?? ""),
+    targetKind: String(item.targetKind ?? "unknown"),
+    targetId: String(item.targetId ?? ""),
+    status: firstString(item.status) ?? null
+  };
+}
+
+function adaptProjectTraceNeighborhood(item: Record<string, unknown>): ProjectTraceNeighborhoodDto {
+  return {
+    entityKind: String(item.entityKind ?? "unknown"),
+    entityId: String(item.entityId ?? ""),
+    count: Number(item.count ?? 0),
+    outbound: asRecordArray(item.outbound).map(adaptProjectTraceLink),
+    inbound: asRecordArray(item.inbound).map(adaptProjectTraceLink)
+  };
+}
+
+function adaptAlignmentState(item: Record<string, unknown>): AlignmentStateDto | null {
+  if (Object.keys(item).length === 0) {
+    return null;
+  }
+  return {
+    intentId: firstString(item.intentId) ?? null,
+    score: Number(item.score ?? 0),
+    divergenceTypes: asStringArray(item.divergenceTypes),
+    confidence: Number(item.confidence ?? 0),
+    status: String(item.status ?? "unknown"),
+    lastEvaluated:
+      item.lastEvaluated == null
+        ? null
+        : typeof item.lastEvaluated === "number"
+          ? item.lastEvaluated
+          : String(item.lastEvaluated),
+    gapCount: Number(item.gapCount ?? 0),
+    linkageState: Object.keys(asRecord(item.linkageState)).length > 0 ? asRecord(item.linkageState) : null,
+    validationState: Object.keys(asRecord(item.validationState)).length > 0 ? asRecord(item.validationState) : null,
+    summary: Object.keys(asRecord(item.summary)).length > 0 ? asRecord(item.summary) : null
+  };
+}
+
+function adaptReconciliationDecisionAction(item: Record<string, unknown>): ReconciliationDecisionActionDto {
+  return {
+    kind: String(item.kind ?? "unknown"),
+    target: String(item.target ?? "unknown"),
+    reason: String(item.reason ?? "")
+  };
+}
+
+function adaptReconciliationDecisionTriggerEvent(item: Record<string, unknown>): ReconciliationDecisionTriggerEventDto {
+  return {
+    eventId: String(item.eventId ?? "unknown"),
+    kind: String(item.kind ?? "unknown"),
+    family: firstString(item.family) ?? null,
+    entityId: firstString(item.entityId) ?? null,
+    threadId: firstString(item.threadId) ?? null,
+    turnId: firstString(item.turnId) ?? null,
+    timestamp:
+      item.timestamp == null
+        ? null
+        : typeof item.timestamp === "number"
+          ? item.timestamp
+          : String(item.timestamp)
+  };
+}
+
+function adaptReconciliationDecision(item: Record<string, unknown>): ReconciliationDecisionDto | null {
+  if (Object.keys(item).length === 0) {
+    return null;
+  }
+  const rawDecision = String(item.decision ?? "maintain");
+  const decision =
+    rawDecision === "runtime" || rawDecision === "intent" || rawDecision === "co-evolve" || rawDecision === "maintain"
+      ? rawDecision
+      : "maintain";
+  return {
+    intentId: firstString(item.intentId) ?? null,
+    alignmentStatus: String(item.alignmentStatus ?? "unknown"),
+    divergenceTypes: asStringArray(item.divergenceTypes),
+    decision,
+    proposedActions: asRecordArray(item.proposedActions).map(adaptReconciliationDecisionAction),
+    triggerEvents: asRecordArray(item.triggerEvents).map(adaptReconciliationDecisionTriggerEvent),
+    approvalPosture: String(item.approvalPosture ?? "unknown"),
+    confidence: Number(item.confidence ?? 0),
+    requiresApproval: Boolean(item.requiresApprovalP ?? item.requiresApproval ?? false),
+    rationale: Object.keys(asRecord(item.rationale)).length > 0 ? asRecord(item.rationale) : null,
+    lastEvaluated:
+      item.lastEvaluated == null
+        ? null
+        : typeof item.lastEvaluated === "number"
+          ? item.lastEvaluated
+          : String(item.lastEvaluated)
+  };
+}
+
+function adaptIntentDetail(item: Record<string, unknown>): IntentDetailDto | null {
+  if (Object.keys(item).length === 0) {
+    return null;
+  }
+
+  const scopeSummary = asRecord(item.scopeSummary);
+  const scope = asRecord(item.scope);
+  return {
+    id: firstString(item.id) ?? "",
+    description: firstString(item.description) ?? "",
+    status: firstString(item.status) ?? "active",
+    priority: firstString(item.priority) ?? null,
+    version: item.version == null || Number.isNaN(Number(item.version)) ? 1 : Number(item.version),
+    scopeSummary: Object.keys(scopeSummary).length > 0
+      ? {
+          symbolCount: scopeSummary.symbolCount == null || Number.isNaN(Number(scopeSummary.symbolCount)) ? 0 : Number(scopeSummary.symbolCount),
+          systemCount: scopeSummary.systemCount == null || Number.isNaN(Number(scopeSummary.systemCount)) ? 0 : Number(scopeSummary.systemCount),
+          workflowCount: scopeSummary.workflowCount == null || Number.isNaN(Number(scopeSummary.workflowCount)) ? 0 : Number(scopeSummary.workflowCount)
+        }
+      : null,
+    linkedRuntimeObjectCount: item.linkedRuntimeObjectCount == null || Number.isNaN(Number(item.linkedRuntimeObjectCount)) ? 0 : Number(item.linkedRuntimeObjectCount),
+    linkedSourceArtifactCount: item.linkedSourceArtifactCount == null || Number.isNaN(Number(item.linkedSourceArtifactCount)) ? 0 : Number(item.linkedSourceArtifactCount),
+    linkedEventCount: item.linkedEventCount == null || Number.isNaN(Number(item.linkedEventCount)) ? 0 : Number(item.linkedEventCount),
+    linkedMutationCount: item.linkedMutationCount == null || Number.isNaN(Number(item.linkedMutationCount)) ? 0 : Number(item.linkedMutationCount),
+    createdAt: firstString(item.createdAt) ?? (typeof item.createdAt === "number" ? item.createdAt : null),
+    updatedAt: firstString(item.updatedAt) ?? (typeof item.updatedAt === "number" ? item.updatedAt : null),
+    scope: Object.keys(scope).length > 0
+      ? {
+          symbols: asStringArray(scope.symbols),
+          systems: asStringArray(scope.systems),
+          workflows: asStringArray(scope.workflows)
+        }
+      : null,
+    constraints: asRecordArray(item.constraints),
+    expectedBehaviors: asStringArray(item.expectedBehaviors),
+    nonGoals: asStringArray(item.nonGoals),
+    linkedRuntimeObjects: asStringArray(item.linkedRuntimeObjects),
+    linkedSourceArtifacts: asStringArray(item.linkedSourceArtifacts),
+    linkedEventIds: asStringArray(item.linkedEventIds),
+    linkedMutationIds: asStringArray(item.linkedMutationIds),
+    metadata: Object.keys(asRecord(item.metadata)).length > 0 ? asRecord(item.metadata) : null,
+    current: Boolean(item.currentP ?? item.current),
+    diff: asRecordArray(item.diff)
+  };
+}
+
+function adaptCorrectiveAction(item: Record<string, unknown>): CorrectiveActionDto {
+  return {
+    kind: firstString(item.kind) ?? null,
+    target: firstString(item.target) ?? null,
+    reason: firstString(item.reason) ?? null
+  };
+}
+
+function adaptCorrectiveTriggerEvent(item: Record<string, unknown>): CorrectiveTriggerEventDto {
+  return {
+    eventId: firstString(item.eventId) ?? null,
+    kind: firstString(item.kind) ?? null,
+    family: firstString(item.family) ?? null,
+    entityId: firstString(item.entityId) ?? null
+  };
+}
+
+function adaptCorrectiveContext(item: Record<string, unknown>): CorrectiveContextDto | null {
+  if (Object.keys(item).length === 0) {
+    return null;
+  }
+
+  return {
+    kind: String(item.kind ?? "unknown"),
+    intentId: firstString(item.intentId) ?? null,
+    decision: firstString(item.decision) ?? null,
+    approvalPosture: firstString(item.approvalPosture) ?? null,
+    alignmentStatus: firstString(item.alignmentStatus) ?? null,
+    alignmentScore:
+      item.alignmentScore == null || Number.isNaN(Number(item.alignmentScore)) ? null : Number(item.alignmentScore),
+    proposedActions: asRecordArray(item.proposedActions).map(adaptCorrectiveAction),
+    triggerEvents: asRecordArray(item.triggerEvents).map(adaptCorrectiveTriggerEvent)
+  };
+}
+
+function adaptProjectListResponse(
+  response: RawServiceResponse<Record<string, unknown>>
+): QueryResultDto<ProjectListDto> {
+  const data = asRecord(response.data);
+  return {
+    contractVersion: response.contractVersion,
+    domain: "project",
+    operation: response.operation,
+    kind: "query",
+    status: response.status === "error" ? "error" : "ok",
+    data: {
+      currentProjectId: firstString(data.currentProjectId) ?? null,
+      projects: asRecordArray(data.projects).map(adaptProjectSummary)
+    },
+    metadata: normalizeMetadata(response.metadata)
+  };
+}
+
+function adaptProjectDetailResponse(
+  response: RawServiceResponse<Record<string, unknown>>
+): QueryResultDto<ProjectDetailDto> {
+  const data = asRecord(response.data);
+  const summary = adaptProjectSummary(data);
+  const testingEvidence = asRecord(data.testingEvidence);
+  const latestReport = asRecord(testingEvidence.latestReport);
+  const coverage = asRecord(testingEvidence.coverage);
+  const performance = asRecord(testingEvidence.performance);
+  const qualityGateEvidence = asRecord(data.qualityGateEvidence);
+  const fallbackQualityGateEvidence =
+    Object.keys(qualityGateEvidence).length > 0
+      ? qualityGateEvidence
+      : {
+          qualityGates: data.qualityGates,
+          qualityGateSummary: data.qualityGateSummary
+        };
+  return {
+    contractVersion: response.contractVersion,
+    domain: "project",
+    operation: response.operation,
+    kind: "query",
+    status: response.status === "error" ? "error" : "ok",
+    data: {
+      ...summary,
+      constitution: Object.keys(asRecord(data.constitution)).length > 0 ? asRecord(data.constitution) : null,
+      requirements: asRecordArray(data.requirements).map(adaptProjectRequirement),
+      featureSpecifications: asRecordArray(data.featureSpecifications).map(adaptProjectFeatureSpecification),
+      designSystem: Object.keys(asRecord(data.designSystem)).length > 0 ? asRecord(data.designSystem) : null,
+      styleGuide: Object.keys(asRecord(data.styleGuide)).length > 0 ? asRecord(data.styleGuide) : null,
+      testingStrategy: adaptProjectTestingStrategy(asRecord(data.testingStrategy)),
+      releaseReadiness: adaptProjectReleaseReadiness(asRecord(data.releaseReadiness)),
+      readinessObligations: asRecordArray(data.readinessObligations).map(adaptProjectReadinessObligation),
+      userJourneys: asRecordArray(data.userJourneys).map(adaptProjectUserJourney),
+      nonFunctionalRequirements: asRecordArray(data.nonFunctionalRequirements).map(adaptProjectRequirement),
+      architectureDecisions: asRecordArray(data.architectureDecisions).map(adaptProjectArchitectureDecision),
+      linkedWorkItemIds: asStringArray(data.linkedWorkItemIds),
+      linkedIncidentIds: asStringArray(data.linkedIncidentIds),
+      linkedTestingHarnessIds: asStringArray(data.linkedTestingHarnessIds),
+      linkedWorkItems: asRecordArray(data.linkedWorkItems).map(adaptProjectLinkedWorkItem),
+      linkedIncidents: asRecordArray(data.linkedIncidents).map(adaptProjectLinkedIncident),
+      linkedTestingHarnesses: asRecordArray(data.linkedTestingHarnesses).map(adaptProjectTestingHarness),
+      testingEvidence:
+        Object.keys(testingEvidence).length > 0
+          ? {
+              latestReport:
+                Object.keys(latestReport).length > 0
+                  ? {
+                      generatedAt: firstString(latestReport.generatedAt) ?? null,
+                      suiteId: firstString(latestReport.suiteId) ?? null,
+                      summary: Object.keys(asRecord(latestReport.summary)).length > 0 ? asRecord(latestReport.summary) : null
+                    }
+                  : null,
+              coverage: {
+                indexPath: firstString(coverage.indexPath) ?? null,
+                present: Boolean(coverage.presentP ?? coverage.present)
+              },
+              performance: Object.keys(performance).length > 0 ? performance : null,
+              suiteStatuses: asRecordArray(testingEvidence.suiteStatuses).map(adaptProjectTestingEvidenceSuiteStatus),
+              evidenceStatus: adaptProjectTestingEvidenceStatus(asRecord(testingEvidence.evidenceStatus))
+            }
+          : null,
+      qualityGateEvidence:
+        Object.keys(asRecord(fallbackQualityGateEvidence)).length > 0
+          ? adaptProjectQualityGateEvidence(asRecord(fallbackQualityGateEvidence))
+          : null,
+      readinessSummary: adaptProjectReadinessSummary(asRecord(data.readinessSummary)),
+      alignmentState: adaptAlignmentState(asRecord(data.alignmentState)),
+      reconciliationDecision: adaptReconciliationDecision(asRecord(data.reconciliationDecision)),
+      traceNeighborhood:
+        Object.keys(asRecord(data.traceNeighborhood)).length > 0
+          ? adaptProjectTraceNeighborhood(asRecord(data.traceNeighborhood))
+          : null,
+      metadata: Object.keys(asRecord(data.metadata)).length > 0 ? asRecord(data.metadata) : null
     },
     metadata: normalizeMetadata(response.metadata)
   };
@@ -1520,6 +3002,20 @@ function adaptCreateConversationThreadResponse(
   };
 }
 
+function adaptCreateProjectResponse(
+  response: RawServiceResponse<Record<string, unknown>>
+): CommandResultDto<ProjectDetailDto> {
+  return {
+    contractVersion: response.contractVersion,
+    domain: "project",
+    operation: response.operation,
+    kind: "command",
+    status: response.status === "error" ? "error" : "ok",
+    data: adaptProjectDetailResponse(response).data,
+    metadata: normalizeMetadata(response.metadata)
+  };
+}
+
 function adaptSendConversationMessageResponse(
   response: RawServiceResponse<Record<string, unknown>>
 ): CommandResultDto<SendConversationMessageResultDto> {
@@ -1617,15 +3113,27 @@ function adaptTurnDetailResponse(
 export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
   private currentBinding: BindingDto | null = DEFAULT_LIVE_BINDING;
   private bridgeQueue: Promise<void> = Promise.resolve();
+  private focusedWorkspaceOverride: WorkspaceId | null = null;
 
   private preferences: DesktopPreferencesDto = {
     lastWorkspace: "environment",
     sidebarPinned: true,
     sidebarWidth: null,
+    sidebarActivePanelId: "shell-navigation",
+    sidebarDockedPanelIds: ["shell-navigation", "shell-utilities"],
     canvasPinned: true,
     inspectorPinned: true,
     inspectorWidth: null,
+    inspectorActivePanelId: "workspace-inspector",
+    inspectorDockedPanelIds: ["workspace-inspector", "editor-symbol"],
     themePreference: "system",
+    desktopSurfaceView: {
+      tooltipScalePercent: 100,
+      controlIconScalePercent: 100,
+      dockIconScalePercent: 100,
+      conversationTextScalePercent: 100,
+      sourceCodeTextScalePercent: 100
+    },
     currentProjectId: "project-live-environment",
     projects: [
       {
@@ -1656,6 +3164,7 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
       parenDepthColors: ["#6ec0c2", "#f4b267", "#9f8cff", "#7bc47f", "#f07c9b", "#56a3ff"]
     }
   };
+  private desktopPreferencesWriteQueue: Promise<DesktopPreferencesDto> = Promise.resolve(this.preferences);
 
   constructor(private readonly options: LiveAdapterOptions) {}
 
@@ -1692,6 +3201,95 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
         authority: "environment",
         binding: nextBinding
       }
+    };
+  }
+
+  async getEnvironmentImageRegistry(): Promise<QueryResultDto<EnvironmentImageRegistryDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "environment.image-registry",
+      this.currentBinding?.environmentId
+    );
+    return {
+      contractVersion: response.contractVersion,
+      domain: "environment",
+      operation: "environment.image-registry",
+      kind: "query",
+      status: response.status === "error" ? "error" : "ok",
+      data: response.data as unknown as EnvironmentImageRegistryDto,
+      metadata: normalizeMetadata(response.metadata)
+    };
+  }
+
+  async loadEnvironmentImage(imageIdOrName: string): Promise<CommandResultDto<BindingDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "environment.load-image",
+      this.currentBinding?.environmentId,
+      { imageIdOrName }
+    );
+    const summary = response.data.summary as Record<string, unknown> | undefined;
+    const environmentId =
+      (summary?.id as string | undefined) ??
+      (response.metadata?.environmentId as string | undefined) ??
+      this.currentBinding?.environmentId ??
+      DEFAULT_LIVE_BINDING.environmentId;
+    const binding: BindingDto = {
+      environmentId,
+      sessionId: this.currentBinding?.sessionId ?? DEFAULT_LIVE_BINDING.sessionId
+    };
+    this.currentBinding = binding;
+    return {
+      contractVersion: response.contractVersion,
+      domain: "host",
+      operation: "host.load_environment_image",
+      kind: "command",
+      status: response.status === "error" ? "error" : "ok",
+      data: binding,
+      metadata: normalizeMetadata(response.metadata)
+    };
+  }
+
+  async saveEnvironmentImage(input: {
+    name: string;
+    overwrite?: boolean;
+  }): Promise<CommandResultDto<EnvironmentImageRecordDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "environment.save-image",
+      this.currentBinding?.environmentId,
+      { imageName: input.name, overwrite: Boolean(input.overwrite) }
+    );
+    return {
+      contractVersion: response.contractVersion,
+      domain: "host",
+      operation: "host.save_environment_image",
+      kind: "command",
+      status: response.status === "error" ? "error" : "ok",
+      data: response.data.image as EnvironmentImageRecordDto,
+      metadata: normalizeMetadata(response.metadata)
+    };
+  }
+
+  async revertEnvironmentToImage(): Promise<CommandResultDto<BindingDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "environment.revert-image",
+      this.currentBinding?.environmentId
+    );
+    const summary = response.data.summary as Record<string, unknown> | undefined;
+    const binding: BindingDto = {
+      environmentId:
+        (summary?.id as string | undefined) ??
+        this.currentBinding?.environmentId ??
+        DEFAULT_LIVE_BINDING.environmentId,
+      sessionId: this.currentBinding?.sessionId ?? DEFAULT_LIVE_BINDING.sessionId
+    };
+    this.currentBinding = binding;
+    return {
+      contractVersion: response.contractVersion,
+      domain: "host",
+      operation: "host.revert_environment_image",
+      kind: "command",
+      status: response.status === "error" ? "error" : "ok",
+      data: binding,
+      metadata: normalizeMetadata(response.metadata)
     };
   }
 
@@ -1741,6 +3339,149 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
       }
     );
     return adaptEventStreamResponse(response);
+  }
+
+  async consoleLogStream(
+    input: ConsoleLogQueryInput
+  ): Promise<QueryResultDto<ConsoleLogStreamDto>> {
+    if ((input.plane ?? "environment") === "host") {
+      const entries = await collectHostConsoleEntries(input.limit ?? 80);
+      const typeFilter = input.types?.length ? new Set(input.types) : null;
+      const sourceFilter = input.sources?.length ? new Set(input.sources) : null;
+      const filtered = entries.filter((entry) => {
+        if (typeFilter && !typeFilter.has(entry.type)) {
+          return false;
+        }
+        if (sourceFilter && !sourceFilter.has(entry.source)) {
+          return false;
+        }
+        return true;
+      });
+      return {
+        contractVersion: 1,
+        domain: "console",
+        operation: "console.stream",
+        kind: "query",
+        status: "ok",
+        data: {
+          plane: "host",
+          entries: filtered,
+          nextCursor: filtered[filtered.length - 1]?.cursor ?? null,
+          summary:
+            filtered.length > 0
+              ? `Projected ${filtered.length} host console entries from recent macOS log history.`
+              : "No recent host console entries matched the current host-console filter."
+        },
+        metadata: {
+          authority: "environment",
+          binding: this.currentBinding,
+          readModel: "host-console-stream-v1"
+        }
+      };
+    }
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "console.stream",
+      input.environmentId,
+      {
+        afterCursor: input.fromCursor,
+        limit: input.limit ?? 50,
+        type: input.types?.[0],
+        source: input.sources?.[0]
+      }
+    );
+    return adaptConsoleLogStreamResponse(response);
+  }
+
+  async diagnosticReportList(
+    environmentId?: string
+  ): Promise<QueryResultDto<DiagnosticReportSummaryDto[]>> {
+    const reports = await collectHostDiagnosticReports();
+    return {
+      contractVersion: 1,
+      domain: "diagnostic",
+      operation: "diagnostic.report_list",
+      kind: "query",
+      status: "ok",
+      data: reports,
+      metadata: {
+        authority: "environment",
+        binding: {
+          environmentId: environmentId ?? this.currentBinding?.environmentId ?? "live-environment",
+          sessionId: this.currentBinding?.sessionId ?? null
+        },
+        readModel: "host-diagnostic-report-list-v1"
+      }
+    };
+  }
+
+  async diagnosticReportDetail(
+    reportId: string,
+    environmentId?: string
+  ): Promise<QueryResultDto<DiagnosticReportDetailDto>> {
+    let contentPreview: string | null = null;
+    let byteSize: number | null = null;
+    try {
+      const info = await stat(reportId);
+      byteSize = info.size;
+      contentPreview = (await readFile(reportId, "utf8")).slice(0, 12000);
+    } catch {
+      contentPreview = null;
+    }
+    const summary =
+      (await this.diagnosticReportList(environmentId)).data.find((report) => report.reportId === reportId) ?? {
+        reportId,
+        kind: diagnosticKindForPath(reportId),
+        title: basename(reportId),
+        summary: diagnosticSummary(diagnosticKindForPath(reportId), processNameFromDiagnosticFile(basename(reportId)), basename(dirname(reportId))),
+        source: basename(dirname(reportId)),
+        processName: processNameFromDiagnosticFile(basename(reportId)),
+        pid: null,
+        createdAt: new Date().toISOString(),
+        path: reportId
+      };
+    const preview = contentPreview ? diagnosticPreviewMetadata(contentPreview) : null;
+    const resolvedKind = diagnosticKindFromMetadata(reportId, preview ?? diagnosticPreviewMetadata(""));
+    return {
+      contractVersion: 1,
+      domain: "diagnostic",
+      operation: "diagnostic.report_detail",
+      kind: "query",
+      status: "ok",
+      data: {
+        ...summary,
+        kind: resolvedKind,
+        processName: preview?.processName ?? summary.processName ?? null,
+        pid: preview?.pid ?? summary.pid ?? null,
+        createdAt: preview?.timestamp ?? summary.createdAt,
+        summary: diagnosticSummary(
+          resolvedKind,
+          preview?.processName ?? summary.processName ?? null,
+          summary.source,
+          preview
+        ),
+        contentPreview,
+        metadata: {
+          authority: "host",
+          bytesPreviewed: contentPreview?.length ?? 0,
+          byteSize,
+          extension: reportId.split(".").pop() ?? null,
+          rootCategory: basename(dirname(reportId)),
+          incidentId: preview?.incidentId ?? null,
+          parentProc: preview?.parentProc ?? null,
+          responsibleProc: preview?.responsibleProc ?? null,
+          bugType: preview?.bugType ?? null,
+          appName: preview?.appName ?? null
+        }
+      },
+      metadata: {
+        authority: "environment",
+        binding: {
+          environmentId: environmentId ?? this.currentBinding?.environmentId ?? "live-environment",
+          sessionId: this.currentBinding?.sessionId ?? null
+        },
+        readModel: "host-diagnostic-report-detail-v1"
+      }
+    };
   }
 
   async artifactList(environmentId?: string): Promise<QueryResultDto<ArtifactSummaryDto[]>> {
@@ -1864,6 +3605,16 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
     return adaptRuntimeSummaryResponse(response);
   }
 
+  async runtimeTelemetrySnapshot(
+    environmentId?: string
+  ): Promise<QueryResultDto<RuntimeTelemetrySnapshotDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "runtime.telemetry",
+      environmentId
+    );
+    return adaptRuntimeTelemetryResponse(response);
+  }
+
   async runtimeInspectSymbol(input: {
     environmentId: string;
     symbol: string;
@@ -1910,6 +3661,62 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
     return adaptPackageBrowserResponse(response);
   }
 
+  async fileSystemDirectory(input?: {
+    path?: string;
+  }): Promise<QueryResultDto<FileSystemDirectoryListingDto>> {
+    const currentPath = resolve(input?.path && input.path.trim().length > 0 ? input.path : this.options.projectDir);
+    const entries = await readdir(currentPath, { withFileTypes: true }).catch((error) => {
+      if (error && typeof error === "object" && "code" in error && (error.code === "EPERM" || error.code === "EACCES")) {
+        return [];
+      }
+      throw error;
+    });
+    const directories: FileSystemEntryDto[] = [];
+    const files: FileSystemEntryDto[] = [];
+
+    for (const entry of entries) {
+      if (entry.name.startsWith(".")) {
+        continue;
+      }
+      const entryPath = resolve(currentPath, entry.name);
+      if (entry.isDirectory()) {
+        directories.push({ name: entry.name, path: entryPath, kind: "directory" });
+        continue;
+      }
+      if (entry.isFile()) {
+        files.push({ name: entry.name, path: entryPath, kind: "file" });
+        continue;
+      }
+      const entryStat = await stat(entryPath).catch(() => null);
+      if (entryStat?.isDirectory()) {
+        directories.push({ name: entry.name, path: entryPath, kind: "directory" });
+      } else if (entryStat?.isFile()) {
+        files.push({ name: entry.name, path: entryPath, kind: "file" });
+      }
+    }
+
+    directories.sort((left, right) => left.name.localeCompare(right.name));
+    files.sort((left, right) => left.name.localeCompare(right.name));
+
+    return {
+      contractVersion: 1,
+      domain: "filesystem",
+      operation: "filesystem.directory",
+      kind: "query",
+      status: "ok",
+      data: {
+        currentPath,
+        parentPath: dirname(currentPath) === currentPath ? null : dirname(currentPath),
+        directories,
+        files
+      },
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding
+      }
+    };
+  }
+
   async sourcePreview(input: {
     environmentId: string;
     path: string;
@@ -1944,6 +3751,44 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
         summary: `Source preview for ${absolutePath}.`,
         content: snippet,
         editableContent: content
+      },
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding
+      }
+    };
+  }
+
+  async writeSourceFile(input: {
+    path: string;
+    content: string;
+    overwrite?: boolean;
+  }): Promise<CommandResultDto<FileSystemWriteResultDto>> {
+    const absolutePath = input.path.startsWith("/")
+      ? input.path
+      : resolve(this.options.projectDir, input.path);
+    const existingStat = await stat(absolutePath).catch(() => null);
+    if (existingStat?.isDirectory()) {
+      throw new Error(`Cannot save source into directory path: ${absolutePath}`);
+    }
+    if (existingStat && !input.overwrite) {
+      throw new Error(`File already exists and overwrite was not confirmed: ${absolutePath}`);
+    }
+    await writeFile(absolutePath, input.content, "utf8");
+    const overwritten = Boolean(existingStat);
+
+    return {
+      contractVersion: 1,
+      domain: "filesystem",
+      operation: "filesystem.write-source-file",
+      kind: "command",
+      status: "ok",
+      data: {
+        path: absolutePath,
+        overwritten,
+        summary: overwritten
+          ? `Overwrote source file ${absolutePath}.`
+          : `Saved new source file ${absolutePath}.`
       },
       metadata: {
         authority: "environment",
@@ -2174,6 +4019,427 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
     return adaptIncidentDetailResponse(response);
   }
 
+  async updateIncidentRemediationPlan(
+    input: UpdateIncidentRemediationPlanInput
+  ): Promise<CommandResultDto<IncidentDetailDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "incident.set-remediation-plan",
+      input.environmentId,
+      {
+        incidentId: input.incidentId,
+        remediationPlan: input.remediationPlan
+      }
+    );
+    const adapted = adaptIncidentDetailResponse(response);
+    return {
+      ...adapted,
+      kind: "command",
+      status: response.status === "error" ? "error" : "ok"
+    };
+  }
+
+  async createIntent(
+    input: CreateIntentInput
+  ): Promise<CommandResultDto<IntentDetailDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "intent.create",
+      input.environmentId,
+      {
+        description: input.description,
+        scope: input.scope,
+        constraints: input.constraints,
+        expectedBehaviors: input.expectedBehaviors,
+        nonGoals: input.nonGoals,
+        priority: input.priority,
+        version: input.version,
+        status: input.status,
+        linkedRuntimeObjects: input.linkedRuntimeObjects,
+        linkedSourceArtifacts: input.linkedSourceArtifacts,
+        linkedEventIds: input.linkedEventIds,
+        linkedMutationIds: input.linkedMutationIds,
+        metadata: input.metadata
+      }
+    );
+
+    return {
+      contractVersion: response.contractVersion,
+      domain: "intent",
+      operation: "intent.create",
+      kind: "command",
+      status: response.status === "error" ? "error" : "ok",
+      data: adaptIntentDetail(asRecord(response.data)) ?? {
+        id: "",
+        description: input.description,
+        status: input.status ?? "active",
+        priority: input.priority ?? null,
+        version: input.version ?? 1,
+        scopeSummary: null,
+        linkedRuntimeObjectCount: 0,
+        linkedSourceArtifactCount: 0,
+        linkedEventCount: 0,
+        linkedMutationCount: 0,
+        createdAt: null,
+        updatedAt: null,
+        scope: input.scope ?? null,
+        constraints: input.constraints ?? [],
+        expectedBehaviors: input.expectedBehaviors ?? [],
+        nonGoals: input.nonGoals ?? [],
+        linkedRuntimeObjects: input.linkedRuntimeObjects ?? [],
+        linkedSourceArtifacts: input.linkedSourceArtifacts ?? [],
+        linkedEventIds: input.linkedEventIds ?? [],
+        linkedMutationIds: input.linkedMutationIds ?? [],
+        metadata: input.metadata ?? null,
+        current: true,
+        diff: null
+      },
+      metadata: normalizeMetadata(response.metadata)
+    };
+  }
+
+  async createProject(
+    input: CreateProjectInput
+  ): Promise<CommandResultDto<ProjectDetailDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "project.create",
+      input.environmentId,
+      {
+        title: input.title,
+        summary: input.summary
+      }
+    );
+    return adaptCreateProjectResponse(response);
+  }
+
+  async updateProjectConstitution(
+    input: UpdateProjectConstitutionInput
+  ): Promise<CommandResultDto<ProjectDetailDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "project.set-constitution",
+      input.environmentId,
+      {
+        projectId: input.projectId,
+        constitution: input.constitution
+      }
+    );
+    return adaptCreateProjectResponse(response);
+  }
+
+  async updateProjectDesignSystem(
+    input: UpdateProjectDesignSystemInput
+  ): Promise<CommandResultDto<ProjectDetailDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "project.set-design-system",
+      input.environmentId,
+      {
+        projectId: input.projectId,
+        designSystem: input.designSystem
+      }
+    );
+    return adaptCreateProjectResponse(response);
+  }
+
+  async updateProjectStyleGuide(
+    input: UpdateProjectStyleGuideInput
+  ): Promise<CommandResultDto<ProjectDetailDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "project.set-style-guide",
+      input.environmentId,
+      {
+        projectId: input.projectId,
+        styleGuide: input.styleGuide
+      }
+    );
+    return adaptCreateProjectResponse(response);
+  }
+
+  async updateProjectTestingStrategy(
+    input: UpdateProjectTestingStrategyInput
+  ): Promise<CommandResultDto<ProjectDetailDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "project.set-testing-strategy",
+      input.environmentId,
+      {
+        projectId: input.projectId,
+        testingStrategy: input.testingStrategy
+      }
+    );
+    return adaptCreateProjectResponse(response);
+  }
+
+  async updateProjectReleaseReadiness(
+    input: UpdateProjectReleaseReadinessInput
+  ): Promise<CommandResultDto<ProjectDetailDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "project.set-release-readiness",
+      input.environmentId,
+      {
+        projectId: input.projectId,
+        releaseReadiness: input.releaseReadiness
+      }
+    );
+    return adaptCreateProjectResponse(response);
+  }
+
+  async updateProjectReadinessObligations(
+    input: UpdateProjectReadinessObligationsInput
+  ): Promise<CommandResultDto<ProjectDetailDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "project.set-readiness-obligations",
+      input.environmentId,
+      {
+        projectId: input.projectId,
+        readinessObligations: input.readinessObligations
+      }
+    );
+    return adaptCreateProjectResponse(response);
+  }
+
+  async appendProjectRequirement(
+    input: AppendProjectRequirementInput
+  ): Promise<CommandResultDto<ProjectDetailDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "project.append-requirement",
+      input.environmentId,
+      {
+        projectId: input.projectId,
+        id: input.id,
+        title: input.title,
+        summary: input.summary,
+        scope: input.scope,
+        kind: input.kind,
+        priority: input.priority,
+        status: input.status,
+        verificationKind: input.verificationKind,
+        linkedArtifactIds: input.linkedArtifactIds,
+        nonFunctional: input.nonFunctional
+      }
+    );
+    return adaptCreateProjectResponse(response);
+  }
+
+  async appendProjectFeatureSpecification(
+    input: AppendProjectFeatureSpecificationInput
+  ): Promise<CommandResultDto<ProjectDetailDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "project.append-feature-specification",
+      input.environmentId,
+      {
+        projectId: input.projectId,
+        id: input.id,
+        title: input.title,
+        summary: input.summary,
+        status: input.status,
+        acceptanceCriteria: input.acceptanceCriteria,
+        linkedRequirementIds: input.linkedRequirementIds,
+        linkedJourneyIds: input.linkedJourneyIds
+      }
+    );
+    return adaptCreateProjectResponse(response);
+  }
+
+  async appendProjectUserJourney(
+    input: AppendProjectUserJourneyInput
+  ): Promise<CommandResultDto<ProjectDetailDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "project.append-user-journey",
+      input.environmentId,
+      {
+        projectId: input.projectId,
+        id: input.id,
+        title: input.title,
+        summary: input.summary,
+        actors: input.actors,
+        entrypoints: input.entrypoints,
+        steps: input.steps,
+        outcomes: input.outcomes,
+        edgeCases: input.edgeCases
+      }
+    );
+    return adaptCreateProjectResponse(response);
+  }
+
+  async appendProjectArchitectureDecision(
+    input: AppendProjectArchitectureDecisionInput
+  ): Promise<CommandResultDto<ProjectDetailDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "project.append-architecture-decision",
+      input.environmentId,
+      {
+        projectId: input.projectId,
+        id: input.id,
+        title: input.title,
+        summary: input.summary,
+        status: input.status,
+        drivers: input.drivers,
+        consequences: input.consequences,
+        stackChoices: input.stackChoices,
+        linkedRequirementIds: input.linkedRequirementIds
+      }
+    );
+    return adaptCreateProjectResponse(response);
+  }
+
+  async appendProjectSourceRoot(
+    input: AppendProjectSourceRootInput
+  ): Promise<CommandResultDto<ProjectDetailDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "project.append-source-root",
+      input.environmentId,
+      {
+        projectId: input.projectId,
+        sourceRoot: input.sourceRoot
+      }
+    );
+    return adaptCreateProjectResponse(response);
+  }
+
+  async bindProjectTestingHarness(
+    input: BindProjectTestingHarnessInput
+  ): Promise<CommandResultDto<ProjectDetailDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "project.bind-testing-harness",
+      input.environmentId,
+      {
+        projectId: input.projectId,
+        harnessId: input.harnessId
+      }
+    );
+    return adaptCreateProjectResponse(response);
+  }
+
+  async appendProjectQualityGate(
+    input: AppendProjectQualityGateInput
+  ): Promise<CommandResultDto<ProjectDetailDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "project.append-quality-gate",
+      input.environmentId,
+      {
+        projectId: input.projectId,
+        id: input.id,
+        title: input.title,
+        summary: input.summary,
+        status: input.status,
+        requiredHarnessIds: input.requiredHarnessIds,
+        minimumLinkedWorkItems: input.minimumLinkedWorkItems,
+        minimumLinkedIncidents: input.minimumLinkedIncidents,
+        requireSourceRoots: input.requireSourceRoots,
+        requiredTraceTargetKinds: input.requiredTraceTargetKinds,
+        maximumFailedTests: input.maximumFailedTests,
+        requireCoverage: input.requireCoverage,
+        maximumSayTurnLatencySeconds: input.maximumSayTurnLatencySeconds,
+        maximumEnvironmentSaveLoadSeconds: input.maximumEnvironmentSaveLoadSeconds,
+        requireRecoveryReady: input.requireRecoveryReady
+      }
+    );
+    return adaptCreateProjectResponse(response);
+  }
+
+  async resumeWorkItem(
+    input: ResumeWorkItemInput
+  ): Promise<CommandResultDto<WorkItemDetailDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "work-item.resume",
+      input.environmentId,
+      {
+        workItemId: input.workItemId,
+        note: input.note
+      }
+    );
+    return adaptWorkItemDetailCommandResponse(response);
+  }
+
+  async quarantineWorkItem(
+    input: QuarantineWorkItemInput
+  ): Promise<CommandResultDto<WorkItemDetailDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "work-item.quarantine",
+      input.environmentId,
+      {
+        workItemId: input.workItemId,
+        reason: input.reason
+      }
+    );
+    return adaptWorkItemDetailCommandResponse(response);
+  }
+
+  async rollbackWorkItem(
+    input: RollbackWorkItemInput
+  ): Promise<CommandResultDto<WorkItemDetailDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "work-item.rollback",
+      input.environmentId,
+      {
+        workItemId: input.workItemId,
+        reason: input.reason,
+        note: input.note
+      }
+    );
+    return adaptWorkItemDetailCommandResponse(response);
+  }
+
+  async completeWorkItemValidations(
+    input: CompleteWorkItemValidationsInput
+  ): Promise<CommandResultDto<WorkItemDetailDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "work-item.complete-validations",
+      input.environmentId,
+      {
+        workItemId: input.workItemId,
+        status: input.status
+      }
+    );
+    return adaptWorkItemDetailCommandResponse(response);
+  }
+
+  async steerWorkItem(
+    input: SteerWorkItemInput
+  ): Promise<CommandResultDto<WorkItemDetailDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "work-item.steer",
+      input.environmentId,
+      {
+        workItemId: input.workItemId,
+        phase: input.phase,
+        nextStep: input.nextStep,
+        note: input.note
+      }
+    );
+    return adaptWorkItemDetailCommandResponse(response);
+  }
+
+  async projectList(environmentId?: string): Promise<QueryResultDto<ProjectListDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "project.list",
+      environmentId
+    );
+    return adaptProjectListResponse(response);
+  }
+
+  async projectTestingHarnessInventory(environmentId?: string): Promise<QueryResultDto<ProjectTestingHarnessDto[]>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>[]>>(
+      "project.testing-harness-inventory",
+      environmentId
+    );
+    return {
+      contractVersion: response.contractVersion ?? 1,
+      domain: String(response.domain ?? "project"),
+      operation: String(response.operation ?? "testing-harness-inventory"),
+      kind: "query",
+      status: String(response.status ?? "ok") as "ok" | "error",
+      data: Array.isArray(response.data) ? response.data.map(adaptProjectTestingHarness) : [],
+      metadata: normalizeMetadata(response.metadata)
+    };
+  }
+
+  async projectDetail(projectId: string, environmentId?: string): Promise<QueryResultDto<ProjectDetailDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "project.detail",
+      environmentId,
+      { projectId }
+    );
+    return adaptProjectDetailResponse(response);
+  }
+
   async workItemList(environmentId?: string): Promise<QueryResultDto<WorkItemSummaryDto[]>> {
     const response = await this.invokeService<RawServiceResponse<Array<Record<string, unknown>>>>(
       "work-item.list",
@@ -2194,6 +4460,18 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
     return adaptWorkItemDetailResponse(response);
   }
 
+  async workItemPlan(
+    workItemId: string,
+    environmentId?: string
+  ): Promise<QueryResultDto<WorkItemPlanDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "work-item.plan",
+      environmentId,
+      { workItemId }
+    );
+    return adaptWorkItemPlanResponse(response);
+  }
+
   async workflowRecordDetail(
     workflowRecordId: string,
     environmentId?: string
@@ -2207,25 +4485,61 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
   }
 
   async focusWorkspace(workspace: WorkspaceId): Promise<void> {
+    this.focusedWorkspaceOverride = workspace;
     this.preferences.lastWorkspace = workspace;
+    await this.setDesktopPreferences({ lastWorkspace: workspace });
   }
 
   async getDesktopPreferences(): Promise<DesktopPreferencesDto> {
+    const response = await this.invokeService<RawServiceResponse<Partial<DesktopPreferencesDto>>>(
+      "desktop.preferences.get",
+      this.currentBinding?.environmentId
+    );
+    this.preferences = mergeDesktopPreferences(
+      this.preferences,
+      normalizeDesktopPreferencesPayload(response.data)
+    );
+    if (this.focusedWorkspaceOverride) {
+      this.preferences.lastWorkspace = this.focusedWorkspaceOverride;
+    }
     return this.preferences;
   }
 
   async setDesktopPreferences(
     patch: Partial<DesktopPreferencesDto>
   ): Promise<DesktopPreferencesDto> {
-    this.preferences = {
-      ...this.preferences,
-      ...patch,
-      lispCodeView: {
-        ...this.preferences.lispCodeView,
-        ...patch.lispCodeView
+    const write = async (): Promise<DesktopPreferencesDto> => {
+      const currentResponse = await this.invokeService<RawServiceResponse<Partial<DesktopPreferencesDto>>>(
+        "desktop.preferences.get",
+        this.currentBinding?.environmentId
+      );
+      const currentPreferences = mergeDesktopPreferences(
+        this.preferences,
+        normalizeDesktopPreferencesPayload(currentResponse.data)
+      );
+      const nextPreferences = mergeDesktopPreferences(currentPreferences, patch);
+      const response = await this.invokeService<RawServiceResponse<Partial<DesktopPreferencesDto>>>(
+        "desktop.preferences.set",
+        this.currentBinding?.environmentId,
+        { desktopPreferences: nextPreferences }
+      );
+      if (patch.lastWorkspace) {
+        this.focusedWorkspaceOverride = patch.lastWorkspace;
       }
+      this.preferences = mergeDesktopPreferences(
+        nextPreferences,
+        normalizeDesktopPreferencesPayload(response.data)
+      );
+      return this.preferences;
     };
-    return this.preferences;
+
+    const queued = this.desktopPreferencesWriteQueue.catch(() => this.preferences).then(write);
+    this.desktopPreferencesWriteQueue = queued.catch(() => this.preferences);
+    return queued;
+  }
+
+  async quitApp(): Promise<void> {
+    return;
   }
 
   async openEntityInNewWindow(_ref?: unknown): Promise<void> {
@@ -2245,6 +4559,7 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
 
     const bridgePath = resolve(__dirname, "../../scripts/live-service-bridge.lisp");
     const args = [
+      "--script",
       bridgePath,
       this.options.projectDir,
       this.options.environmentStatePath,
@@ -2256,24 +4571,50 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
       args.push(JSON.stringify(request));
     }
 
-    return this.enqueueBridgeCall(async () => {
-      const { stdout } = await execFileAsync("sbcl", ["--script", ...args], {
-        cwd: this.options.projectDir,
-        maxBuffer: 1024 * 1024
-      });
+    return this.enqueueBridgeCall(
+      () =>
+        new Promise<T>((resolvePromise, rejectPromise) => {
+          const child = spawn("sbcl", args, {
+            cwd: this.options.projectDir,
+            stdio: ["ignore", "pipe", "pipe"]
+          });
+          let stdout = "";
+          let stderr = "";
 
-      const parsed = camelizeKeys(JSON.parse(stdout)) as RawServiceResponse<unknown>;
-      const binding = parsed.metadata?.binding as BindingDto | null | undefined;
+          child.stdout.on("data", (chunk) => {
+            stdout += chunk.toString();
+          });
 
-      if (binding?.environmentId) {
-        this.currentBinding = {
-          environmentId: binding.environmentId,
-          sessionId: binding.sessionId ?? this.currentBinding?.sessionId ?? DEFAULT_LIVE_BINDING.sessionId
-        };
-      }
+          child.stderr.on("data", (chunk) => {
+            stderr += chunk.toString();
+          });
 
-      return parsed as T;
-    });
+          child.on("error", (error) => rejectPromise(error));
+          child.on("close", (code) => {
+            if (code !== 0) {
+              rejectPromise(new Error(stderr || `Service bridge exited with code ${code ?? "unknown"}.`));
+              return;
+            }
+
+            try {
+              const parsed = camelizeKeys(JSON.parse(stdout)) as RawServiceResponse<unknown>;
+              const binding = parsed.metadata?.binding as BindingDto | null | undefined;
+
+              if (binding?.environmentId) {
+                this.currentBinding = {
+                  environmentId: binding.environmentId,
+                  sessionId:
+                    binding.sessionId ?? this.currentBinding?.sessionId ?? DEFAULT_LIVE_BINDING.sessionId
+                };
+              }
+
+              resolvePromise(parsed as T);
+            } catch (error) {
+              rejectPromise(error);
+            }
+          });
+        })
+    );
   }
 
   private async invokeStreamingService<T>(
@@ -2377,7 +4718,7 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
 }
 
 export function resolveLiveAdapterOptions(): LiveAdapterOptions {
-  const transport = process.env.SBCL_AGENT_TRANSPORT === "pipe" ? "pipe" : "socket";
+  const transport = process.env.SBCL_AGENT_TRANSPORT === "socket" ? "socket" : "pipe";
   const endpoint =
     transport === "pipe"
       ? process.env.SBCL_AGENT_PIPE_COMMAND ?? "./bin/sbcl-agent"

@@ -3,7 +3,11 @@ export type HostState = "starting" | "ready" | "degraded" | "unavailable";
 export type WorkspaceId =
   | "dashboard"
   | "environment"
+  | "projects"
   | "conversations"
+  | "editor"
+  | "workspace"
+  | "transcript"
   | "browser"
   | "runtime"
   | "work"
@@ -26,6 +30,380 @@ export interface ProjectProfileDto {
   summary?: string;
 }
 
+export interface EnvironmentImageRecordDto {
+  imageId: string;
+  name: string;
+  path: string;
+  createdAt?: number | null;
+  updatedAt?: number | null;
+  lastOpenedAt?: number | null;
+  basisImageId?: string | null;
+  summary?: string | null;
+}
+
+export interface EnvironmentImageRegistryDto {
+  registryPath: string;
+  imagesRoot: string;
+  currentImageId?: string | null;
+  currentImageName?: string | null;
+  images: EnvironmentImageRecordDto[];
+  checkpointPolicy?: Record<string, unknown> | null;
+  runtimeManifest?: Record<string, unknown> | null;
+  recoveryManifest?: Record<string, unknown> | null;
+}
+
+export interface ProjectRequirementDto {
+  requirementId: string;
+  title: string;
+  summary: string;
+  scope: string;
+  kind: string;
+  priority: string;
+  status: string;
+  verificationKind?: string | null;
+  linkedArtifactIds: string[];
+}
+
+export interface ProjectFeatureSpecificationDto {
+  featureSpecId: string;
+  title: string;
+  summary: string;
+  status: string;
+  acceptanceCriteria: string[];
+  linkedRequirementIds: string[];
+  linkedJourneyIds: string[];
+}
+
+export interface ProjectUserJourneyDto {
+  journeyId: string;
+  title: string;
+  summary: string;
+  actors: string[];
+  entrypoints: string[];
+  steps: string[];
+  outcomes: string[];
+  edgeCases: string[];
+}
+
+export interface ProjectArchitectureDecisionDto {
+  architectureDecisionId: string;
+  title: string;
+  status: string;
+  summary: string;
+  drivers: string[];
+  consequences: string[];
+  stackChoices: string[];
+  linkedRequirementIds: string[];
+}
+
+export interface ProjectLinkedWorkItemDto {
+  workItemId: string;
+  title: string;
+  status: string;
+  workflowRecordId?: string | null;
+  pendingValidations: string[];
+  sourceMutationCount: number;
+}
+
+export interface ProjectLinkedIncidentDto {
+  incidentId: string;
+  title: string;
+  summary: string;
+  status: string;
+  kind: string;
+  workItemId?: string | null;
+  workflowRecordId?: string | null;
+}
+
+export interface ProjectTestingHarnessDto {
+  harnessId: string;
+  label: string;
+  entrypoint: string;
+  kind: string;
+  categories: string[];
+}
+
+export interface ProjectTestingStrategySuiteExpectationDto {
+  harnessId: string;
+  purpose?: string | null;
+  evidenceKinds: string[];
+}
+
+export interface ProjectTestingStrategyThresholdPolicyDto {
+  maxFailedTests?: number | null;
+  maxSayTurnLatencySeconds?: number | null;
+  maxEnvironmentSaveLoadSeconds?: number | null;
+  requireCoverage: boolean;
+  requireRecoveryReady: boolean;
+}
+
+export interface ProjectTestingStrategyDto {
+  requiredEvidence: string[];
+  suiteExpectations: ProjectTestingStrategySuiteExpectationDto[];
+  thresholdPolicy: ProjectTestingStrategyThresholdPolicyDto | null;
+}
+
+export interface ProjectReadinessObligationDto {
+  obligationId: string;
+  title: string;
+  summary: string;
+  status: string;
+  owner?: string | null;
+  dueWindow?: string | null;
+  blocking: boolean;
+  evidenceKinds: string[];
+}
+
+export interface ProjectTestingEvidenceStatusDto {
+  requiredEvidence: string[];
+  availableEvidence: string[];
+  missingEvidence: string[];
+  status: string;
+}
+
+export interface ProjectTestingEvidenceSuiteStatusDto {
+  harnessId: string;
+  purpose?: string | null;
+  linked: boolean;
+  evidenceKinds: string[];
+  satisfiedEvidenceKinds: string[];
+  missingEvidenceKinds: string[];
+  status: string;
+}
+
+export interface ProjectTestingEvidenceDto {
+  latestReport?: {
+    generatedAt?: string | null;
+    suiteId?: string | null;
+    summary?: Record<string, unknown> | null;
+  } | null;
+  coverage: {
+    indexPath?: string | null;
+    present: boolean;
+  };
+  performance?: Record<string, unknown> | null;
+  suiteStatuses: ProjectTestingEvidenceSuiteStatusDto[];
+  evidenceStatus: ProjectTestingEvidenceStatusDto | null;
+}
+
+export interface ProjectQualityGateDto {
+  gateId: string;
+  title: string;
+  summary: string;
+  status: string;
+  requiredHarnessIds: string[];
+  minimumLinkedWorkItems: number;
+  minimumLinkedIncidents: number;
+  requireSourceRoots: boolean;
+  requiredTraceTargetKinds: string[];
+  maximumFailedTests?: number | null;
+  requireCoverage: boolean;
+  maximumSayTurnLatencySeconds?: number | null;
+  maximumEnvironmentSaveLoadSeconds?: number | null;
+  requireRecoveryReady: boolean;
+}
+
+export interface ProjectQualityGateSummaryDto {
+  gateCount: number;
+  blockedCount: number;
+  readyCount: number;
+  readiness: string;
+}
+
+export interface ProjectQualityGateEvidenceDto {
+  qualityGates: ProjectQualityGateDto[];
+  qualityGateSummary: ProjectQualityGateSummaryDto | null;
+}
+
+export interface ProjectReadinessSummaryDto {
+  status: string;
+  testingReadiness: string;
+  qualityGateReadiness: string;
+  recoveryReadiness: string;
+  releaseReadinessStatus: string;
+  releaseReviewState: string;
+  releaseSignoffState: string;
+  releaseSignoffReady: boolean;
+  releaseSignoffSummary?: string | null;
+  releaseRequiredApprovers: string[];
+  releaseApprovedApprovers: string[];
+  releasePendingApprovers: string[];
+  releaseUnassignedApprovers: string[];
+  releaseSignoffOwnershipReady: boolean;
+  releaseCurrentPhase?: string | null;
+  releaseTargetPhase?: string | null;
+  releaseTransitionReady: boolean;
+  releaseTransitionSummary?: string | null;
+  suiteBlockedCount: number;
+  suiteReadyCount: number;
+  releaseStage?: string | null;
+  releaseSignoffStatus?: string | null;
+  readinessObligationCount: number;
+  blockedReadinessObligationCount: number;
+  readyReadinessObligationCount: number;
+  releaseNextActions: string[];
+  unmetObligations: string[];
+}
+
+export interface ProjectReleaseReadinessDto {
+  stage?: string | null;
+  signoffStatus?: string | null;
+  targetWindow?: string | null;
+  requiredApprovers: string[];
+  observationPlan: string[];
+  openRisks: string[];
+}
+
+export interface ProjectTraceLinkDto {
+  traceLinkId: string;
+  relation: string;
+  sourceKind: string;
+  sourceId: string;
+  targetKind: string;
+  targetId: string;
+  status?: string | null;
+}
+
+export interface ProjectTraceNeighborhoodDto {
+  entityKind: string;
+  entityId: string;
+  count: number;
+  outbound: ProjectTraceLinkDto[];
+  inbound: ProjectTraceLinkDto[];
+}
+
+export interface AlignmentStateDto {
+  intentId?: string | null;
+  score: number;
+  divergenceTypes: string[];
+  confidence: number;
+  status: string;
+  lastEvaluated?: string | number | null;
+  gapCount: number;
+  linkageState?: Record<string, unknown> | null;
+  validationState?: Record<string, unknown> | null;
+  summary?: Record<string, unknown> | null;
+}
+
+export interface ReconciliationDecisionActionDto {
+  kind: string;
+  target: string;
+  reason: string;
+}
+
+export interface ReconciliationDecisionTriggerEventDto {
+  eventId: string;
+  kind: string;
+  family?: string | null;
+  entityId?: string | null;
+  threadId?: string | null;
+  turnId?: string | null;
+  timestamp?: string | number | null;
+}
+
+export interface ReconciliationDecisionDto {
+  intentId?: string | null;
+  alignmentStatus: string;
+  divergenceTypes: string[];
+  decision: "maintain" | "runtime" | "intent" | "co-evolve";
+  proposedActions: ReconciliationDecisionActionDto[];
+  triggerEvents: ReconciliationDecisionTriggerEventDto[];
+  approvalPosture: string;
+  confidence: number;
+  requiresApproval: boolean;
+  rationale?: Record<string, unknown> | null;
+  lastEvaluated?: string | number | null;
+}
+
+export interface IntentScopeDto {
+  symbols?: string[];
+  systems?: string[];
+  workflows?: string[];
+}
+
+export interface IntentSummaryDto {
+  id: string;
+  description: string;
+  status: string;
+  priority?: string | null;
+  version: number;
+  scopeSummary?: {
+    symbolCount: number;
+    systemCount: number;
+    workflowCount: number;
+  } | null;
+  linkedRuntimeObjectCount: number;
+  linkedSourceArtifactCount: number;
+  linkedEventCount: number;
+  linkedMutationCount: number;
+  createdAt?: string | number | null;
+  updatedAt?: string | number | null;
+}
+
+export interface IntentDetailDto extends IntentSummaryDto {
+  scope?: IntentScopeDto | null;
+  constraints: Record<string, unknown>[];
+  expectedBehaviors: string[];
+  nonGoals: string[];
+  linkedRuntimeObjects: string[];
+  linkedSourceArtifacts: string[];
+  linkedEventIds: string[];
+  linkedMutationIds: string[];
+  metadata?: Record<string, unknown> | null;
+  current: boolean;
+  diff?: Array<Record<string, unknown>> | null;
+}
+
+export interface ProjectSummaryDto {
+  projectId: string;
+  title: string;
+  summary: string;
+  status: string;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  requirementCount: number;
+  featureSpecCount: number;
+  journeyCount: number;
+  architectureDecisionCount: number;
+  nonFunctionalRequirementCount: number;
+  linkedWorkItemCount: number;
+  linkedIncidentCount: number;
+  linkedTestingHarnessCount: number;
+  sourceRoots: string[];
+}
+
+export interface ProjectListDto {
+  currentProjectId?: string | null;
+  projects: ProjectSummaryDto[];
+}
+
+export interface ProjectDetailDto extends ProjectSummaryDto {
+  constitution: Record<string, unknown> | null;
+  requirements: ProjectRequirementDto[];
+  featureSpecifications: ProjectFeatureSpecificationDto[];
+  designSystem: Record<string, unknown> | null;
+  styleGuide: Record<string, unknown> | null;
+  testingStrategy: ProjectTestingStrategyDto | null;
+  releaseReadiness: ProjectReleaseReadinessDto | null;
+  readinessObligations: ProjectReadinessObligationDto[];
+  userJourneys: ProjectUserJourneyDto[];
+  nonFunctionalRequirements: ProjectRequirementDto[];
+  architectureDecisions: ProjectArchitectureDecisionDto[];
+  linkedWorkItemIds: string[];
+  linkedIncidentIds: string[];
+  linkedTestingHarnessIds: string[];
+  linkedWorkItems: ProjectLinkedWorkItemDto[];
+  linkedIncidents: ProjectLinkedIncidentDto[];
+  linkedTestingHarnesses: ProjectTestingHarnessDto[];
+  testingEvidence?: ProjectTestingEvidenceDto | null;
+  qualityGateEvidence?: ProjectQualityGateEvidenceDto | null;
+  readinessSummary?: ProjectReadinessSummaryDto | null;
+  alignmentState?: AlignmentStateDto | null;
+  reconciliationDecision?: ReconciliationDecisionDto | null;
+  traceNeighborhood?: ProjectTraceNeighborhoodDto | null;
+  metadata: Record<string, unknown> | null;
+}
+
 export interface ReplSessionProfileDto {
   sessionId: string;
   title: string;
@@ -43,6 +421,17 @@ export interface ReplSessionHistoryEntryDto {
   status: CommandResultDto<RuntimeEvalResultDto>["status"];
   summary: string;
   valuePreview?: string | null;
+}
+
+export interface EditorBufferStateDto {
+  bufferId: string;
+  title: string;
+  draft: string;
+  baselineDraft: string;
+  packageName: string;
+  dirty: boolean;
+  result: CommandResultDto<RuntimeEvalResultDto> | null;
+  sourceFilePath?: string | null;
 }
 
 export interface HostStatusDto {
@@ -162,6 +551,15 @@ export interface IncidentSummaryDto {
   state: "open" | "recovering" | "resolved";
 }
 
+export interface IncidentRemediationPlanDto {
+  status: "draft" | "active" | "blocked" | "completed";
+  owner?: string | null;
+  summary: string;
+  actions: string[];
+  validationSteps: string[];
+  blockers: string[];
+}
+
 export interface IncidentDetailDto {
   incidentId: string;
   title: string;
@@ -173,8 +571,10 @@ export interface IncidentDetailDto {
   recoverySummary: string;
   nextAction: string;
   blockedReason?: string | null;
+  remediationPlan: IncidentRemediationPlanDto | null;
   artifactIds: string[];
   linkedEntities: LinkedEntityRefDto[];
+  traceNeighborhood?: ProjectTraceNeighborhoodDto | null;
   updatedAt: string;
 }
 
@@ -217,11 +617,193 @@ export interface CreateConversationThreadInput {
   summary?: string;
 }
 
+export interface CreateProjectInput {
+  environmentId: string;
+  title: string;
+  summary?: string;
+}
+
+export interface CreateIntentInput {
+  environmentId: string;
+  description: string;
+  scope?: IntentScopeDto;
+  constraints?: Record<string, unknown>[];
+  expectedBehaviors?: string[];
+  nonGoals?: string[];
+  priority?: string;
+  version?: number;
+  status?: string;
+  linkedRuntimeObjects?: string[];
+  linkedSourceArtifacts?: string[];
+  linkedEventIds?: string[];
+  linkedMutationIds?: string[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface UpdateProjectConstitutionInput {
+  environmentId: string;
+  projectId?: string;
+  constitution: Record<string, unknown>;
+}
+
+export interface UpdateProjectDesignSystemInput {
+  environmentId: string;
+  projectId?: string;
+  designSystem: Record<string, unknown>;
+}
+
+export interface UpdateProjectStyleGuideInput {
+  environmentId: string;
+  projectId?: string;
+  styleGuide: Record<string, unknown>;
+}
+
+export interface UpdateProjectTestingStrategyInput {
+  environmentId: string;
+  projectId?: string;
+  testingStrategy: ProjectTestingStrategyDto;
+}
+
+export interface UpdateProjectReleaseReadinessInput {
+  environmentId: string;
+  projectId?: string;
+  releaseReadiness: ProjectReleaseReadinessDto;
+}
+
+export interface UpdateProjectReadinessObligationsInput {
+  environmentId: string;
+  projectId?: string;
+  readinessObligations: ProjectReadinessObligationDto[];
+}
+
+export interface AppendProjectRequirementInput {
+  environmentId: string;
+  projectId?: string;
+  id?: string;
+  title: string;
+  summary: string;
+  scope?: string;
+  kind?: string;
+  priority?: string;
+  status?: string;
+  verificationKind?: string;
+  linkedArtifactIds?: string[];
+  nonFunctional?: boolean;
+}
+
+export interface AppendProjectFeatureSpecificationInput {
+  environmentId: string;
+  projectId?: string;
+  id?: string;
+  title: string;
+  summary: string;
+  status?: string;
+  acceptanceCriteria?: string[];
+  linkedRequirementIds?: string[];
+  linkedJourneyIds?: string[];
+}
+
+export interface AppendProjectUserJourneyInput {
+  environmentId: string;
+  projectId?: string;
+  id?: string;
+  title: string;
+  summary: string;
+  actors?: string[];
+  entrypoints?: string[];
+  steps?: string[];
+  outcomes?: string[];
+  edgeCases?: string[];
+}
+
+export interface AppendProjectArchitectureDecisionInput {
+  environmentId: string;
+  projectId?: string;
+  id?: string;
+  title: string;
+  summary: string;
+  status?: string;
+  drivers?: string[];
+  consequences?: string[];
+  stackChoices?: string[];
+  linkedRequirementIds?: string[];
+}
+
+export interface AppendProjectSourceRootInput {
+  environmentId: string;
+  projectId?: string;
+  sourceRoot: string;
+}
+
+export interface BindProjectTestingHarnessInput {
+  environmentId: string;
+  projectId?: string;
+  harnessId: string;
+}
+
+export interface AppendProjectQualityGateInput {
+  environmentId: string;
+  projectId?: string;
+  id?: string;
+  title: string;
+  summary?: string;
+  status?: string;
+  requiredHarnessIds?: string[];
+  minimumLinkedWorkItems?: number;
+  minimumLinkedIncidents?: number;
+  requireSourceRoots?: boolean;
+  requiredTraceTargetKinds?: string[];
+  maximumFailedTests?: number;
+  requireCoverage?: boolean;
+  maximumSayTurnLatencySeconds?: number;
+  maximumEnvironmentSaveLoadSeconds?: number;
+  requireRecoveryReady?: boolean;
+}
+
 export interface UpdateConversationThreadInput {
   environmentId: string;
   threadId: string;
   title: string;
   summary?: string;
+}
+
+export interface ResumeWorkItemInput {
+  environmentId?: string;
+  workItemId: string;
+  note?: string | null;
+}
+
+export interface QuarantineWorkItemInput {
+  environmentId?: string;
+  workItemId: string;
+  reason: string;
+}
+
+export interface RollbackWorkItemInput {
+  environmentId?: string;
+  workItemId: string;
+  reason?: string | null;
+  note?: string | null;
+}
+
+export interface CompleteWorkItemValidationsInput {
+  environmentId?: string;
+  workItemId: string;
+  status?: string | null;
+}
+
+export interface SteerWorkItemInput {
+  environmentId?: string;
+  workItemId: string;
+  phase?: string | null;
+  nextStep?: string | null;
+  note?: string | null;
+}
+
+export interface UpdateIncidentRemediationPlanInput {
+  environmentId?: string;
+  incidentId: string;
+  remediationPlan: IncidentRemediationPlanDto;
 }
 
 export interface SendConversationMessageInput {
@@ -309,6 +891,135 @@ export interface RuntimeSummaryDto {
   activeMutations: number;
   linkedIncidentIds: string[];
   scopes: RuntimeScopeSummaryDto[];
+}
+
+export interface RuntimeTelemetryProcessDto {
+  processId: string;
+  kind: "runtime" | "task" | "worker" | "compatibility-process";
+  label: string;
+  state: "running" | "waiting" | "idle" | "blocked" | "completed" | "failed" | "stopped";
+  summary: string;
+  pid?: number | null;
+  cpuPercent?: number | null;
+  memoryMb?: number | null;
+  elapsed?: string | null;
+  command?: string | null;
+  workItemId?: string | null;
+  threadId?: string | null;
+  turnId?: string | null;
+  incidentId?: string | null;
+  workflowRecordId?: string | null;
+  controlToken?: string | null;
+}
+
+export interface RuntimeCpuSummaryDto {
+  utilizationPercent?: number | null;
+  coreCount: number;
+  loadAverage1m?: number | null;
+  loadAverage5m?: number | null;
+  loadAverage15m?: number | null;
+  summary: string;
+}
+
+export interface RuntimeMemorySummaryDto {
+  rssMb?: number | null;
+  heapUsedMb?: number | null;
+  heapTotalMb?: number | null;
+  systemUsedPercent?: number | null;
+  summary: string;
+}
+
+export interface RuntimeNetworkSummaryDto {
+  openConnectionCount?: number | null;
+  interfaceCount: number;
+  summary: string;
+}
+
+export interface RuntimeDiskSummaryDto {
+  readKbps?: number | null;
+  writeKbps?: number | null;
+  summary: string;
+}
+
+export interface RuntimeTelemetrySnapshotDto {
+  runtimeId: string;
+  sampledAt: string;
+  runtimePid?: number | null;
+  cpu: RuntimeCpuSummaryDto;
+  memory: RuntimeMemorySummaryDto;
+  network: RuntimeNetworkSummaryDto;
+  disk: RuntimeDiskSummaryDto;
+  processes: RuntimeTelemetryProcessDto[];
+  activitySummary: string;
+}
+
+export type ConsolePlane = "environment" | "host";
+
+export type ConsoleLogType = "debug" | "info" | "notice" | "warning" | "error" | "fault";
+
+export interface ConsoleLogEntryDto {
+  entryId: string;
+  cursor?: number | null;
+  plane: ConsolePlane;
+  timestamp: string;
+  type: ConsoleLogType;
+  category: string;
+  source: string;
+  message: string;
+  processName?: string | null;
+  pid?: number | null;
+  threadId?: string | null;
+  activityId?: string | null;
+  environmentId?: string | null;
+  runtimeId?: string | null;
+  workItemId?: string | null;
+  workflowRecordId?: string | null;
+  incidentId?: string | null;
+  threadRefId?: string | null;
+  turnRefId?: string | null;
+  visibility?: string | null;
+  detail?: string | null;
+}
+
+export interface ConsoleLogQueryInput {
+  environmentId?: string;
+  plane?: ConsolePlane;
+  fromCursor?: number;
+  limit?: number;
+  types?: ConsoleLogType[];
+  sources?: string[];
+}
+
+export interface ConsoleLogStreamDto {
+  plane: ConsolePlane;
+  entries: ConsoleLogEntryDto[];
+  nextCursor?: number | null;
+  summary: string;
+}
+
+export type DiagnosticReportKind =
+  | "crash"
+  | "spin"
+  | "log"
+  | "diagnostic"
+  | "analytics"
+  | "system";
+
+export interface DiagnosticReportSummaryDto {
+  reportId: string;
+  kind: DiagnosticReportKind;
+  title: string;
+  summary: string;
+  source: string;
+  processName?: string | null;
+  pid?: number | null;
+  createdAt: string;
+  path?: string | null;
+}
+
+export interface DiagnosticReportDetailDto extends DiagnosticReportSummaryDto {
+  contentPreview?: string | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface RuntimeEvalResultDto {
@@ -407,6 +1118,35 @@ export interface SourcePreviewInput {
   contextRadius?: number;
 }
 
+export interface FileSystemDirectoryInput {
+  path?: string;
+}
+
+export interface FileSystemWriteInput {
+  path: string;
+  content: string;
+  overwrite?: boolean;
+}
+
+export interface FileSystemWriteResultDto {
+  path: string;
+  overwritten: boolean;
+  summary: string;
+}
+
+export interface FileSystemEntryDto {
+  name: string;
+  path: string;
+  kind: "directory" | "file";
+}
+
+export interface FileSystemDirectoryListingDto {
+  currentPath: string;
+  parentPath?: string | null;
+  directories: FileSystemEntryDto[];
+  files: FileSystemEntryDto[];
+}
+
 export interface SourcePreviewDto {
   path: string;
   language: string;
@@ -447,6 +1187,30 @@ export interface SourceReloadResultDto {
   workItemId?: string | null;
 }
 
+export interface CorrectiveTriggerEventDto {
+  eventId?: string | null;
+  kind?: string | null;
+  family?: string | null;
+  entityId?: string | null;
+}
+
+export interface CorrectiveActionDto {
+  kind?: string | null;
+  target?: string | null;
+  reason?: string | null;
+}
+
+export interface CorrectiveContextDto {
+  kind: string;
+  intentId?: string | null;
+  decision?: string | null;
+  approvalPosture?: string | null;
+  alignmentStatus?: string | null;
+  alignmentScore?: number | null;
+  proposedActions: CorrectiveActionDto[];
+  triggerEvents: CorrectiveTriggerEventDto[];
+}
+
 export interface WorkItemSummaryDto {
   workItemId: string;
   title: string;
@@ -457,6 +1221,7 @@ export interface WorkItemSummaryDto {
   artifactCount: number;
   validationBurden: "none" | "pending" | "complete";
   reconciliationBurden: "none" | "required" | "complete";
+  correctiveContext?: CorrectiveContextDto | null;
 }
 
 export interface WorkItemDetailDto {
@@ -468,6 +1233,46 @@ export interface WorkItemDetailDto {
   runtimeSummary: string;
   sourceRelationship: string;
   linkedEntities: LinkedEntityRefDto[];
+  traceNeighborhood?: ProjectTraceNeighborhoodDto | null;
+  correctiveContext?: CorrectiveContextDto | null;
+}
+
+export interface WorkItemPlanSteeringDto {
+  currentPhase?: string | null;
+  nextStep?: string | null;
+  resumeAnchor?: string | null;
+  phaseCount: number;
+  planningPhases: string[];
+  remainingPhases: string[];
+  completedPhaseCount: number;
+  decompositionReady: boolean;
+  compacted: boolean;
+  revisionReason?: string | null;
+  operatorDirectedPhase?: string | null;
+  operatorDirectedNextStep?: string | null;
+  operatorSteeringCount: number;
+  reviewRequired: boolean;
+  planHealth?: string | null;
+}
+
+export interface WorkItemPlanDirectiveDto {
+  phase?: string | null;
+  nextStep?: string | null;
+  note?: string | null;
+  timestamp?: number | null;
+}
+
+export interface WorkItemPlanDto {
+  workItemId: string;
+  status: string;
+  goal: string;
+  longHorizonPlan: Record<string, unknown> | null;
+  planHealth?: string | null;
+  planSteering?: WorkItemPlanSteeringDto | null;
+  operatorSteeringHistory: WorkItemPlanDirectiveDto[];
+  nextAction: Record<string, unknown> | null;
+  resumePayload: Record<string, unknown> | null;
+  pendingValidations: string[];
 }
 
 export interface WorkflowRecordDto {
@@ -523,6 +1328,8 @@ export interface EnvironmentSummaryDto {
   activeWorkers: WorkerSummaryDto[];
   incidents: IncidentSummaryDto[];
   approvals: ApprovalRequestSummaryDto[];
+  alignmentState?: AlignmentStateDto | null;
+  reconciliationDecision?: ReconciliationDecisionDto | null;
 }
 
 export interface EnvironmentStatusDto {
@@ -533,6 +1340,8 @@ export interface EnvironmentStatusDto {
   runtimeState: "warm" | "cooling" | "recovering";
   workflowState: "governed" | "attention_required";
   lastUpdatedAt: string;
+  alignmentState?: AlignmentStateDto | null;
+  reconciliationDecision?: ReconciliationDecisionDto | null;
 }
 
 export interface WorkspaceAttentionItemDto {
@@ -689,17 +1498,37 @@ export interface DesktopRestoreResultDto {
 
 export interface DesktopPreferencesDto {
   lastWorkspace: WorkspaceId;
+  selectedBrowserDomain?: string;
+  selectedConfigurationSection?: string;
   sidebarPinned: boolean;
   sidebarWidth?: number | null;
+  sidebarActivePanelId?: string | null;
+  sidebarDockedPanelIds?: string[];
   canvasPinned: boolean;
   inspectorPinned: boolean;
   inspectorWidth?: number | null;
+  inspectorActivePanelId?: string | null;
+  inspectorDockedPanelIds?: string[];
   themePreference: "system" | "light" | "dark";
+  desktopSurfaceView?: {
+    tooltipScalePercent: number;
+    controlIconScalePercent: number;
+    dockIconScalePercent: number;
+    conversationTextScalePercent: number;
+    sourceCodeTextScalePercent: number;
+  };
   currentProjectId?: string | null;
   projects?: ProjectProfileDto[];
   selectedConversationThreadByProject?: Record<string, string>;
+  conversationDraft?: string;
   replSessionsByProject?: Record<string, ReplSessionProfileDto[]>;
   currentReplSessionIdByProject?: Record<string, string>;
+  editorBuffersByProject?: Record<string, EditorBufferStateDto[]>;
+  selectedEditorBufferIdByProject?: Record<string, string>;
+  workspacePackageByProject?: Record<string, string>;
+  workspaceDraftByProject?: Record<string, string>;
+  workspaceResultByProject?: Record<string, CommandResultDto<RuntimeEvalResultDto> | null>;
+  workspaceHistoryByProject?: Record<string, ReplSessionHistoryEntryDto[]>;
   lispCodeView: {
     parenDepthColors: string[];
   };
@@ -750,20 +1579,37 @@ export interface HostApi {
   getHostStatus(): Promise<HostStatusDto>;
   getCurrentBinding(): Promise<BindingDto | null>;
   setEnvironmentBinding(environmentId: string): Promise<CommandResultDto<BindingDto>>;
+  getEnvironmentImageRegistry(): Promise<QueryResultDto<EnvironmentImageRegistryDto>>;
+  loadEnvironmentImage(imageIdOrName: string): Promise<CommandResultDto<BindingDto>>;
+  saveEnvironmentImage(input: {
+    name: string;
+    overwrite?: boolean;
+  }): Promise<CommandResultDto<EnvironmentImageRecordDto>>;
+  revertEnvironmentToImage(): Promise<CommandResultDto<BindingDto>>;
 }
 
 export interface QueryApi {
+  projectList(environmentId?: string): Promise<QueryResultDto<ProjectListDto>>;
+  projectTestingHarnessInventory(environmentId?: string): Promise<QueryResultDto<ProjectTestingHarnessDto[]>>;
+  projectDetail(projectId: string, environmentId?: string): Promise<QueryResultDto<ProjectDetailDto>>;
   environmentSummary(environmentId?: string): Promise<QueryResultDto<EnvironmentSummaryDto>>;
   environmentStatus(environmentId?: string): Promise<QueryResultDto<EnvironmentStatusDto>>;
   workspaceSummary(environmentId?: string): Promise<QueryResultDto<WorkspaceSummaryDto>>;
   desktopModel(environmentId?: string): Promise<QueryResultDto<DesktopModelDto>>;
   environmentEvents(input: EventSubscriptionInput): Promise<QueryResultDto<EnvironmentEventDto[]>>;
+  consoleLogStream(input: ConsoleLogQueryInput): Promise<QueryResultDto<ConsoleLogStreamDto>>;
+  diagnosticReportList(environmentId?: string): Promise<QueryResultDto<DiagnosticReportSummaryDto[]>>;
+  diagnosticReportDetail(
+    reportId: string,
+    environmentId?: string
+  ): Promise<QueryResultDto<DiagnosticReportDetailDto>>;
   artifactList(environmentId?: string): Promise<QueryResultDto<ArtifactSummaryDto[]>>;
   artifactDetail(artifactId: string, environmentId?: string): Promise<QueryResultDto<ArtifactDetailDto>>;
   threadList(environmentId?: string): Promise<QueryResultDto<ThreadSummaryDto[]>>;
   threadDetail(threadId: string, environmentId?: string): Promise<QueryResultDto<ThreadDetailDto>>;
   turnDetail(turnId: string, environmentId?: string): Promise<QueryResultDto<TurnDetailDto>>;
   runtimeSummary(environmentId?: string): Promise<QueryResultDto<RuntimeSummaryDto>>;
+  runtimeTelemetrySnapshot(environmentId?: string): Promise<QueryResultDto<RuntimeTelemetrySnapshotDto>>;
   runtimeInspectSymbol(
     input: RuntimeInspectorInput
   ): Promise<QueryResultDto<RuntimeInspectionResultDto>>;
@@ -776,6 +1622,7 @@ export interface QueryApi {
     environmentId: string;
     packageName?: string;
   }): Promise<QueryResultDto<PackageBrowserDto>>;
+  fileSystemDirectory(input?: FileSystemDirectoryInput): Promise<QueryResultDto<FileSystemDirectoryListingDto>>;
   sourcePreview(input: SourcePreviewInput): Promise<QueryResultDto<SourcePreviewDto>>;
   approvalRequestList(environmentId?: string): Promise<QueryResultDto<ApprovalRequestSummaryDto[]>>;
   approvalRequestDetail(
@@ -786,6 +1633,7 @@ export interface QueryApi {
   incidentDetail(incidentId: string, environmentId?: string): Promise<QueryResultDto<IncidentDetailDto>>;
   workItemList(environmentId?: string): Promise<QueryResultDto<WorkItemSummaryDto[]>>;
   workItemDetail(workItemId: string, environmentId?: string): Promise<QueryResultDto<WorkItemDetailDto>>;
+  workItemPlan(workItemId: string, environmentId?: string): Promise<QueryResultDto<WorkItemPlanDto>>;
   workflowRecordDetail(
     workflowRecordId: string,
     environmentId?: string
@@ -793,6 +1641,57 @@ export interface QueryApi {
 }
 
 export interface CommandApi {
+  createIntent(input: CreateIntentInput): Promise<CommandResultDto<IntentDetailDto>>;
+  createProject(input: CreateProjectInput): Promise<CommandResultDto<ProjectDetailDto>>;
+  updateProjectConstitution(
+    input: UpdateProjectConstitutionInput
+  ): Promise<CommandResultDto<ProjectDetailDto>>;
+  updateProjectDesignSystem(
+    input: UpdateProjectDesignSystemInput
+  ): Promise<CommandResultDto<ProjectDetailDto>>;
+  updateProjectStyleGuide(
+    input: UpdateProjectStyleGuideInput
+  ): Promise<CommandResultDto<ProjectDetailDto>>;
+  updateProjectTestingStrategy(
+    input: UpdateProjectTestingStrategyInput
+  ): Promise<CommandResultDto<ProjectDetailDto>>;
+  updateProjectReleaseReadiness(
+    input: UpdateProjectReleaseReadinessInput
+  ): Promise<CommandResultDto<ProjectDetailDto>>;
+  updateProjectReadinessObligations(
+    input: UpdateProjectReadinessObligationsInput
+  ): Promise<CommandResultDto<ProjectDetailDto>>;
+  appendProjectRequirement(
+    input: AppendProjectRequirementInput
+  ): Promise<CommandResultDto<ProjectDetailDto>>;
+  appendProjectFeatureSpecification(
+    input: AppendProjectFeatureSpecificationInput
+  ): Promise<CommandResultDto<ProjectDetailDto>>;
+  appendProjectUserJourney(
+    input: AppendProjectUserJourneyInput
+  ): Promise<CommandResultDto<ProjectDetailDto>>;
+  appendProjectArchitectureDecision(
+    input: AppendProjectArchitectureDecisionInput
+  ): Promise<CommandResultDto<ProjectDetailDto>>;
+  appendProjectSourceRoot(
+    input: AppendProjectSourceRootInput
+  ): Promise<CommandResultDto<ProjectDetailDto>>;
+  bindProjectTestingHarness(
+    input: BindProjectTestingHarnessInput
+  ): Promise<CommandResultDto<ProjectDetailDto>>;
+  appendProjectQualityGate(
+    input: AppendProjectQualityGateInput
+  ): Promise<CommandResultDto<ProjectDetailDto>>;
+  updateIncidentRemediationPlan(
+    input: UpdateIncidentRemediationPlanInput
+  ): Promise<CommandResultDto<IncidentDetailDto>>;
+  resumeWorkItem(input: ResumeWorkItemInput): Promise<CommandResultDto<WorkItemDetailDto>>;
+  quarantineWorkItem(input: QuarantineWorkItemInput): Promise<CommandResultDto<WorkItemDetailDto>>;
+  rollbackWorkItem(input: RollbackWorkItemInput): Promise<CommandResultDto<WorkItemDetailDto>>;
+  completeWorkItemValidations(
+    input: CompleteWorkItemValidationsInput
+  ): Promise<CommandResultDto<WorkItemDetailDto>>;
+  steerWorkItem(input: SteerWorkItemInput): Promise<CommandResultDto<WorkItemDetailDto>>;
   createConversationThread(
     input: CreateConversationThreadInput
   ): Promise<CommandResultDto<ThreadSummaryDto>>;
@@ -808,6 +1707,9 @@ export interface CommandApi {
   stageSourceChange(
     input: SourceMutationInput
   ): Promise<CommandResultDto<SourceMutationResultDto>>;
+  writeSourceFile(
+    input: FileSystemWriteInput
+  ): Promise<CommandResultDto<FileSystemWriteResultDto>>;
   reloadSourceFile(
     input: SourceReloadInput
   ): Promise<CommandResultDto<SourceReloadResultDto>>;
@@ -832,6 +1734,7 @@ export interface DesktopApi {
   focusWorkspace(workspace: WorkspaceId): Promise<void>;
   getDesktopPreferences(): Promise<DesktopPreferencesDto>;
   setDesktopPreferences(patch: Partial<DesktopPreferencesDto>): Promise<DesktopPreferencesDto>;
+  quitApp(): Promise<void>;
   setWindowTitle(title: string): Promise<void>;
   openEntityInNewWindow(ref: EntityRefDto): Promise<void>;
   listDocumentationPages(): Promise<DocumentationPageSummaryDto[]>;

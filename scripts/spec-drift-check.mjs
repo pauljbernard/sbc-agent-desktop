@@ -5,6 +5,9 @@ const projectRoot = resolve(new URL("..", import.meta.url).pathname);
 const docsRoot = join(projectRoot, "eng-docs");
 const featuresRoot = join(docsRoot, "features");
 const appPath = join(projectRoot, "src", "renderer", "src", "App.tsx");
+const conversationsWorkspacePath = join(projectRoot, "src", "renderer", "src", "conversations-workspace.tsx");
+const shellRailComponentsPath = join(projectRoot, "src", "renderer", "src", "shell-rail-components.tsx");
+const shellPanelContentPath = join(projectRoot, "src", "renderer", "src", "shell-panel-content.tsx");
 const stylesPath = join(projectRoot, "src", "renderer", "src", "styles.css");
 const uiTestsPath = join(projectRoot, "tests", "ui", "electron-live.spec.ts");
 
@@ -37,6 +40,9 @@ function run() {
   const designSystem = read(join(docsRoot, "design-system.md"));
   const featureTemplate = read(join(docsRoot, "feature-template.md"));
   const appCode = read(appPath);
+  const conversationsWorkspaceCode = read(conversationsWorkspacePath);
+  const shellRailComponentsCode = read(shellRailComponentsPath);
+  const shellPanelContentCode = read(shellPanelContentPath);
   const stylesCode = read(stylesPath);
   const uiTests = read(uiTestsPath);
   const featureDocs = collectMarkdownFiles(featuresRoot);
@@ -131,13 +137,20 @@ function run() {
   const implementationEvidence = [
     {
       name: "Collapsible navigation and inspector rails",
-      patterns: ["Hide Navigation", "Collapse Inspector", "toggleInspectorPinned", "workspace-child-link active"],
-      texts: [appCode, stylesCode]
+      patterns: [
+        "Hide Navigation",
+        "Collapse Inspector",
+        "shell-column-splitter",
+        "ShellRailHost",
+        "workspace-child-link active",
+        "preserves shell collapse and resize behavior after a relaunch with persisted desktop preferences"
+      ],
+      texts: [appCode, shellRailComponentsCode, shellPanelContentCode, stylesCode, uiTests]
     },
     {
       name: "Conversations workspace keeps navigation, transcript, and composer distinct",
       patterns: ["Thread Navigation", "conversation-thread-transcript-panel", "conversation-composer-panel", "inspector-tabs"],
-      texts: [appCode, stylesCode]
+      texts: [appCode, conversationsWorkspaceCode, stylesCode]
     },
     {
       name: "Browser workspace keeps inspector-driven context and secondary manual inspect",

@@ -32,11 +32,13 @@ describe("workspace shell mapping", () => {
 
   it("keeps primary keyboard journeys stable", () => {
     expect(keyboardWorkspaceOrder).toEqual([
-      "dashboard",
       "environment",
+      "projects",
       "conversations",
+      "editor",
+      "workspace",
+      "transcript",
       "browser",
-      "documentation",
       "configuration"
     ]);
   });

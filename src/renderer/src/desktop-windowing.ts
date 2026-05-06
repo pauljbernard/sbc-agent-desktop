@@ -54,12 +54,6 @@ export const DEFAULT_DESKTOP_WINDOW_FRAMES: Record<string, DesktopWindowFrame> =
     width: 64,
     height: 72
   },
-  "window:governance": {
-    x: 20,
-    y: 96,
-    width: 78,
-    height: 70
-  },
   "window:display": {
     x: 156,
     y: 92,
@@ -71,12 +65,6 @@ export const DEFAULT_DESKTOP_WINDOW_FRAMES: Record<string, DesktopWindowFrame> =
     y: 88,
     width: 72,
     height: 56
-  },
-  "window:proactivity": {
-    x: 72,
-    y: 88,
-    width: 86,
-    height: 72
   },
   "window:detailed-surface": {
     x: 146,
@@ -90,6 +78,18 @@ export const DEFAULT_DESKTOP_WINDOW_FRAMES: Record<string, DesktopWindowFrame> =
     width: 96,
     height: 78
   },
+  "window:projects-surface": {
+    x: 86,
+    y: 18,
+    width: 110,
+    height: 82
+  },
+  "window:operate-surface": {
+    x: 84,
+    y: 18,
+    width: 102,
+    height: 82
+  },
   "window:configuration-surface": {
     x: 94,
     y: 18,
@@ -100,6 +100,24 @@ export const DEFAULT_DESKTOP_WINDOW_FRAMES: Record<string, DesktopWindowFrame> =
     x: 82,
     y: 16,
     width: 110,
+    height: 82
+  },
+  "window:editor-surface": {
+    x: 86,
+    y: 18,
+    width: 110,
+    height: 84
+  },
+  "window:workspace-surface": {
+    x: 90,
+    y: 20,
+    width: 104,
+    height: 84
+  },
+  "window:transcript-surface": {
+    x: 96,
+    y: 24,
+    width: 98,
     height: 82
   }
 };
@@ -364,7 +382,33 @@ export function updateWindowState(
   windowId: string,
   state: DesktopWindowState
 ): DesktopWindowRecord[] {
-  return windows.map((window) => (window.id === windowId ? { ...window, state } : window));
+  let changed = false;
+  const nextWindows = windows.map((window) => {
+    if (window.id !== windowId || window.state === state) {
+      return window;
+    }
+    changed = true;
+    return { ...window, state };
+  });
+  return changed ? nextWindows : windows;
+}
+
+function sameDesktopWindowRecord(left: DesktopWindowRecord, right: DesktopWindowRecord): boolean {
+  return (
+    left.id === right.id &&
+    left.kind === right.kind &&
+    left.title === right.title &&
+    left.summary === right.summary &&
+    left.state === right.state &&
+    left.zIndex === right.zIndex &&
+    left.x === right.x &&
+    left.y === right.y &&
+    left.width === right.width &&
+    left.height === right.height &&
+    left.closable === right.closable &&
+    left.hostedAppId === right.hostedAppId &&
+    left.panelId === right.panelId
+  );
 }
 
 export function upsertDesktopWindow(
@@ -376,17 +420,20 @@ export function upsertDesktopWindow(
     return [...windows, candidate];
   }
 
-  return windows.map((window, index) =>
-    index === existingIndex
-      ? {
-          ...window,
-          ...candidate,
-          x: window.x,
-          y: window.y,
-          width: window.width,
-          height: window.height,
-          zIndex: window.zIndex
-        }
-      : window
-  );
+  const existingWindow = windows[existingIndex];
+  const nextWindow = {
+    ...existingWindow,
+    ...candidate,
+    x: existingWindow.x,
+    y: existingWindow.y,
+    width: existingWindow.width,
+    height: existingWindow.height,
+    zIndex: existingWindow.zIndex
+  };
+
+  if (sameDesktopWindowRecord(existingWindow, nextWindow)) {
+    return windows;
+  }
+
+  return windows.map((window, index) => (index === existingIndex ? nextWindow : window));
 }

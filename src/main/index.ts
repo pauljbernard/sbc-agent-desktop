@@ -2,11 +2,50 @@ import { app, BrowserWindow, Menu, type MenuItemConstructorOptions } from "elect
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { registerIpcHandlers } from "./ipc";
+import { registerIpcHandlers, setQuitAppHandler } from "./ipc";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 app.setName("IntentOS Shell");
 let mainWindow: BrowserWindow | null = null;
+let allowMainWindowClose = false;
+let terminalStreamWriteDisabled = false;
+
+function isBrokenTerminalStreamError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return code === "EIO" || code === "EPIPE" || code === "ERR_STREAM_DESTROYED";
+}
+
+function disableTerminalStreamWrites(): void {
+  terminalStreamWriteDisabled = true;
+}
+
+function installTerminalStreamGuards(): void {
+  const guard = (error: Error): void => {
+    if (isBrokenTerminalStreamError(error)) {
+      disableTerminalStreamWrites();
+      return;
+    }
+    throw error;
+  };
+  process.stdout.on("error", guard);
+  process.stderr.on("error", guard);
+}
+
+function logWindowEvent(label: string, detail?: string): void {
+  if (terminalStreamWriteDisabled || process.stdout.destroyed || !process.stdout.writable) {
+    return;
+  }
+  const suffix = detail ? ` ${detail}` : "";
+  process.stdout.write(`[intentos-window] ${label}${suffix}\n`, (error) => {
+    if (error && isBrokenTerminalStreamError(error)) {
+      disableTerminalStreamWrites();
+      return;
+    }
+    if (error) {
+      throw error;
+    }
+  });
+}
 
 function sendMenuAction(action: string): void {
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -80,9 +119,41 @@ function createMainWindow(): BrowserWindow {
     }
   });
 
+  allowMainWindowClose = false;
   window.setTitle("IntentOS Shell");
+  window.on("close", (event) => {
+    if (allowMainWindowClose) {
+      return;
+    }
+
+    event.preventDefault();
+    sendMenuAction("app:request-quit");
+  });
+  window.on("ready-to-show", () => logWindowEvent("ready-to-show"));
+  window.on("show", () => logWindowEvent("show"));
+  window.on("unresponsive", () => logWindowEvent("unresponsive"));
+  window.on("closed", () => {
+    logWindowEvent("closed");
+    if (mainWindow === window) {
+      mainWindow = null;
+    }
+    allowMainWindowClose = false;
+  });
 
   window.once("ready-to-show", () => window.show());
+  window.webContents.on("did-start-loading", () => logWindowEvent("did-start-loading"));
+  window.webContents.on("dom-ready", () => logWindowEvent("dom-ready"));
+  window.webContents.on("did-stop-loading", () => logWindowEvent("did-stop-loading"));
+  window.webContents.on("did-finish-load", () => logWindowEvent("did-finish-load"));
+  window.webContents.on("did-fail-load", (_event, code, description, url) =>
+    logWindowEvent("did-fail-load", `${code} ${description} ${url}`)
+  );
+  window.webContents.on("render-process-gone", (_event, details) =>
+    logWindowEvent("render-process-gone", `${details.reason} exitCode=${details.exitCode}`)
+  );
+  window.webContents.on("console-message", (_event, level, message, line, sourceId) =>
+    logWindowEvent("renderer-console", `level=${level} ${sourceId}:${line} ${message}`)
+  );
 
   if (process.env.ELECTRON_RENDERER_URL) {
     void window.loadURL(process.env.ELECTRON_RENDERER_URL);
@@ -96,7 +167,15 @@ function createMainWindow(): BrowserWindow {
 }
 
 app.whenReady().then(() => {
+  installTerminalStreamGuards();
   registerIpcHandlers();
+  setQuitAppHandler(() => {
+    allowMainWindowClose = true;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.close();
+    }
+    app.quit();
+  });
   installApplicationMenu();
   mainWindow = createMainWindow();
 

@@ -277,6 +277,20 @@ Preferred pattern:
 - the primary growing work object owns scroll in the center canvas
 - action docks and top navigation bands remain stable while the primary body grows
 
+For tabbed work surfaces specifically:
+
+- the hosted surface owns resize
+- the tab container stretches to the hosted surface bounds
+- the active tab panel consumes the remaining available height
+- the primary work object inside the active tab owns scroll
+- wrapper panels must not become fallback scroll containers
+
+For editor-like tabbed surfaces:
+
+- the tab rail remains fixed at the top of the tab container
+- the active editor, table, transcript, or list fills the panel body
+- inner form fields should not expose resize handles when the outer resident already owns resizing
+
 For transcript and feed-like work:
 
 - short histories should visually anchor near the active input or action surface
@@ -584,6 +598,20 @@ The design system must define consistent interaction patterns for:
 - opening direct evaluation
 - filtering activity and lists
 - searching, sorting, filtering, paging, and scrolling large browser tables
+
+It must also define a consistent tabbed-surface pattern for:
+
+- sustained editors
+- inspector-local alternate views
+- closely related object subviews within one hosted surface
+
+Tabbed surfaces must provide:
+
+- `role="tablist"` on the tab rail
+- `role="tab"` on each tab control
+- `aria-selected` on the active tab
+- `role="tabpanel"` on the controlled panel
+- a visual connection between the active tab and the active panel
 
 ## Platform Portability Rule
 

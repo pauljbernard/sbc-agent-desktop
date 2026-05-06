@@ -518,9 +518,41 @@
                (sbcl-agent-call "PROVIDER-FROM-PROFILE" selected-profile base-config))
           (sbcl-agent-call "MAKE-PROVIDER" base-config)))))
 
+(defun conversation-say-service-response (environment session thread-id prompt options)
+  (let* ((provider (current-provider-for-prompt environment session prompt options))
+         (result (sbcl-agent-call "RUN-CONVERSATION-TURN"
+                                  provider
+                                  session
+                                  prompt
+                                  :stream-p (and (sbcl-agent-call "OPTION-PRESENT-P" options :stream)
+                                                 (sbcl-agent-call "PLIST-VALUE" options :stream nil))
+                                  :source :say
+                                  :operator-mode :conversation))
+         (thread (and (listp result) (getf result :thread)))
+         (turn (and (listp result) (getf result :turn)))
+         (status (if (eq (getf turn :status) :awaiting-approval)
+                     :awaiting-approval
+                     :ok)))
+    (sbcl-agent-call "MAKE-SERVICE-RESPONSE"
+                     :execution
+                     :say
+                     :command
+                     result
+                     :status status
+                     :metadata (sbcl-agent-call "MAKE-SERVICE-METADATA"
+                                                :authority :environment
+                                                :session session
+                                                :thread-id (or (getf thread :id) thread-id)
+                                                :turn-id (getf turn :id)))))
+
 (defun keywordish (value)
   (when (and value (> (length value) 0))
     (intern (string-upcase (substitute #\- #\_ value)) "KEYWORD")))
+
+(defun keywordish-list (values)
+  (remove nil
+          (mapcar #'keywordish
+                  (if (listp values) values '()))))
 
 (defun package-symbol-kind (symbol)
   (cond
@@ -719,6 +751,43 @@
       ((string= operation "desktop.show")
        (let ((session (bridge-session environment)))
          (sbcl-agent-call "QUERY-SHELL-DESKTOP-MODEL-SERVICE" session :environment environment)))
+      ((string= operation "desktop.preferences.get")
+       (sbcl-agent-call "QUERY-ENVIRONMENT-DESKTOP-PREFERENCES-SERVICE" environment))
+      ((string= operation "desktop.preferences.set")
+       (let* ((request-object (request-object request-json))
+              (desktop-preferences-object (and request-object
+                                               (sbcl-agent-call "JSON-OBJECT-VALUE"
+                                                                request-object
+                                                                "desktopPreferences")))
+              (desktop-preferences
+                (if (and (listp desktop-preferences-object)
+                         (every #'consp desktop-preferences-object))
+                    (sbcl-agent-call "JSON-OBJECT->KEYWORD-PLIST" desktop-preferences-object)
+                    '())))
+         (sbcl-agent-call "COMMAND-ENVIRONMENT-SET-DESKTOP-PREFERENCES-SERVICE"
+                          desktop-preferences
+                          environment)))
+      ((string= operation "environment.image-registry")
+       (sbcl-agent-call "QUERY-ENVIRONMENT-IMAGE-REGISTRY-SERVICE" environment))
+      ((string= operation "environment.save-image")
+       (let* ((request-object (request-object request-json))
+              (image-name (and request-object
+                               (sbcl-agent-call "JSON-OBJECT-VALUE" request-object "imageName")))
+              (overwrite (and request-object
+                              (sbcl-agent-call "JSON-OBJECT-VALUE" request-object "overwrite"))))
+         (sbcl-agent-call "COMMAND-ENVIRONMENT-SAVE-IMAGE-SERVICE"
+                          (or image-name "")
+                          :overwrite (and overwrite t)
+                          :environment environment)))
+      ((string= operation "environment.load-image")
+       (let* ((request-object (request-object request-json))
+              (image-id-or-name (and request-object
+                                     (sbcl-agent-call "JSON-OBJECT-VALUE" request-object "imageIdOrName"))))
+         (sbcl-agent-call "COMMAND-ENVIRONMENT-LOAD-IMAGE-SERVICE"
+                          (or image-id-or-name "")
+                          environment)))
+      ((string= operation "environment.revert-image")
+       (sbcl-agent-call "COMMAND-ENVIRONMENT-REVERT-IMAGE-SERVICE" environment))
       ((string= operation "desktop.action")
        (let* ((session (bridge-session environment))
               (request-object (request-object request-json))
@@ -748,6 +817,16 @@
       ((string= operation "runtime.summary")
        (let ((session (bridge-session environment)))
          (sbcl-agent-call "QUERY-RUNTIME-SUMMARY-SERVICE" session)))
+      ((string= operation "runtime.telemetry")
+       (let ((session (bridge-session environment)))
+         (sbcl-agent-call "QUERY-RUNTIME-TELEMETRY-SERVICE" session)))
+      ((string= operation "console.stream")
+       (sbcl-agent-call "QUERY-CONSOLE-LOG-STREAM-SERVICE"
+                        :environment environment
+                        :after-cursor (request-object-value request-json "afterCursor")
+                        :limit (or (request-object-value request-json "limit") 50)
+                        :type (keywordish (request-object-value request-json "type"))
+                        :source (request-object-value request-json "source")))
       ((string= operation "runtime.package-browser")
        (let* ((session (bridge-session environment))
               (package-name (or (request-object-value request-json "packageName")
@@ -950,13 +1029,7 @@
            (error "conversation.send-message requires a prompt payload"))
          (sbcl-agent-call "COMMAND-CONVERSATION-USE-THREAD-SERVICE" session thread-id)
          (handler-case
-             (sbcl-agent-call "COMMAND-CONVERSATION-EXECUTION-SERVICE"
-                              session
-                              (current-provider-for-prompt environment session prompt options)
-                              prompt
-                              options
-                              :source :say
-                              :operator-mode :conversation)
+             (conversation-say-service-response environment session thread-id prompt options)
            (error (condition)
              (sbcl-agent-call "MAKE-SERVICE-RESPONSE"
                               :execution
@@ -984,27 +1057,21 @@
                            (emit-stream-frame :event (provider-event-stream-payload event)))))
            (progv (list (sbcl-agent-symbol "*STREAM-EVENT-LISTENER*"))
                   (list listener)
-              (handler-case
-                  (sbcl-agent-call "COMMAND-CONVERSATION-EXECUTION-SERVICE"
-                                   session
-                                   (current-provider-for-prompt environment session prompt options)
-                                   prompt
-                                   options
-                                   :source :say
-                                   :operator-mode :conversation)
-                (error (condition)
-                  (sbcl-agent-call "MAKE-SERVICE-RESPONSE"
-                                   :execution
-                                   :say
-                                   :command
-                                   (record-conversation-send-failure session
-                                                                     thread-id
-                                                                     (princ-to-string condition))
-                                   :status :error
-                                   :metadata (sbcl-agent-call "MAKE-SERVICE-METADATA"
-                                                              :authority :environment
-                                                              :session session
-                                                              :thread-id thread-id))))))))
+             (handler-case
+                 (conversation-say-service-response environment session thread-id prompt options)
+               (error (condition)
+                 (sbcl-agent-call "MAKE-SERVICE-RESPONSE"
+                                  :execution
+                                  :say
+                                  :command
+                                  (record-conversation-send-failure session
+                                                                    thread-id
+                                                                    (princ-to-string condition))
+                                  :status :error
+                                  :metadata (sbcl-agent-call "MAKE-SERVICE-METADATA"
+                                                             :authority :environment
+                                                             :session session
+                                                             :thread-id thread-id))))))))
       ((string= operation "conversation.thread-detail")
        (let ((request-id (request-object-value request-json "threadId")))
          (sbcl-agent-call "QUERY-CONVERSATION-THREAD-DETAIL-SERVICE"
@@ -1102,16 +1169,52 @@
                                 (first-approval-requirement session work-item)))
               (policy (and requirement (getf requirement :policy)))
               (workflow-record (and work-item
-                                    (sbcl-agent-call "WORK-ITEM-WORKFLOW-RECORD" session work-item))))
+                                    (sbcl-agent-call "WORK-ITEM-WORKFLOW-RECORD" session work-item)))
+              (resume-payload (and work-item
+                                   (sbcl-agent-call "WORK-ITEM-RESUME-PAYLOAD" work-item)))
+              (resume-command (and (listp resume-payload)
+                                   (getf resume-payload :resume-command)))
+              (resume-command-name
+                (cond
+                  ((keywordp resume-command)
+                   resume-command)
+                  ((and (consp resume-command) (symbolp (first resume-command)))
+                   (first resume-command))
+                  ((and (consp resume-command) (stringp (first resume-command)))
+                   (intern (string-upcase (substitute #\- #\_ (first resume-command))) "KEYWORD"))
+                  ((stringp resume-command)
+                   (intern (string-upcase (substitute #\- #\_ resume-command)) "KEYWORD"))
+                  (t nil)))
+              (mutation-intent (and work-item
+                                    (sbcl-agent-call "WORK-ITEM-MUTATION-INTENT" work-item)))
+              (resume-turn-id (or (and (listp resume-payload)
+                                       (getf resume-payload :turn-id))
+                                  (and (listp mutation-intent)
+                                       (string= (string-downcase (symbol-name (or (getf mutation-intent :source) :none)))
+                                                "conversation-turn")
+                                       (getf mutation-intent :turn-id))))
+              (resume-through-turn-p (not (null resume-turn-id))))
          (unless work-item
            (error "Unknown approval request ~A" request-id))
          (unless policy
            (error "Approval request ~A does not expose a policy requirement" request-id))
          (sbcl-agent-call "COMMAND-APPROVE-POLICY-SERVICE" session policy)
-         (sbcl-agent-call "COMMAND-WORK-ITEM-RESUME-SERVICE"
-                          session
-                          request-id
-                          :note "Resumed from desktop approval workspace.")
+         (if resume-through-turn-p
+             (sbcl-agent-call "EXECUTE-COMMAND"
+                              (sbcl-agent-call "NORMALIZE-FORM-COMMAND"
+                                               (if resume-turn-id
+                                                   (list 'turn/resume resume-turn-id)
+                                                   '(turn/resume)))
+                              (current-provider-for-prompt environment
+                                                           session
+                                                           (or (and work-item (sbcl-agent-call "WORK-ITEM-GOAL" work-item))
+                                                               "Resume governed conversation work")
+                                                           '())
+                              session)
+             (sbcl-agent-call "COMMAND-WORK-ITEM-RESUME-SERVICE"
+                              session
+                              request-id
+                              :note "Resumed from desktop approval workspace."))
          (sbcl-agent-call "MAKE-SERVICE-COMMAND-RESPONSE"
                           :approval
                           :approve
@@ -1121,7 +1224,8 @@
                                 :resumed-entity-ids (remove nil
                                                             (list request-id
                                                                   (and workflow-record
-                                                                       (sbcl-agent-call "WORKFLOW-RECORD-ID" workflow-record)))))
+                                                                       (sbcl-agent-call "WORKFLOW-RECORD-ID" workflow-record))
+                                                                  resume-turn-id)))
                           :metadata
                           (sbcl-agent-call "MAKE-SERVICE-METADATA"
                                            :authority :environment
@@ -1155,14 +1259,344 @@
                                            :work-item-id request-id))))
       ((string= operation "incident.list")
        (sbcl-agent-call "QUERY-INCIDENT-LIST-SERVICE" (bridge-session environment)))
+      ((string= operation "incident.create")
+       (let* ((session (bridge-session environment))
+              (title (request-object-value request-json "title"))
+              (summary (request-object-value request-json "summary"))
+              (kind (or (keywordish (request-object-value request-json "kind"))
+                        :runtime-condition))
+              (status (or (keywordish (request-object-value request-json "status"))
+                          :open)))
+         (unless title
+           (error "incident.create requires a title payload"))
+         (unless summary
+           (error "incident.create requires a summary payload"))
+         (let ((incident (sbcl-agent-call "CREATE-INCIDENT"
+                                          session
+                                          kind
+                                          title
+                                          summary
+                                          :status status
+                                          :metadata (list :source :desktop-bridge
+                                                          :kind kind))))
+           (sbcl-agent-call "MAKE-SERVICE-COMMAND-RESPONSE"
+                            :incident
+                            :create
+                            (sbcl-agent-call "INCIDENT-DETAIL" session incident)
+                            :metadata
+                            (sbcl-agent-call "MAKE-SERVICE-METADATA"
+                                             :authority :environment
+                                             :command-model :incident-command-v1
+                                             :session session
+                                             :incident-id (sbcl-agent-call "INCIDENT-ID" incident))))))
       ((string= operation "incident.detail")
        (let ((request-id (request-object-value request-json "incidentId")))
          (sbcl-agent-call "QUERY-INCIDENT-DETAIL-SERVICE" (bridge-session environment) request-id)))
+      ((string= operation "incident.set-remediation-plan")
+       (let* ((session (bridge-session environment))
+              (incident-id (request-object-value request-json "incidentId"))
+              (remediation-plan-object (request-object-value request-json "remediationPlan"))
+              (remediation-plan (if (and (listp remediation-plan-object)
+                                         (every #'consp remediation-plan-object))
+                                    (sbcl-agent-call "JSON-OBJECT->KEYWORD-PLIST" remediation-plan-object)
+                                    '())))
+         (unless incident-id
+           (error "incident.set-remediation-plan requires an incidentId payload"))
+         (unless remediation-plan-object
+           (error "incident.set-remediation-plan requires a remediationPlan payload"))
+         (sbcl-agent-call "COMMAND-INCIDENT-REMEDIATION-PLAN-SERVICE"
+                          session
+                          incident-id
+                          remediation-plan)))
+      ((string= operation "intent.create")
+       (let* ((session (bridge-session environment))
+              (description (request-object-value request-json "description"))
+              (scope-object (request-object-value request-json "scope"))
+              (constraints-object (request-object-value request-json "constraints"))
+              (expected-behaviors (request-object-value request-json "expectedBehaviors"))
+              (non-goals (request-object-value request-json "nonGoals"))
+              (priority (request-object-value request-json "priority"))
+              (version (request-object-value request-json "version"))
+              (status-string (request-object-value request-json "status"))
+              (linked-runtime-objects (request-object-value request-json "linkedRuntimeObjects"))
+              (linked-source-artifacts (request-object-value request-json "linkedSourceArtifacts"))
+              (linked-event-ids (request-object-value request-json "linkedEventIds"))
+              (linked-mutation-ids (request-object-value request-json "linkedMutationIds"))
+              (metadata-object (request-object-value request-json "metadata"))
+              (scope (if (and (listp scope-object) (every #'consp scope-object))
+                         (sbcl-agent-call "JSON-OBJECT->KEYWORD-PLIST" scope-object)
+                         '()))
+              (constraints (if (listp constraints-object)
+                               (mapcar (lambda (entry)
+                                         (if (and (listp entry) (every #'consp entry))
+                                             (sbcl-agent-call "JSON-OBJECT->KEYWORD-PLIST" entry)
+                                             entry))
+                                       constraints-object)
+                               '()))
+              (metadata (if (and (listp metadata-object) (every #'consp metadata-object))
+                            (sbcl-agent-call "JSON-OBJECT->KEYWORD-PLIST" metadata-object)
+                            '()))
+              (status (and status-string
+                           (find-symbol (string-upcase status-string) "KEYWORD"))))
+         (unless description
+           (error "intent.create requires a description payload"))
+         (sbcl-agent-call "COMMAND-INTENT-CREATE-SERVICE"
+                          session
+                          :description description
+                          :scope scope
+                          :constraints constraints
+                          :expected-behaviors expected-behaviors
+                          :non-goals non-goals
+                          :priority (and priority
+                                         (find-symbol (string-upcase priority) "KEYWORD"))
+                          :version version
+                          :status status
+                          :linked-runtime-objects linked-runtime-objects
+                          :linked-source-artifacts linked-source-artifacts
+                          :linked-event-ids linked-event-ids
+                          :linked-mutation-ids linked-mutation-ids
+                          :metadata metadata)))
+      ((string= operation "project.list")
+       (sbcl-agent-call "QUERY-PROJECT-LIST-SERVICE" (bridge-session environment)))
+      ((string= operation "project.detail")
+       (let ((project-id (request-object-value request-json "projectId")))
+         (sbcl-agent-call "QUERY-PROJECT-DETAIL-SERVICE" (bridge-session environment) project-id)))
+      ((string= operation "project.testing-harness-inventory")
+       (let ((session (bridge-session environment)))
+         (sbcl-agent-call "MAKE-SERVICE-QUERY-RESPONSE"
+                          :project
+                          :testing-harness-inventory
+                          (sbcl-agent-call "TESTING-HARNESS-INVENTORY")
+                          :metadata
+                          (sbcl-agent-call "MAKE-SERVICE-METADATA"
+                                           :authority :environment
+                                           :read-model :testing-harness-inventory-v1
+                                           :session session))))
+      ((string= operation "project.create")
+       (let* ((session (bridge-session environment))
+              (title (request-object-value request-json "title"))
+              (summary (request-object-value request-json "summary")))
+         (unless title
+           (error "project.create requires a title payload"))
+         (sbcl-agent-call "COMMAND-PROJECT-CREATE-SERVICE"
+                          session
+                          :title title
+                          :summary summary)))
+      ((string= operation "project.set-constitution")
+       (let* ((session (bridge-session environment))
+              (project-id (request-object-value request-json "projectId"))
+              (constitution-object (request-object-value request-json "constitution"))
+              (constitution (if (and (listp constitution-object)
+                                     (every #'consp constitution-object))
+                                (sbcl-agent-call "JSON-OBJECT->KEYWORD-PLIST" constitution-object)
+                                '())))
+         (sbcl-agent-call "COMMAND-PROJECT-CONSTITUTION-SERVICE"
+                          session
+                          constitution
+                          :project-id project-id)))
+      ((string= operation "project.set-design-system")
+       (let* ((session (bridge-session environment))
+              (project-id (request-object-value request-json "projectId"))
+              (design-system-object (request-object-value request-json "designSystem"))
+              (design-system (if (and (listp design-system-object)
+                                      (every #'consp design-system-object))
+                                 (sbcl-agent-call "JSON-OBJECT->KEYWORD-PLIST" design-system-object)
+                                 '())))
+         (sbcl-agent-call "COMMAND-PROJECT-DESIGN-SYSTEM-SERVICE"
+                          session
+                          design-system
+                          :project-id project-id)))
+      ((string= operation "project.set-style-guide")
+       (let* ((session (bridge-session environment))
+              (project-id (request-object-value request-json "projectId"))
+              (style-guide-object (request-object-value request-json "styleGuide"))
+              (style-guide (if (and (listp style-guide-object)
+                                    (every #'consp style-guide-object))
+                               (sbcl-agent-call "JSON-OBJECT->KEYWORD-PLIST" style-guide-object)
+                               '())))
+         (sbcl-agent-call "COMMAND-PROJECT-STYLE-GUIDE-SERVICE"
+                          session
+                          style-guide
+                          :project-id project-id)))
+      ((string= operation "project.set-testing-strategy")
+       (let* ((session (bridge-session environment))
+              (project-id (request-object-value request-json "projectId"))
+              (testing-strategy-object (request-object-value request-json "testingStrategy"))
+              (testing-strategy (if (and (listp testing-strategy-object)
+                                         (every #'consp testing-strategy-object))
+                                    (sbcl-agent-call "JSON-OBJECT->KEYWORD-PLIST" testing-strategy-object)
+                                    '())))
+         (sbcl-agent-call "COMMAND-PROJECT-TESTING-STRATEGY-SERVICE"
+                          session
+                          testing-strategy
+                          :project-id project-id)))
+      ((string= operation "project.set-release-readiness")
+       (let* ((session (bridge-session environment))
+              (project-id (request-object-value request-json "projectId"))
+              (release-readiness-object (request-object-value request-json "releaseReadiness"))
+              (release-readiness (if (and (listp release-readiness-object)
+                                          (every #'consp release-readiness-object))
+                                     (sbcl-agent-call "JSON-OBJECT->KEYWORD-PLIST" release-readiness-object)
+                                     '())))
+         (sbcl-agent-call "COMMAND-PROJECT-RELEASE-READINESS-SERVICE"
+                          session
+                          release-readiness
+                          :project-id project-id)))
+      ((string= operation "project.set-readiness-obligations")
+       (let* ((session (bridge-session environment))
+              (project-id (request-object-value request-json "projectId"))
+              (readiness-obligations-raw (request-object-value request-json "readinessObligations"))
+              (readiness-obligations
+                (if (listp readiness-obligations-raw)
+                    (mapcar (lambda (entry)
+                              (if (and (listp entry) (every #'consp entry))
+                                  (sbcl-agent-call "JSON-OBJECT->KEYWORD-PLIST" entry)
+                                  '()))
+                            readiness-obligations-raw)
+                    '())))
+         (sbcl-agent-call "COMMAND-PROJECT-READINESS-OBLIGATIONS-SERVICE"
+                          session
+                          readiness-obligations
+                          :project-id project-id)))
+      ((string= operation "project.append-requirement")
+       (let ((session (bridge-session environment)))
+         (sbcl-agent-call "COMMAND-PROJECT-REQUIREMENT-SERVICE"
+                          session
+                          :project-id (request-object-value request-json "projectId")
+                          :id (request-object-value request-json "id")
+                          :title (request-object-value request-json "title")
+                          :summary (request-object-value request-json "summary")
+                          :scope (request-object-value request-json "scope")
+                          :kind (keywordish (request-object-value request-json "kind"))
+                          :priority (keywordish (request-object-value request-json "priority"))
+                          :status (keywordish (request-object-value request-json "status"))
+                          :verification-kind (keywordish (request-object-value request-json "verificationKind"))
+                          :linked-artifact-ids (request-object-value request-json "linkedArtifactIds")
+                          :non-functional-p (request-object-value request-json "nonFunctional"))))
+      ((string= operation "project.append-feature-specification")
+       (let ((session (bridge-session environment)))
+         (sbcl-agent-call "COMMAND-PROJECT-FEATURE-SPEC-SERVICE"
+                          session
+                          :project-id (request-object-value request-json "projectId")
+                          :id (request-object-value request-json "id")
+                          :title (request-object-value request-json "title")
+                          :summary (request-object-value request-json "summary")
+                          :status (keywordish (request-object-value request-json "status"))
+                          :acceptance-criteria (request-object-value request-json "acceptanceCriteria")
+                          :linked-requirement-ids (request-object-value request-json "linkedRequirementIds")
+                          :linked-journey-ids (request-object-value request-json "linkedJourneyIds"))))
+      ((string= operation "project.append-user-journey")
+       (let ((session (bridge-session environment)))
+         (sbcl-agent-call "COMMAND-PROJECT-USER-JOURNEY-SERVICE"
+                          session
+                          :project-id (request-object-value request-json "projectId")
+                          :id (request-object-value request-json "id")
+                          :title (request-object-value request-json "title")
+                          :summary (request-object-value request-json "summary")
+                          :actors (request-object-value request-json "actors")
+                          :entrypoints (request-object-value request-json "entrypoints")
+                          :steps (request-object-value request-json "steps")
+                          :outcomes (request-object-value request-json "outcomes")
+                          :edge-cases (request-object-value request-json "edgeCases"))))
+      ((string= operation "project.append-architecture-decision")
+       (let ((session (bridge-session environment)))
+         (sbcl-agent-call "COMMAND-PROJECT-ARCHITECTURE-DECISION-SERVICE"
+                          session
+                          :project-id (request-object-value request-json "projectId")
+                          :id (request-object-value request-json "id")
+                          :title (request-object-value request-json "title")
+                          :status (keywordish (request-object-value request-json "status"))
+                          :summary (request-object-value request-json "summary")
+                          :drivers (request-object-value request-json "drivers")
+                          :consequences (request-object-value request-json "consequences")
+                          :stack-choices (request-object-value request-json "stackChoices")
+                          :linked-requirement-ids (request-object-value request-json "linkedRequirementIds"))))
+      ((string= operation "project.bind-testing-harness")
+       (let ((session (bridge-session environment))
+             (harness-id (keywordish (request-object-value request-json "harnessId"))))
+         (unless harness-id
+           (error "project.bind-testing-harness requires a harnessId payload"))
+         (sbcl-agent-call "COMMAND-PROJECT-BIND-TESTING-HARNESS-SERVICE"
+                          session
+                          harness-id
+                          :project-id (request-object-value request-json "projectId"))))
+      ((string= operation "project.append-source-root")
+       (let* ((session (bridge-session environment))
+              (source-root (request-object-value request-json "sourceRoot")))
+         (unless source-root
+           (error "project.append-source-root requires a sourceRoot payload"))
+         (sbcl-agent-call "COMMAND-PROJECT-SOURCE-ROOT-SERVICE"
+                          session
+                          source-root
+                          :project-id (request-object-value request-json "projectId"))))
+      ((string= operation "project.append-quality-gate")
+       (let ((session (bridge-session environment)))
+         (sbcl-agent-call "COMMAND-PROJECT-QUALITY-GATE-SERVICE"
+                          session
+                          :project-id (request-object-value request-json "projectId")
+                          :id (request-object-value request-json "id")
+                          :title (request-object-value request-json "title")
+                          :summary (request-object-value request-json "summary")
+                          :status (keywordish (request-object-value request-json "status"))
+                          :required-harness-ids (keywordish-list (request-object-value request-json "requiredHarnessIds"))
+                          :minimum-linked-work-items (request-object-value request-json "minimumLinkedWorkItems")
+                          :minimum-linked-incidents (request-object-value request-json "minimumLinkedIncidents")
+                          :require-source-roots-p (request-object-value request-json "requireSourceRoots")
+                          :required-trace-target-kinds (keywordish-list (request-object-value request-json "requiredTraceTargetKinds"))
+                          :maximum-failed-tests (request-object-value request-json "maximumFailedTests")
+                          :require-coverage-p (request-object-value request-json "requireCoverage")
+                          :maximum-say-turn-latency-seconds (request-object-value request-json "maximumSayTurnLatencySeconds")
+                          :maximum-environment-save-load-seconds (request-object-value request-json "maximumEnvironmentSaveLoadSeconds")
+                          :require-recovery-ready-p (request-object-value request-json "requireRecoveryReady"))))
+      ((string= operation "project.bind-incident")
+       (let ((session (bridge-session environment)))
+         (sbcl-agent-call "COMMAND-PROJECT-BIND-INCIDENT-SERVICE"
+                          session
+                          (request-object-value request-json "incidentId")
+                          :project-id (request-object-value request-json "projectId"))))
       ((string= operation "work-item.list")
        (sbcl-agent-call "QUERY-WORK-ITEM-LIST-SERVICE" (bridge-session environment)))
       ((string= operation "work-item.detail")
        (let ((request-id (request-object-value request-json "workItemId")))
          (sbcl-agent-call "QUERY-WORK-ITEM-DETAIL-SERVICE" (bridge-session environment) request-id)))
+      ((string= operation "work-item.plan")
+       (let ((request-id (request-object-value request-json "workItemId")))
+         (sbcl-agent-call "QUERY-WORK-ITEM-PLAN-SERVICE" (bridge-session environment) request-id)))
+      ((string= operation "work-item.resume")
+       (let ((session (bridge-session environment)))
+         (sbcl-agent-call "COMMAND-WORK-ITEM-RESUME-SERVICE"
+                          session
+                          (request-object-value request-json "workItemId")
+                          :note (request-object-value request-json "note"))))
+      ((string= operation "work-item.quarantine")
+       (let ((session (bridge-session environment)))
+         (sbcl-agent-call "COMMAND-WORK-ITEM-QUARANTINE-SERVICE"
+                          session
+                          (request-object-value request-json "workItemId")
+                          (or (request-object-value request-json "reason")
+                              "Governed work item requires supervised quarantine."))))
+      ((string= operation "work-item.rollback")
+       (let ((session (bridge-session environment)))
+         (sbcl-agent-call "COMMAND-WORK-ITEM-ROLLBACK-SERVICE"
+                          session
+                          (request-object-value request-json "workItemId")
+                          :reason (request-object-value request-json "reason")
+                          :note (request-object-value request-json "note"))))
+      ((string= operation "work-item.complete-validations")
+       (let ((session (bridge-session environment)))
+         (sbcl-agent-call "COMMAND-WORK-ITEM-COMPLETE-VALIDATIONS-SERVICE"
+                          session
+                          (request-object-value request-json "workItemId")
+                          :status (or (keywordish (request-object-value request-json "status"))
+                                      :passed))))
+      ((string= operation "work-item.steer")
+       (let ((session (bridge-session environment)))
+         (sbcl-agent-call "COMMAND-WORK-ITEM-STEER-SERVICE"
+                          session
+                          (request-object-value request-json "workItemId")
+                          :phase (keywordish (request-object-value request-json "phase"))
+                          :next-step (request-object-value request-json "nextStep")
+                          :note (request-object-value request-json "note"))))
       ((string= operation "workflow.record-detail")
        (let ((request-id (request-object-value request-json "workflowRecordId")))
          (sbcl-agent-call "QUERY-WORKFLOW-RECORD-DETAIL-SERVICE" (bridge-session environment) request-id)))
@@ -1207,10 +1641,15 @@
                                   :metadata (sbcl-agent-call "MAKE-SERVICE-METADATA"
                                                              :authority :environment
                                                              :environment environment))))))
-      (handler-case
-          (sbcl-agent-call "SAVE-ENVIRONMENT" environment state-path)
+      (let ((persisted-environment
+              (handler-case
+                  (sbcl-agent-call "ENSURE-ENVIRONMENT")
+                (error ()
+                  environment))))
+        (handler-case
+            (sbcl-agent-call "SAVE-ENVIRONMENT" persisted-environment state-path)
         (error ()
-          nil))
+              nil)))
       (if (string= operation "conversation.send-message-stream")
           (emit-stream-frame :result response)
           (write-string

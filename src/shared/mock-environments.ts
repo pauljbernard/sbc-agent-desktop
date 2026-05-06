@@ -7,7 +7,12 @@ import type {
   AttentionSummaryDto,
   BindingDto,
   CommandResultDto,
+  ConsoleLogEntryDto,
+  ConsoleLogQueryInput,
+  ConsoleLogStreamDto,
   CreateConversationThreadInput,
+  DiagnosticReportDetailDto,
+  DiagnosticReportSummaryDto,
   EnvironmentEventDto,
   EventSubscriptionInput,
   EnvironmentStatusDto,
@@ -17,11 +22,22 @@ import type {
   IncidentSummaryDto,
   MessageDto,
   PackageBrowserDto,
+  ProjectArchitectureDecisionDto,
+  ProjectDetailDto,
+  ProjectFeatureSpecificationDto,
+  ProjectLinkedIncidentDto,
+  ProjectLinkedWorkItemDto,
+  ProjectListDto,
+  ProjectRequirementDto,
+  ProjectSummaryDto,
+  ProjectTestingHarnessDto,
+  ProjectUserJourneyDto,
   QueryResultDto,
   RuntimeEvalResultDto,
   RuntimeEntityDetailDto,
   RuntimeInspectionResultDto,
   RuntimeSummaryDto,
+  RuntimeTelemetrySnapshotDto,
   SendConversationMessageInput,
   SendConversationMessageResultDto,
   SourceMutationResultDto,
@@ -43,6 +59,8 @@ import type {
   WorkspaceSummaryDto
 } from "./contracts";
 
+const now = "2026-04-18T14:20:00Z";
+
 interface MockEnvironmentRecord {
   summary: EnvironmentSummaryDto;
   status: EnvironmentStatusDto;
@@ -60,7 +78,51 @@ interface MockEnvironmentRecord {
   events: EnvironmentEventDto[];
 }
 
-const now = "2026-04-18T14:20:00Z";
+const mockDiagnosticReports: Record<string, DiagnosticReportDetailDto> = {
+  "diag-runtime-reload": {
+    reportId: "diag-runtime-reload",
+    kind: "diagnostic",
+    title: "Runtime Reload Diagnostic",
+    summary: "Retained host-side diagnostic snapshot for the last runtime reload disturbance.",
+    source: "mock-host",
+    processName: "sbcl-agent-ux",
+    pid: 4127,
+    createdAt: now,
+    path: "/Library/Logs/DiagnosticReports/sbcl-agent-ux.diag",
+    contentPreview:
+      "Mock diagnostic preview: renderer reload, bridge health, and runtime attachment state were captured here.",
+    metadata: {
+      authority: "host",
+      retained: true
+    }
+  }
+};
+
+const mockHostConsoleEntries: ConsoleLogEntryDto[] = [
+  {
+    entryId: "host:electron:reload",
+    cursor: 0,
+    plane: "host",
+    timestamp: now,
+    type: "notice",
+    category: "electron",
+    source: "IntentOS Shell",
+    message: "Renderer reload completed and the preload bridge reattached successfully.",
+    processName: "Electron",
+    pid: 4127,
+    threadId: null,
+    activityId: "reload-cycle",
+    environmentId: null,
+    runtimeId: null,
+    workItemId: null,
+    workflowRecordId: null,
+    incidentId: null,
+    threadRefId: null,
+    turnRefId: null,
+    visibility: "operator",
+    detail: "Mock host console entry retained for Browser > Console host-plane development."
+  }
+];
 
 function metadata(binding: BindingDto | null, readModel: string): ServiceMetadataDto {
   return {
@@ -273,6 +335,7 @@ const environments: Record<string, MockEnvironmentRecord> = {
         recoverySummary: "Recovery is in progress. Evidence exists, but closure is still withheld pending approval and reconciliation.",
         nextAction: "Review approval state and confirm the resumed binding path is safe.",
         blockedReason: "Closure remains blocked until approval and colder validation complete.",
+        remediationPlan: null,
         artifactIds: ["artifact-runtime-audit", "artifact-transport-spec"],
         linkedEntities: [
           { entityType: "operation", entityId: "op-persist-binding", label: "Persist binding operation" },
@@ -280,6 +343,33 @@ const environments: Record<string, MockEnvironmentRecord> = {
           { entityType: "work-item", entityId: "task-host-binding", label: "Bind desktop session" },
           { entityType: "artifact", entityId: "artifact-runtime-audit", label: "Runtime Audit Snapshot" }
         ],
+        traceNeighborhood: {
+          entityKind: "incident",
+          entityId: "incident-runtime-guard",
+          count: 3,
+          outbound: [
+            {
+              traceLinkId: "incident-runtime-guard-work-item",
+              relation: "reported-by-incident",
+              sourceKind: "work-item",
+              sourceId: "work-item-host-binding",
+              targetKind: "incident",
+              targetId: "incident-runtime-guard",
+              status: "active"
+            }
+          ],
+          inbound: [
+            {
+              traceLinkId: "project-alpha-incident-runtime-guard",
+              relation: "tracked-by-project",
+              sourceKind: "project",
+              sourceId: "project-alpha",
+              targetKind: "incident",
+              targetId: "incident-runtime-guard",
+              status: "active"
+            }
+          ]
+        },
         updatedAt: "2026-04-18T14:18:00Z"
       }
     },
@@ -320,7 +410,43 @@ const environments: Record<string, MockEnvironmentRecord> = {
           { entityType: "approval", entityId: "approval-binding-shift", label: "Persist environment binding" },
           { entityType: "incident", entityId: "incident-runtime-guard", label: "Runtime guard interruption" },
           { entityType: "artifact", entityId: "artifact-transport-spec", label: "Transport Contract Delta" }
-        ]
+        ],
+        traceNeighborhood: {
+          entityKind: "work-item",
+          entityId: "work-item-host-binding",
+          count: 4,
+          outbound: [
+            {
+              traceLinkId: "work-item-host-binding-workflow",
+              relation: "implemented-by-workflow-record",
+              sourceKind: "work-item",
+              sourceId: "work-item-host-binding",
+              targetKind: "workflow-record",
+              targetId: "workflow-record-host-binding",
+              status: "active"
+            },
+            {
+              traceLinkId: "project-alpha-work-item-host-binding",
+              relation: "tracked-by-work-item",
+              sourceKind: "project",
+              sourceId: "project-alpha",
+              targetKind: "work-item",
+              targetId: "work-item-host-binding",
+              status: "active"
+            }
+          ],
+          inbound: [
+            {
+              traceLinkId: "work-item-host-binding-incident-runtime-guard",
+              relation: "reported-by-incident",
+              sourceKind: "work-item",
+              sourceId: "work-item-host-binding",
+              targetKind: "incident",
+              targetId: "incident-runtime-guard",
+              status: "active"
+            }
+          ]
+        }
       },
       "work-item-runtime-audit": {
         workItemId: "work-item-runtime-audit",
@@ -332,7 +458,24 @@ const environments: Record<string, MockEnvironmentRecord> = {
         sourceRelationship: "Source and image remain intentionally distinct until reconciliation closes.",
         linkedEntities: [
           { entityType: "artifact", entityId: "artifact-runtime-audit", label: "Runtime Audit Snapshot" }
-        ]
+        ],
+        traceNeighborhood: {
+          entityKind: "work-item",
+          entityId: "work-item-runtime-audit",
+          count: 2,
+          outbound: [
+            {
+              traceLinkId: "work-item-runtime-audit-workflow",
+              relation: "implemented-by-workflow-record",
+              sourceKind: "work-item",
+              sourceId: "work-item-runtime-audit",
+              targetKind: "workflow-record",
+              targetId: "workflow-record-runtime-audit",
+              status: "active"
+            }
+          ],
+          inbound: []
+        }
       }
     },
     workflowRecords: {
@@ -449,7 +592,46 @@ const environments: Record<string, MockEnvironmentRecord> = {
           summary: "Approval required to make the current desktop binding durable.",
           state: "awaiting"
         }
-      ])
+      ]),
+      alignmentState: {
+        intentId: "intent-live-binding",
+        score: 0.74,
+        divergenceTypes: ["incorrect-constraint-enforcement", "missing-capability"],
+        confidence: 0.83,
+        status: "degraded",
+        gapCount: 2,
+        summary: {
+          divergenceCount: 2
+        }
+      },
+      reconciliationDecision: {
+        intentId: "intent-live-binding",
+        alignmentStatus: "degraded",
+        divergenceTypes: ["incorrect-constraint-enforcement", "missing-capability"],
+        decision: "co-evolve",
+        proposedActions: [
+          {
+            kind: "correct-runtime",
+            target: "runtime",
+            reason: "Observed runtime and governance evidence still diverge from the intended host binding posture."
+          }
+        ],
+        triggerEvents: [
+          {
+            eventId: "event-live-binding-drift",
+            kind: "runtime.change",
+            family: "runtime",
+            entityId: "live-binding",
+            timestamp: now
+          }
+        ],
+        approvalPosture: "governed-review",
+        confidence: 0.83,
+        requiresApproval: true,
+        rationale: {
+          decisionBasis: "co-evolve"
+        }
+      }
     },
     status: {
       environmentId: "local-dev",
@@ -458,7 +640,46 @@ const environments: Record<string, MockEnvironmentRecord> = {
       hostState: "ready",
       runtimeState: "warm",
       workflowState: "attention_required",
-      lastUpdatedAt: now
+      lastUpdatedAt: now,
+      alignmentState: {
+        intentId: "intent-live-binding",
+        score: 0.74,
+        divergenceTypes: ["incorrect-constraint-enforcement", "missing-capability"],
+        confidence: 0.83,
+        status: "degraded",
+        gapCount: 2,
+        summary: {
+          divergenceCount: 2
+        }
+      },
+      reconciliationDecision: {
+        intentId: "intent-live-binding",
+        alignmentStatus: "degraded",
+        divergenceTypes: ["incorrect-constraint-enforcement", "missing-capability"],
+        decision: "co-evolve",
+        proposedActions: [
+          {
+            kind: "correct-runtime",
+            target: "runtime",
+            reason: "Observed runtime and governance evidence still diverge from the intended host binding posture."
+          }
+        ],
+        triggerEvents: [
+          {
+            eventId: "event-live-binding-drift",
+            kind: "runtime.change",
+            family: "runtime",
+            entityId: "live-binding",
+            timestamp: now
+          }
+        ],
+        approvalPosture: "governed-review",
+        confidence: 0.83,
+        requiresApproval: true,
+        rationale: {
+          decisionBasis: "co-evolve"
+        }
+      }
     },
     threads: [
       {
@@ -804,12 +1025,30 @@ const environments: Record<string, MockEnvironmentRecord> = {
         recoverySummary: "The incident is open and waiting for explicit recovery acknowledgement before restart paths continue.",
         nextAction: "Inspect the condition report and choose a recovery workflow.",
         blockedReason: "Runtime mutation remains suspended pending operator acknowledgement.",
+        remediationPlan: null,
         artifactIds: ["artifact-condition-report"],
         linkedEntities: [
           { entityType: "incident", entityId: "incident-image-divergence", label: "Image divergence under recovery" },
           { entityType: "artifact", entityId: "artifact-condition-report", label: "Condition Report" },
           { entityType: "work-item", entityId: "task-recovery-a", label: "Consolidate evidence" }
         ],
+        traceNeighborhood: {
+          entityKind: "incident",
+          entityId: "incident-image-divergence",
+          count: 2,
+          outbound: [],
+          inbound: [
+            {
+              traceLinkId: "work-item-recovery-a-incident-image-divergence",
+              relation: "reported-by-incident",
+              sourceKind: "work-item",
+              sourceId: "work-item-recovery-a",
+              targetKind: "incident",
+              targetId: "incident-image-divergence",
+              status: "active"
+            }
+          ]
+        },
         updatedAt: "2026-04-18T12:58:00Z"
       },
       "incident-workflow-quarantine": {
@@ -823,11 +1062,19 @@ const environments: Record<string, MockEnvironmentRecord> = {
         recoverySummary: "Recovery workflow is underway, but closure is blocked on review and reconciliation.",
         nextAction: "Complete evidence review and clear quarantine conditions.",
         blockedReason: "Workflow closure is waiting for evidence-backed confirmation.",
+        remediationPlan: null,
         artifactIds: ["artifact-condition-report"],
         linkedEntities: [
           { entityType: "incident", entityId: "incident-workflow-quarantine", label: "Workflow quarantine pending review" },
           { entityType: "work-item", entityId: "task-recovery-a", label: "Consolidate evidence" }
         ],
+        traceNeighborhood: {
+          entityKind: "incident",
+          entityId: "incident-workflow-quarantine",
+          count: 1,
+          outbound: [],
+          inbound: []
+        },
         updatedAt: "2026-04-18T13:04:00Z"
       }
     },
@@ -856,7 +1103,34 @@ const environments: Record<string, MockEnvironmentRecord> = {
         linkedEntities: [
           { entityType: "incident", entityId: "incident-image-divergence", label: "Image divergence under recovery" },
           { entityType: "artifact", entityId: "artifact-condition-report", label: "Condition Report" }
-        ]
+        ],
+        traceNeighborhood: {
+          entityKind: "work-item",
+          entityId: "work-item-recovery-a",
+          count: 3,
+          outbound: [
+            {
+              traceLinkId: "work-item-recovery-a-workflow",
+              relation: "implemented-by-workflow-record",
+              sourceKind: "work-item",
+              sourceId: "work-item-recovery-a",
+              targetKind: "workflow-record",
+              targetId: "workflow-record-recovery-a",
+              status: "active"
+            }
+          ],
+          inbound: [
+            {
+              traceLinkId: "work-item-recovery-a-incident-image-divergence",
+              relation: "reported-by-incident",
+              sourceKind: "work-item",
+              sourceId: "work-item-recovery-a",
+              targetKind: "incident",
+              targetId: "incident-image-divergence",
+              status: "active"
+            }
+          ]
+        }
       }
     },
     workflowRecords: {
@@ -945,6 +1219,46 @@ const environments: Record<string, MockEnvironmentRecord> = {
         }
       ]),
       approvals: approvals([])
+      ,
+      alignmentState: {
+        intentId: "intent-recovery",
+        score: 0.58,
+        divergenceTypes: ["behavioral-mismatch", "incorrect-constraint-enforcement"],
+        confidence: 0.88,
+        status: "misaligned",
+        gapCount: 3,
+        summary: {
+          divergenceCount: 2
+        }
+      },
+      reconciliationDecision: {
+        intentId: "intent-recovery",
+        alignmentStatus: "misaligned",
+        divergenceTypes: ["behavioral-mismatch", "incorrect-constraint-enforcement"],
+        decision: "runtime",
+        proposedActions: [
+          {
+            kind: "correct-runtime",
+            target: "runtime",
+            reason: "Recovery posture still requires runtime correction before the environment can be treated as trustworthy."
+          }
+        ],
+        triggerEvents: [
+          {
+            eventId: "event-recovery-drift",
+            kind: "runtime.recovery.blocked",
+            family: "runtime",
+            entityId: "recovery-lab",
+            timestamp: now
+          }
+        ],
+        approvalPosture: "governed-review",
+        confidence: 0.88,
+        requiresApproval: true,
+        rationale: {
+          decisionBasis: "runtime"
+        }
+      }
     },
     status: {
       environmentId: "recovery-lab",
@@ -953,7 +1267,46 @@ const environments: Record<string, MockEnvironmentRecord> = {
       hostState: "ready",
       runtimeState: "recovering",
       workflowState: "attention_required",
-      lastUpdatedAt: now
+      lastUpdatedAt: now,
+      alignmentState: {
+        intentId: "intent-recovery",
+        score: 0.58,
+        divergenceTypes: ["behavioral-mismatch", "incorrect-constraint-enforcement"],
+        confidence: 0.88,
+        status: "misaligned",
+        gapCount: 3,
+        summary: {
+          divergenceCount: 2
+        }
+      },
+      reconciliationDecision: {
+        intentId: "intent-recovery",
+        alignmentStatus: "misaligned",
+        divergenceTypes: ["behavioral-mismatch", "incorrect-constraint-enforcement"],
+        decision: "runtime",
+        proposedActions: [
+          {
+            kind: "correct-runtime",
+            target: "runtime",
+            reason: "Recovery posture still requires runtime correction before the environment can be treated as trustworthy."
+          }
+        ],
+        triggerEvents: [
+          {
+            eventId: "event-recovery-drift",
+            kind: "runtime.recovery.blocked",
+            family: "runtime",
+            entityId: "recovery-lab",
+            timestamp: now
+          }
+        ],
+        approvalPosture: "governed-review",
+        confidence: 0.88,
+        requiresApproval: true,
+        rationale: {
+          decisionBasis: "runtime"
+        }
+      }
     },
     threads: [
       {
@@ -1203,6 +1556,147 @@ export function queryEnvironmentEvents(
       eventFamily: input.families?.join(",") ?? null,
       visibility: input.visibility?.join(",") ?? null
     }
+  };
+}
+
+function consoleTypeForEvent(event: EnvironmentEventDto): ConsoleLogEntryDto["type"] {
+  if (event.kind.includes("failed") || event.kind.includes("incident")) {
+    return "error";
+  }
+  if (event.kind.includes("approval") || event.kind.includes("blocked") || event.kind.includes("waiting")) {
+    return "warning";
+  }
+  if (event.family === "provider") {
+    return "debug";
+  }
+  return "info";
+}
+
+function consoleMessageForEvent(event: EnvironmentEventDto): string {
+  if (typeof event.payload?.payload === "string") {
+    return event.payload.payload;
+  }
+  if (typeof event.summary === "string" && event.summary.length > 0) {
+    return event.summary;
+  }
+  return `${event.family} / ${event.kind}`;
+}
+
+function consoleEntryFromEnvironmentEvent(
+  environmentId: string,
+  event: EnvironmentEventDto
+): ConsoleLogEntryDto {
+  return {
+    entryId: `${environmentId}:${event.cursor}`,
+    cursor: event.cursor,
+    plane: "environment",
+    timestamp: event.timestamp,
+    type: consoleTypeForEvent(event),
+    category: event.family,
+    source: event.kind,
+    message: consoleMessageForEvent(event),
+    processName: "sbcl-agent",
+    pid: 4101,
+    threadId: null,
+    activityId: `${event.family}:${event.kind}`,
+    environmentId,
+    runtimeId: "runtime-local-primary",
+    workItemId: null,
+    workflowRecordId: null,
+    incidentId: null,
+    threadRefId: event.threadId ?? null,
+    turnRefId: event.turnId ?? null,
+    visibility: event.visibility ?? null,
+    detail: JSON.stringify(event.payload, null, 2)
+  };
+}
+
+export function queryConsoleLogStream(
+  input: ConsoleLogQueryInput
+): QueryResultDto<ConsoleLogStreamDto> {
+  const environmentId = input.environmentId ?? defaultEnvironmentId;
+  const binding = { environmentId };
+  const plane = input.plane ?? "environment";
+  const typeFilter = input.types?.length ? new Set(input.types) : null;
+  const sourceFilter = input.sources?.length ? new Set(input.sources) : null;
+  const limit = input.limit ?? 50;
+
+  const allEntries =
+    plane === "environment"
+      ? environments[environmentId].events.map((event) => consoleEntryFromEnvironmentEvent(environmentId, event))
+      : mockHostConsoleEntries;
+  const filteredEntries = allEntries
+    .filter((entry) => {
+      if (typeof input.fromCursor === "number" && typeof entry.cursor === "number" && entry.cursor < input.fromCursor) {
+        return false;
+      }
+      if (typeFilter && !typeFilter.has(entry.type)) {
+        return false;
+      }
+      if (sourceFilter && !sourceFilter.has(entry.source)) {
+        return false;
+      }
+      return true;
+    })
+    .slice(0, limit);
+
+  return {
+    contractVersion: 1,
+    domain: "console",
+    operation: "console.stream",
+    kind: "query",
+    status: "ok",
+    data: {
+      plane,
+      entries: filteredEntries,
+      nextCursor: filteredEntries[filteredEntries.length - 1]?.cursor ?? null,
+      summary:
+        plane === "environment"
+          ? `Projected ${filteredEntries.length} governed environment console entries from the retained event stream.`
+          : `Projected ${filteredEntries.length} mock host console entries for desktop Console development.`
+    },
+    metadata: metadata(binding, "console-stream-v1")
+  };
+}
+
+export function queryDiagnosticReportList(
+  environmentId: string
+): QueryResultDto<DiagnosticReportSummaryDto[]> {
+  const binding = { environmentId };
+  return {
+    contractVersion: 1,
+    domain: "diagnostic",
+    operation: "diagnostic.report_list",
+    kind: "query",
+    status: "ok",
+    data: Object.values(mockDiagnosticReports).map((report) => ({
+      reportId: report.reportId,
+      kind: report.kind,
+      title: report.title,
+      summary: report.summary,
+      source: report.source,
+      processName: report.processName ?? null,
+      pid: report.pid ?? null,
+      createdAt: report.createdAt,
+      path: report.path ?? null
+    })),
+    metadata: metadata(binding, "diagnostic-report-list-v1")
+  };
+}
+
+export function queryDiagnosticReportDetail(
+  environmentId: string,
+  reportId: string
+): QueryResultDto<DiagnosticReportDetailDto> {
+  const binding = { environmentId };
+  return {
+    contractVersion: 1,
+    domain: "diagnostic",
+    operation: "diagnostic.report_detail",
+    kind: "query",
+    status: "ok",
+    data: mockDiagnosticReports[reportId],
+    metadata: metadata(binding, "diagnostic-report-detail-v1")
   };
 }
 
@@ -1462,6 +1956,108 @@ export function queryRuntimeSummary(
     data: runtime,
     metadata: {
       ...metadata(binding, "runtime-summary"),
+      runtimeId: runtime.runtimeId
+    }
+  };
+}
+
+export function queryRuntimeTelemetrySnapshot(
+  environmentId: string
+): QueryResultDto<RuntimeTelemetrySnapshotDto> {
+  const binding = { environmentId };
+  const environment = environments[environmentId];
+  const runtime = environment.runtimeSummary;
+  const processes = [
+    {
+      processId: `runtime:${runtime.runtimeId}`,
+      kind: "runtime" as const,
+      label: runtime.runtimeLabel,
+      state: "running" as const,
+      summary: runtime.divergencePosture,
+      pid: 4127,
+      cpuPercent: 18,
+      memoryMb: 512,
+      elapsed: "00:34:12",
+      command: "sbcl --script live-service-bridge.lisp"
+    },
+    ...environment.workItems.map((item, index) => ({
+      processId: `work:${item.workItemId}`,
+      kind: "task" as const,
+      label: item.title,
+      state:
+        item.state === "active"
+          ? ("running" as const)
+          : item.state === "waiting"
+            ? ("waiting" as const)
+            : item.state === "blocked"
+              ? ("blocked" as const)
+              : ("completed" as const),
+      summary: item.waitingReason ?? `${item.title} remains attached to the governed runtime queue.`,
+      pid: null,
+      cpuPercent: item.state === "active" ? 7 + index : null,
+      memoryMb: item.state === "active" ? 96 + index * 8 : null,
+      elapsed: item.state === "active" ? `00:0${index + 2}:14` : null,
+      workItemId: item.workItemId,
+      workflowRecordId: null
+    })),
+    ...environment.summary.activeWorkers.map((worker, index) => ({
+      processId: `worker:${worker.workerId}`,
+      kind: "worker" as const,
+      label: worker.label,
+      state:
+        worker.state === "active"
+          ? ("running" as const)
+          : worker.state === "waiting"
+            ? ("waiting" as const)
+            : ("idle" as const),
+      summary: worker.responsibility,
+      pid: null,
+      cpuPercent: worker.state === "active" ? 5 + index : null,
+      memoryMb: worker.state === "active" ? 64 + index * 4 : null,
+      elapsed: worker.state === "active" ? `00:1${index}:02` : null
+    }))
+  ];
+
+  return {
+    contractVersion: 1,
+    domain: "runtime",
+    operation: "runtime.telemetry",
+    kind: "query",
+    status: "ok",
+    data: {
+      runtimeId: runtime.runtimeId,
+      sampledAt: now,
+      runtimePid: 4127,
+      cpu: {
+        utilizationPercent: 22,
+        coreCount: 8,
+        loadAverage1m: 1.24,
+        loadAverage5m: 1.12,
+        loadAverage15m: 0.96,
+        summary: "CPU posture remains active but below governance concern thresholds."
+      },
+      memory: {
+        rssMb: 512,
+        heapUsedMb: 148,
+        heapTotalMb: 256,
+        systemUsedPercent: 63,
+        summary: "Memory pressure is steady and the live image remains within normal bounds."
+      },
+      network: {
+        openConnectionCount: 4,
+        interfaceCount: 2,
+        summary: "Network activity is light and limited to the current governed desktop bridge."
+      },
+      disk: {
+        readKbps: 96,
+        writeKbps: 41,
+        summary: "Disk I/O is present but modest, consistent with source preview and artifact writes."
+      },
+      processes,
+      activitySummary: `${processes.length} runtime-linked processes are visible from the governed environment.`
+    },
+    metadata: {
+      ...metadata(binding, "runtime-telemetry"),
       runtimeId: runtime.runtimeId
     }
   };
@@ -1963,13 +2559,17 @@ export function queryIncidentDetail(
   incidentId: string
 ): QueryResultDto<IncidentDetailDto> {
   const binding = { environmentId };
+  const detail = environments[environmentId].incidentDetails[incidentId];
   return {
     contractVersion: 1,
     domain: "incident",
     operation: "incident.detail",
     kind: "query",
     status: "ok",
-    data: environments[environmentId].incidentDetails[incidentId],
+    data: {
+      ...detail,
+      remediationPlan: detail.remediationPlan ?? null
+    },
     metadata: {
       ...metadata(binding, "incident-detail"),
       incidentId
@@ -2024,6 +2624,394 @@ export function queryWorkflowRecordDetail(
     metadata: {
       ...metadata(binding, "workflow-record-detail"),
       workflowRecordId
+    }
+  };
+}
+
+function mockProjectSummary(environmentId: string): ProjectSummaryDto {
+  return {
+    projectId: "project-local-dev",
+    title: "Local Dev",
+    summary: "Governed project profile for the local mock environment.",
+    status: "active",
+    createdAt: now,
+    updatedAt: now,
+    requirementCount: 2,
+    featureSpecCount: 1,
+    journeyCount: 1,
+    architectureDecisionCount: 1,
+    nonFunctionalRequirementCount: 1,
+    linkedWorkItemCount: 1,
+    linkedIncidentCount: 1,
+    linkedTestingHarnessCount: 2,
+    sourceRoots: ["/Volumes/data/development/sbcl-agent/", "/Volumes/data/development/sbcl-agent-ux/"]
+  };
+}
+
+function mockProjectRequirements(): ProjectRequirementDto[] {
+  return [
+    {
+      requirementId: "req-traceability",
+      title: "Traceable Governance",
+      summary: "Requirements, work, tests, and incidents must remain linked.",
+      scope: "project",
+      kind: "functional",
+      priority: "high",
+      status: "accepted",
+      verificationKind: "test-suite",
+      linkedArtifactIds: []
+    }
+  ];
+}
+
+function mockProjectFeatureSpecifications(): ProjectFeatureSpecificationDto[] {
+  return [
+    {
+      featureSpecId: "spec-project-surface",
+      title: "Projects Surface",
+      summary: "Expose first-class project governance in the desktop shell.",
+      status: "planned",
+      acceptanceCriteria: ["list projects", "inspect project detail", "show linked evidence"],
+      linkedRequirementIds: ["req-traceability"],
+      linkedJourneyIds: ["journey-close-loop"]
+    }
+  ];
+}
+
+function mockProjectJourneys(): ProjectUserJourneyDto[] {
+  return [
+    {
+      journeyId: "journey-close-loop",
+      title: "Close the SDLC loop",
+      summary: "Move from project intent to governed work, testing, and runtime evidence.",
+      actors: ["operator", "agent"],
+      entrypoints: ["projects", "testing", "browser"],
+      steps: ["choose project", "inspect requirements", "inspect linked work", "inspect testing evidence"],
+      outcomes: ["traceable delivery posture"],
+      edgeCases: ["missing linked evidence"]
+    }
+  ];
+}
+
+function mockProjectArchitectureDecisions(): ProjectArchitectureDecisionDto[] {
+  return [
+    {
+      architectureDecisionId: "adr-project-governance",
+      title: "Project governance stays environment-native",
+      status: "accepted",
+      summary: "Project intent and execution evidence should be queryable from the same runtime contract.",
+      drivers: ["traceability", "agent parity"],
+      consequences: ["stronger service contract", "less client-side reconstruction"],
+      stackChoices: ["sbcl-agent project services", "electron desktop projection"],
+      linkedRequirementIds: ["req-traceability"]
+    }
+  ];
+}
+
+function mockProjectLinkedWorkItems(environmentId: string): ProjectLinkedWorkItemDto[] {
+  const workItem = environments[environmentId].workItems[0];
+  if (!workItem) {
+    return [];
+  }
+  return [
+    {
+      workItemId: workItem.workItemId,
+      title: workItem.title,
+      status: workItem.state,
+      workflowRecordId: environments[environmentId].workItemDetails[workItem.workItemId]?.workflowRecordId ?? null,
+      pendingValidations: ["runtime-reload", "coverage"],
+      sourceMutationCount: 2
+    }
+  ];
+}
+
+function mockProjectLinkedIncidents(environmentId: string): ProjectLinkedIncidentDto[] {
+  const incident = Object.values(environments[environmentId].incidentDetails)[0];
+  if (!incident) {
+    return [];
+  }
+  return [
+    {
+      incidentId: incident.incidentId,
+      title: incident.title,
+      summary: incident.summary,
+      status: incident.state,
+      kind: incident.severity,
+      workItemId: incident.linkedEntities.find((entity) => entity.entityType === "work-item")?.entityId ?? null,
+      workflowRecordId: null
+    }
+  ];
+}
+
+function mockProjectTestingHarnesses(): ProjectTestingHarnessDto[] {
+  return [
+    {
+      harnessId: "full-suite",
+      label: "Full Suite",
+      entrypoint: "./bin/run-tests",
+      kind: "full-suite",
+      categories: ["core-cli", "service-contracts"]
+    },
+    {
+      harnessId: "coverage",
+      label: "Coverage",
+      entrypoint: "./bin/run-coverage",
+      kind: "coverage",
+      categories: ["coverage"]
+    }
+  ];
+}
+
+export function queryProjectTestingHarnessInventory(environmentId: string): QueryResultDto<ProjectTestingHarnessDto[]> {
+  const binding = { environmentId };
+  return {
+    contractVersion: 1,
+    domain: "project",
+    operation: "testing-harness-inventory",
+    kind: "query",
+    status: "ok",
+    data: mockProjectTestingHarnesses(),
+    metadata: metadata(binding, "project-testing-harness-inventory")
+  };
+}
+
+export function queryProjectList(environmentId: string): QueryResultDto<ProjectListDto> {
+  const binding = { environmentId };
+  return {
+    contractVersion: 1,
+    domain: "project",
+    operation: "project.list",
+    kind: "query",
+    status: "ok",
+    data: {
+      currentProjectId: "project-local-dev",
+      projects: [mockProjectSummary(environmentId)]
+    },
+    metadata: metadata(binding, "project-list")
+  };
+}
+
+export function queryProjectDetail(
+  environmentId: string,
+  projectId: string
+): QueryResultDto<ProjectDetailDto> {
+  const binding = { environmentId };
+  const summary = mockProjectSummary(environmentId);
+  return {
+    contractVersion: 1,
+    domain: "project",
+    operation: "project.detail",
+    kind: "query",
+    status: "ok",
+    data: {
+      ...summary,
+      projectId,
+      constitution: {
+        mission: "Keep project intent, execution, and runtime evidence aligned."
+      },
+      requirements: mockProjectRequirements(),
+      featureSpecifications: mockProjectFeatureSpecifications(),
+      designSystem: {
+        tokens: ["surface-accent", "status-tone"],
+        components: ["metric-tile", "project-board"]
+      },
+      styleGuide: {
+        voice: "direct",
+        rules: ["No marketing copy"]
+      },
+      testingStrategy: {
+        requiredEvidence: ["coverage", "performance"],
+        suiteExpectations: [
+          { harnessId: "full-suite", purpose: "governed regression", evidenceKinds: ["coverage", "performance"] }
+        ],
+        thresholdPolicy: {
+          maxFailedTests: 1,
+          maxSayTurnLatencySeconds: 0.5,
+          requireCoverage: true,
+          requireRecoveryReady: false
+        }
+      },
+      releaseReadiness: {
+        stage: "candidate",
+        signoffStatus: "pending",
+        targetWindow: "2026-05-15",
+        requiredApprovers: ["platform", "ops"],
+        observationPlan: ["watch latency", "review incidents"],
+        openRisks: ["coverage regression risk"]
+      },
+      readinessObligations: [
+        {
+          obligationId: "obl-release-signoff",
+          title: "Complete operator release signoff",
+          summary: "Platform and operations signoff must be explicitly confirmed before closure.",
+          status: "blocked",
+          owner: "ops",
+          dueWindow: "2026-05-15",
+          blocking: true,
+          evidenceKinds: ["governed-approval", "performance"]
+        },
+        {
+          obligationId: "obl-observation-window",
+          title: "Track post-release observation window",
+          summary: "Observation plan must remain attached for initial release monitoring.",
+          status: "ready",
+          owner: "platform",
+          dueWindow: "2026-05-16",
+          blocking: false,
+          evidenceKinds: ["performance", "console"]
+        }
+      ],
+      userJourneys: mockProjectJourneys(),
+      nonFunctionalRequirements: [
+        {
+          requirementId: "nfr-traceability",
+          title: "Traceability",
+          summary: "Every project surface should expose linked work, testing, and incidents.",
+          scope: "project",
+          kind: "non-functional",
+          priority: "high",
+          status: "accepted",
+          verificationKind: "inspection",
+          linkedArtifactIds: []
+        }
+      ],
+      architectureDecisions: mockProjectArchitectureDecisions(),
+      linkedWorkItemIds: mockProjectLinkedWorkItems(environmentId).map((item) => item.workItemId),
+      linkedIncidentIds: mockProjectLinkedIncidents(environmentId).map((item) => item.incidentId),
+      linkedTestingHarnessIds: ["full-suite", "coverage"],
+      linkedWorkItems: mockProjectLinkedWorkItems(environmentId),
+      linkedIncidents: mockProjectLinkedIncidents(environmentId),
+      linkedTestingHarnesses: mockProjectTestingHarnesses(),
+      testingEvidence: {
+        latestReport: {
+          generatedAt: now,
+          suiteId: "full-suite",
+          summary: { total: 42, passed: 41, failed: 1 }
+        },
+        coverage: {
+          indexPath: "/Volumes/data/development/sbcl-agent/tmp/coverage/index.html",
+          present: true
+        },
+        performance: {
+          sayTurnLatency: 0.12
+        },
+        suiteStatuses: [
+          {
+            harnessId: "full-suite",
+            purpose: "governed regression",
+            linked: true,
+            evidenceKinds: ["coverage", "performance"],
+            satisfiedEvidenceKinds: ["coverage", "performance"],
+            missingEvidenceKinds: [],
+            status: "ready"
+          }
+        ],
+        evidenceStatus: {
+          requiredEvidence: ["coverage", "performance"],
+          availableEvidence: ["coverage", "performance"],
+          missingEvidence: [],
+          status: "ready"
+        }
+      },
+      readinessSummary: {
+        status: "blocked",
+        testingReadiness: "ready",
+        qualityGateReadiness: "ready",
+        recoveryReadiness: "ready",
+        releaseReadinessStatus: "blocked",
+        releaseReviewState: "awaiting-signoff",
+        releaseSignoffState: "approvals-pending",
+        releaseSignoffReady: false,
+        releaseSignoffSummary: "Await final signoff from: ops.",
+        releaseRequiredApprovers: ["platform", "ops"],
+        releaseApprovedApprovers: ["platform"],
+        releasePendingApprovers: ["ops"],
+        releaseUnassignedApprovers: [],
+        releaseSignoffOwnershipReady: true,
+        releaseCurrentPhase: "candidate",
+        releaseTargetPhase: "approved",
+        releaseTransitionReady: false,
+        releaseTransitionSummary: "Release candidate is staged and waiting for final signoff.",
+        suiteBlockedCount: 0,
+        suiteReadyCount: 1,
+        releaseStage: "candidate",
+        releaseSignoffStatus: "pending",
+        readinessObligationCount: 2,
+        blockedReadinessObligationCount: 1,
+        readyReadinessObligationCount: 1,
+        releaseNextActions: ["Complete required release signoff."],
+        unmetObligations: ["Platform and operations signoff must be explicitly confirmed before closure."]
+      },
+      qualityGateEvidence: {
+        qualityGates: [
+          {
+            gateId: "gate-spec-to-evidence",
+            title: "Spec To Evidence",
+            summary: "Requirements, work, incidents, testing, and source roots must all be attached.",
+            status: "active",
+            requiredHarnessIds: ["full-suite"],
+            minimumLinkedWorkItems: 1,
+            minimumLinkedIncidents: 1,
+            requireSourceRoots: true,
+            requiredTraceTargetKinds: ["requirement", "work-item", "incident", "testing-harness"],
+            maximumFailedTests: 0,
+            requireCoverage: true,
+            maximumSayTurnLatencySeconds: 0.2,
+            maximumEnvironmentSaveLoadSeconds: 0.2,
+            requireRecoveryReady: true
+          }
+        ],
+        qualityGateSummary: {
+          gateCount: 1,
+          blockedCount: 0,
+          readyCount: 1,
+          readiness: "ready"
+        }
+      },
+      traceNeighborhood: {
+        entityKind: "project",
+        entityId: projectId,
+        count: 4,
+        outbound: [
+          {
+            traceLinkId: `${projectId}-req`,
+            relation: "has-requirement",
+            sourceKind: "project",
+            sourceId: projectId,
+            targetKind: "requirement",
+            targetId: "req-mock-1",
+            status: "active"
+          },
+          {
+            traceLinkId: `${projectId}-work`,
+            relation: "tracked-by-work-item",
+            sourceKind: "project",
+            sourceId: projectId,
+            targetKind: "work-item",
+            targetId: mockProjectLinkedWorkItems(environmentId)[0]?.workItemId ?? "work-item-mock-1",
+            status: "active"
+          }
+        ],
+        inbound: [
+          {
+            traceLinkId: `${projectId}-incident`,
+            relation: "reported-by-incident",
+            sourceKind: "incident",
+            sourceId: mockProjectLinkedIncidents(environmentId)[0]?.incidentId ?? "incident-mock-1",
+            targetKind: "project",
+            targetId: projectId,
+            status: "active"
+          }
+        ]
+      },
+      metadata: {
+        authority: "mock"
+      }
+    },
+    metadata: {
+      ...metadata(binding, "project-detail"),
+      workItemId: mockProjectLinkedWorkItems(environmentId)[0]?.workItemId ?? null,
+      incidentId: mockProjectLinkedIncidents(environmentId)[0]?.incidentId ?? null
     }
   };
 }

@@ -10,6 +10,11 @@ interface EventSubscriptionRecord {
 
 const eventSubscriptions = new Map<string, EventSubscriptionRecord>();
 let nextSubscriptionId = 1;
+let quitAppHandler: (() => Promise<void> | void) | null = null;
+
+export function setQuitAppHandler(handler: (() => Promise<void> | void) | null): void {
+  quitAppHandler = handler;
+}
 
 function eventMatchesSubscription(
   event: EnvironmentEventDto,
@@ -52,7 +57,28 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("host:set-environment-binding", (_event, environmentId: string) =>
     hostAdapter.setEnvironmentBinding(environmentId)
   );
+  ipcMain.handle("host:get-environment-image-registry", () =>
+    hostAdapter.getEnvironmentImageRegistry()
+  );
+  ipcMain.handle("host:load-environment-image", (_event, imageIdOrName: string) =>
+    hostAdapter.loadEnvironmentImage(imageIdOrName)
+  );
+  ipcMain.handle("host:save-environment-image", (_event, input) =>
+    hostAdapter.saveEnvironmentImage(input)
+  );
+  ipcMain.handle("host:revert-environment-image", () =>
+    hostAdapter.revertEnvironmentToImage()
+  );
 
+  ipcMain.handle("query:project-list", (_event, environmentId?: string) =>
+    hostAdapter.projectList(environmentId)
+  );
+  ipcMain.handle("query:project-detail", (_event, projectId: string, environmentId?: string) =>
+    hostAdapter.projectDetail(projectId, environmentId)
+  );
+  ipcMain.handle("query:project-testing-harness-inventory", (_event, environmentId?: string) =>
+    hostAdapter.projectTestingHarnessInventory(environmentId)
+  );
   ipcMain.handle("query:environment-summary", (_event, environmentId?: string) =>
     hostAdapter.environmentSummary(environmentId)
   );
@@ -66,6 +92,13 @@ export function registerIpcHandlers(): void {
     hostAdapter.desktopModel(environmentId)
   );
   ipcMain.handle("query:environment-events", (_event, input) => hostAdapter.environmentEvents(input));
+  ipcMain.handle("query:console-log-stream", (_event, input) => hostAdapter.consoleLogStream(input));
+  ipcMain.handle("query:diagnostic-report-list", (_event, environmentId?: string) =>
+    hostAdapter.diagnosticReportList(environmentId)
+  );
+  ipcMain.handle("query:diagnostic-report-detail", (_event, reportId: string, environmentId?: string) =>
+    hostAdapter.diagnosticReportDetail(reportId, environmentId)
+  );
   ipcMain.handle("query:artifact-list", (_event, environmentId?: string) =>
     hostAdapter.artifactList(environmentId)
   );
@@ -84,6 +117,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("query:runtime-summary", (_event, environmentId?: string) =>
     hostAdapter.runtimeSummary(environmentId)
   );
+  ipcMain.handle("query:runtime-telemetry-snapshot", (_event, environmentId?: string) =>
+    hostAdapter.runtimeTelemetrySnapshot(environmentId)
+  );
   ipcMain.handle("query:runtime-inspect-symbol", (_event, input) =>
     hostAdapter.runtimeInspectSymbol(input)
   );
@@ -91,6 +127,7 @@ export function registerIpcHandlers(): void {
     hostAdapter.runtimeEntityDetail(input)
   );
   ipcMain.handle("query:package-browser", (_event, input) => hostAdapter.packageBrowser(input));
+  ipcMain.handle("query:file-system-directory", (_event, input) => hostAdapter.fileSystemDirectory(input));
   ipcMain.handle("query:source-preview", (_event, input) => hostAdapter.sourcePreview(input));
   ipcMain.handle("query:approval-request-list", (_event, environmentId?: string) =>
     hostAdapter.approvalRequestList(environmentId)
@@ -110,6 +147,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("query:work-item-detail", (_event, workItemId: string, environmentId?: string) =>
     hostAdapter.workItemDetail(workItemId, environmentId)
   );
+  ipcMain.handle("query:work-item-plan", (_event, workItemId: string, environmentId?: string) =>
+    hostAdapter.workItemPlan(workItemId, environmentId)
+  );
   ipcMain.handle(
     "query:workflow-record-detail",
     (_event, workflowRecordId: string, environmentId?: string) =>
@@ -117,6 +157,72 @@ export function registerIpcHandlers(): void {
   );
   ipcMain.handle("command:evaluate-in-context", (_event, input) =>
     hostAdapter.evaluateInContext(input)
+  );
+  ipcMain.handle("command:write-source-file", (_event, input) =>
+    hostAdapter.writeSourceFile(input)
+  );
+  ipcMain.handle("command:create-intent", (_event, input) =>
+    hostAdapter.createIntent(input)
+  );
+  ipcMain.handle("command:create-project", (_event, input) =>
+    hostAdapter.createProject(input)
+  );
+  ipcMain.handle("command:update-project-constitution", (_event, input) =>
+    hostAdapter.updateProjectConstitution(input)
+  );
+  ipcMain.handle("command:update-project-design-system", (_event, input) =>
+    hostAdapter.updateProjectDesignSystem(input)
+  );
+  ipcMain.handle("command:update-project-style-guide", (_event, input) =>
+    hostAdapter.updateProjectStyleGuide(input)
+  );
+  ipcMain.handle("command:update-project-testing-strategy", (_event, input) =>
+    hostAdapter.updateProjectTestingStrategy(input)
+  );
+  ipcMain.handle("command:update-project-release-readiness", (_event, input) =>
+    hostAdapter.updateProjectReleaseReadiness(input)
+  );
+  ipcMain.handle("command:update-project-readiness-obligations", (_event, input) =>
+    hostAdapter.updateProjectReadinessObligations(input)
+  );
+  ipcMain.handle("command:append-project-requirement", (_event, input) =>
+    hostAdapter.appendProjectRequirement(input)
+  );
+  ipcMain.handle("command:append-project-feature-specification", (_event, input) =>
+    hostAdapter.appendProjectFeatureSpecification(input)
+  );
+  ipcMain.handle("command:append-project-user-journey", (_event, input) =>
+    hostAdapter.appendProjectUserJourney(input)
+  );
+  ipcMain.handle("command:append-project-architecture-decision", (_event, input) =>
+    hostAdapter.appendProjectArchitectureDecision(input)
+  );
+  ipcMain.handle("command:append-project-source-root", (_event, input) =>
+    hostAdapter.appendProjectSourceRoot(input)
+  );
+  ipcMain.handle("command:bind-project-testing-harness", (_event, input) =>
+    hostAdapter.bindProjectTestingHarness(input)
+  );
+  ipcMain.handle("command:append-project-quality-gate", (_event, input) =>
+    hostAdapter.appendProjectQualityGate(input)
+  );
+  ipcMain.handle("command:update-incident-remediation-plan", (_event, input) =>
+    hostAdapter.updateIncidentRemediationPlan(input)
+  );
+  ipcMain.handle("command:resume-work-item", (_event, input) =>
+    hostAdapter.resumeWorkItem(input)
+  );
+  ipcMain.handle("command:quarantine-work-item", (_event, input) =>
+    hostAdapter.quarantineWorkItem(input)
+  );
+  ipcMain.handle("command:rollback-work-item", (_event, input) =>
+    hostAdapter.rollbackWorkItem(input)
+  );
+  ipcMain.handle("command:complete-work-item-validations", (_event, input) =>
+    hostAdapter.completeWorkItemValidations(input)
+  );
+  ipcMain.handle("command:steer-work-item", (_event, input) =>
+    hostAdapter.steerWorkItem(input)
   );
   ipcMain.handle("command:create-conversation-thread", (_event, input) =>
     hostAdapter.createConversationThread(input)
@@ -152,6 +258,13 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("desktop:set-preferences", (_event, patch) =>
     hostAdapter.setDesktopPreferences(patch)
   );
+  ipcMain.handle("desktop:quit-app", async () => {
+    if (quitAppHandler) {
+      await quitAppHandler();
+      return;
+    }
+    await hostAdapter.quitApp();
+  });
   ipcMain.handle("desktop:set-window-title", (event, title: string) => {
     BrowserWindow.fromWebContents(event.sender)?.setTitle(title);
   });

@@ -52,9 +52,20 @@ const api: SbclAgentDesktopApi = {
     getHostStatus: () => ipcRenderer.invoke("host:get-status"),
     getCurrentBinding: () => ipcRenderer.invoke("host:get-current-binding"),
     setEnvironmentBinding: (environmentId: string) =>
-      ipcRenderer.invoke("host:set-environment-binding", environmentId)
+      ipcRenderer.invoke("host:set-environment-binding", environmentId),
+    getEnvironmentImageRegistry: () => ipcRenderer.invoke("host:get-environment-image-registry"),
+    loadEnvironmentImage: (imageIdOrName: string) =>
+      ipcRenderer.invoke("host:load-environment-image", imageIdOrName),
+    saveEnvironmentImage: (input: { name: string; overwrite?: boolean }) =>
+      ipcRenderer.invoke("host:save-environment-image", input),
+    revertEnvironmentToImage: () => ipcRenderer.invoke("host:revert-environment-image")
   },
   query: {
+    projectList: (environmentId?: string) => ipcRenderer.invoke("query:project-list", environmentId),
+    projectDetail: (projectId: string, environmentId?: string) =>
+      ipcRenderer.invoke("query:project-detail", projectId, environmentId),
+    projectTestingHarnessInventory: (environmentId?: string) =>
+      ipcRenderer.invoke("query:project-testing-harness-inventory", environmentId),
     environmentSummary: (environmentId?: string) =>
       ipcRenderer.invoke("query:environment-summary", environmentId),
     environmentStatus: (environmentId?: string) =>
@@ -64,6 +75,11 @@ const api: SbclAgentDesktopApi = {
     desktopModel: (environmentId?: string) =>
       ipcRenderer.invoke("query:desktop-model", environmentId),
     environmentEvents: (input) => ipcRenderer.invoke("query:environment-events", input),
+    consoleLogStream: (input) => ipcRenderer.invoke("query:console-log-stream", input),
+    diagnosticReportList: (environmentId?: string) =>
+      ipcRenderer.invoke("query:diagnostic-report-list", environmentId),
+    diagnosticReportDetail: (reportId: string, environmentId?: string) =>
+      ipcRenderer.invoke("query:diagnostic-report-detail", reportId, environmentId),
     artifactList: (environmentId?: string) => ipcRenderer.invoke("query:artifact-list", environmentId),
     artifactDetail: (artifactId: string, environmentId?: string) =>
       ipcRenderer.invoke("query:artifact-detail", artifactId, environmentId),
@@ -73,9 +89,12 @@ const api: SbclAgentDesktopApi = {
     turnDetail: (turnId: string, environmentId?: string) =>
       ipcRenderer.invoke("query:turn-detail", turnId, environmentId),
     runtimeSummary: (environmentId?: string) => ipcRenderer.invoke("query:runtime-summary", environmentId),
+    runtimeTelemetrySnapshot: (environmentId?: string) =>
+      ipcRenderer.invoke("query:runtime-telemetry-snapshot", environmentId),
     runtimeInspectSymbol: (input) => ipcRenderer.invoke("query:runtime-inspect-symbol", input),
     runtimeEntityDetail: (input) => ipcRenderer.invoke("query:runtime-entity-detail", input),
     packageBrowser: (input) => ipcRenderer.invoke("query:package-browser", input),
+    fileSystemDirectory: (input) => ipcRenderer.invoke("query:file-system-directory", input),
     sourcePreview: (input) => ipcRenderer.invoke("query:source-preview", input),
     approvalRequestList: (environmentId?: string) =>
       ipcRenderer.invoke("query:approval-request-list", environmentId),
@@ -87,15 +106,42 @@ const api: SbclAgentDesktopApi = {
     workItemList: (environmentId?: string) => ipcRenderer.invoke("query:work-item-list", environmentId),
     workItemDetail: (workItemId: string, environmentId?: string) =>
       ipcRenderer.invoke("query:work-item-detail", workItemId, environmentId),
+    workItemPlan: (workItemId: string, environmentId?: string) =>
+      ipcRenderer.invoke("query:work-item-plan", workItemId, environmentId),
     workflowRecordDetail: (workflowRecordId: string, environmentId?: string) =>
       ipcRenderer.invoke("query:workflow-record-detail", workflowRecordId, environmentId)
   },
   command: {
+    createIntent: (input) => ipcRenderer.invoke("command:create-intent", input),
+    createProject: (input) => ipcRenderer.invoke("command:create-project", input),
+    updateProjectConstitution: (input) => ipcRenderer.invoke("command:update-project-constitution", input),
+    updateProjectDesignSystem: (input) => ipcRenderer.invoke("command:update-project-design-system", input),
+    updateProjectStyleGuide: (input) => ipcRenderer.invoke("command:update-project-style-guide", input),
+    updateProjectTestingStrategy: (input) => ipcRenderer.invoke("command:update-project-testing-strategy", input),
+    updateProjectReleaseReadiness: (input) => ipcRenderer.invoke("command:update-project-release-readiness", input),
+    updateProjectReadinessObligations: (input) => ipcRenderer.invoke("command:update-project-readiness-obligations", input),
+    appendProjectRequirement: (input) => ipcRenderer.invoke("command:append-project-requirement", input),
+    appendProjectFeatureSpecification: (input) =>
+      ipcRenderer.invoke("command:append-project-feature-specification", input),
+    appendProjectUserJourney: (input) => ipcRenderer.invoke("command:append-project-user-journey", input),
+    appendProjectArchitectureDecision: (input) =>
+      ipcRenderer.invoke("command:append-project-architecture-decision", input),
+    appendProjectSourceRoot: (input) => ipcRenderer.invoke("command:append-project-source-root", input),
+    bindProjectTestingHarness: (input) => ipcRenderer.invoke("command:bind-project-testing-harness", input),
+    appendProjectQualityGate: (input) => ipcRenderer.invoke("command:append-project-quality-gate", input),
+    updateIncidentRemediationPlan: (input) =>
+      ipcRenderer.invoke("command:update-incident-remediation-plan", input),
+    resumeWorkItem: (input) => ipcRenderer.invoke("command:resume-work-item", input),
+    quarantineWorkItem: (input) => ipcRenderer.invoke("command:quarantine-work-item", input),
+    rollbackWorkItem: (input) => ipcRenderer.invoke("command:rollback-work-item", input),
+    completeWorkItemValidations: (input) => ipcRenderer.invoke("command:complete-work-item-validations", input),
+    steerWorkItem: (input) => ipcRenderer.invoke("command:steer-work-item", input),
     createConversationThread: (input) => ipcRenderer.invoke("command:create-conversation-thread", input),
     updateConversationThread: (input) => ipcRenderer.invoke("command:update-conversation-thread", input),
     sendConversationMessage: (input) => ipcRenderer.invoke("command:send-conversation-message", input),
     evaluateInContext: (input) => ipcRenderer.invoke("command:evaluate-in-context", input),
     stageSourceChange: (input) => ipcRenderer.invoke("command:stage-source-change", input),
+    writeSourceFile: (input) => ipcRenderer.invoke("command:write-source-file", input),
     reloadSourceFile: (input) => ipcRenderer.invoke("command:reload-source-file", input),
     desktopAction: (input: DesktopActionInput) => ipcRenderer.invoke("command:desktop-action", input),
     desktopRestore: (input: DesktopRestoreInput) =>
@@ -143,6 +189,7 @@ const api: SbclAgentDesktopApi = {
       ipcRenderer.invoke("desktop:get-preferences"),
     setDesktopPreferences: (patch: Partial<DesktopPreferencesDto>): Promise<DesktopPreferencesDto> =>
       ipcRenderer.invoke("desktop:set-preferences", patch),
+    quitApp: (): Promise<void> => ipcRenderer.invoke("desktop:quit-app"),
     setWindowTitle: (title: string): Promise<void> => ipcRenderer.invoke("desktop:set-window-title", title),
     openEntityInNewWindow: (ref: EntityRefDto) => ipcRenderer.invoke("desktop:open-entity", ref),
     listDocumentationPages: (): Promise<DocumentationPageSummaryDto[]> =>

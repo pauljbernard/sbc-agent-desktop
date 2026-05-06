@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type DragEvent as ReactDragEvent, type ReactNode, type Ref } from "react";
 import type {
   ApprovalDecisionDto,
   ApprovalRequestDto,
@@ -8,18 +8,27 @@ import type {
   ApprovalDecisionInput,
   BindingDto,
   CommandResultDto,
+  ConsoleLogEntryDto,
+  ConsoleLogStreamDto,
+  DesktopPreferencesDto,
   DesktopModelDto,
   DesktopPanelStateDto,
   DesktopPanelId,
+  EnvironmentImageRegistryDto,
+  DiagnosticReportDetailDto,
+  DiagnosticReportSummaryDto,
   DocumentationPageDto,
   DocumentationPageSummaryDto,
+  EditorBufferStateDto,
   EnvironmentEventDto,
   EventSubscriptionInput,
+  FileSystemDirectoryListingDto,
   EnvironmentStatusDto,
   EnvironmentSummaryDto,
   WorkspaceSummaryDto,
   HostStatusDto,
   IncidentDetailDto,
+  IncidentRemediationPlanDto,
   IncidentSummaryDto,
   LinkedEntityRefDto,
   MessageDto,
@@ -31,8 +40,17 @@ import type {
   RuntimeInspectionMode,
   RuntimeInspectionResultDto,
   RuntimeSummaryDto,
+  RuntimeTelemetryProcessDto,
+  RuntimeTelemetrySnapshotDto,
   ConversationStreamEventDto,
   ProjectProfileDto,
+  ProjectListDto,
+  ProjectDetailDto,
+  ProjectReadinessObligationDto,
+  ProjectReleaseReadinessDto,
+  ProjectSummaryDto,
+  ProjectTestingHarnessDto,
+  ProjectTestingStrategyDto,
   ReplSessionHistoryEntryDto,
   ReplSessionProfileDto,
   SourceMutationResultDto,
@@ -43,11 +61,11 @@ import type {
   TurnDetailDto,
   WorkflowRecordDto,
   WorkItemDetailDto,
+  WorkItemPlanDto,
   WorkItemSummaryDto,
   WorkspaceId
 } from "../../shared/contracts";
 import {
-  appForWorkspace,
   canonicalWorkspace,
   desktopPanelToWorkspaceId,
   hostedApps,
@@ -59,6 +77,32 @@ import {
   workspaceOrder,
   workspaceToDesktopPanelId
 } from "./workspace-shell";
+import {
+  createDefaultShellLayoutState,
+  deriveShellRenderLayout,
+  SHELL_DOCK_PANEL_DEFINITIONS,
+  SHELL_STACK_BREAKPOINT,
+  shellRailPanelDefinitions,
+  shellCanvasMinWidthForViewport,
+  shellGapForViewport,
+  shellHorizontalPaddingForViewport,
+  shellInspectorDefaultWidthForViewport,
+  shellInspectorMinWidthForViewport,
+  shellLayoutReducer,
+  shellLayoutToDesktopPreferencesPatch,
+  shellSidebarDefaultWidthForViewport,
+  shellSidebarMinWidthForViewport,
+  shellSidebarRailWidthForViewport,
+  type ShellDockPanelId,
+  type ShellLayoutAction,
+  type ShellLayoutState
+} from "./shell-layout";
+import { ShellCollapsedRail, ShellColumnSplitter, ShellRailHost } from "./shell-rail-components";
+import {
+  createShellRailPanelEntries,
+  resolveActiveShellRailPanel
+} from "./shell-panel-registry";
+import { EditorSymbolRailPanel, ShellNavigationPanel, ShellUtilitiesPanel } from "./shell-panel-content";
 import {
   bringWindowToFront,
   cascadeDesktopWindows,
@@ -78,6 +122,67 @@ import {
   type DesktopWindowSizePreset,
   type DesktopWindowRecord
 } from "./desktop-windowing";
+import { BrowserDataTable, type BrowserTableFilterOption } from "./browser-data-table";
+import { Badge, PanelHeader, toneForCommandStatus, transcriptRecencyLabel } from "./surface-support";
+import {
+  LinkedEntityList,
+  MessageBubble,
+  PrioritySignalCluster,
+  PriorityStateChip,
+  RefBlock,
+  type SignalCounts,
+  type SignalPriority
+} from "./interaction-support";
+import { TranscriptSurface, type TranscriptSurfaceEntry } from "./transcript-surface";
+import { WorkspaceSurface } from "./workspace-surface";
+import { EditorSurface } from "./editor-surface";
+import { ConfigurationWorkspace } from "./configuration-workspace";
+import { ConversationsWorkspace } from "./conversations-workspace";
+import { ProjectsWorkspace } from "./projects-workspace";
+import { RuntimeWorkspace } from "./runtime-workspace";
+import { ListenerWorkbenchApp } from "./listener-workbench-app";
+import { ContextBlock, DetailRow, JourneyStageStrip, type JourneyStep } from "./journey-support";
+import { EvidenceWorkspace } from "./evidence-workspace";
+import { ExecutionWorkspace } from "./execution-workspace";
+import { ApprovalsWorkspace, IncidentsWorkspace, WorkWorkspace } from "./journey-workspaces";
+import { OperateWorkspace } from "./operate-workspace";
+import {
+  ConversationSessionCreateDialog,
+  ConversationThreadRenameDialog,
+  EditorSourceFileLoadDialog,
+  EditorSourceFileSaveDialog,
+  EnvironmentExitDialog,
+  EnvironmentImageChooserDialog,
+  ProjectConstitutionEditDialog,
+  ProjectArchitectureDecisionCreateDialog,
+  ProjectCreateDialog,
+  ProjectFeatureSpecificationCreateDialog,
+  ProjectOpenDialog,
+  ProjectQualityGateCreateDialog,
+  ProjectReadinessObligationsEditDialog,
+  ProjectReleaseReadinessEditDialog,
+  ProjectRecordEditDialog,
+  ProjectRequirementCreateDialog,
+  ProjectTestingStrategyEditDialog,
+  ProjectSourceRootCreateDialog,
+  ProjectTestingHarnessBindDialog,
+  ProjectUserJourneyCreateDialog,
+  IncidentRemediationPlanDialog,
+  WorkItemQuarantineDialog,
+  WorkItemResumeDialog,
+  WorkItemRollbackDialog,
+  WorkItemSteerDialog,
+  WorkItemValidationDialog
+} from "./shell-dialogs";
+import { LispCodeBlock, renderDocumentationMarkdown } from "./rendering-support";
+import {
+  BrowserModePicker,
+  DocumentationWorkspace,
+  FilterSelect,
+  MetricTile,
+  PlannedWorkspace,
+  SupervisionBoard
+} from "./workspace-support-components";
 
 interface GlobalAttentionItem {
   id: string;
@@ -86,6 +191,51 @@ interface GlobalAttentionItem {
   value: number;
   workspace: WorkspaceId;
   tone: "active" | "warning" | "danger" | "steady";
+}
+
+interface ProjectTestingStrategySuiteExpectationDraft {
+  harnessId: string;
+  purpose: string;
+  evidenceKindsDraft: string;
+}
+
+function blankProjectTestingStrategySuiteExpectationDraft(): ProjectTestingStrategySuiteExpectationDraft {
+  return {
+    harnessId: "",
+    purpose: "",
+    evidenceKindsDraft: ""
+  };
+}
+
+interface ProjectReadinessObligationDraft {
+  obligationId: string;
+  title: string;
+  summary: string;
+  status: string;
+  owner: string;
+  dueWindow: string;
+  blocking: boolean;
+  evidenceKindsDraft: string;
+}
+
+function blankProjectReadinessObligationDraft(): ProjectReadinessObligationDraft {
+  return {
+    obligationId: "",
+    title: "",
+    summary: "",
+    status: "blocked",
+    owner: "",
+    dueWindow: "",
+    blocking: true,
+    evidenceKindsDraft: ""
+  };
+}
+
+function draftLines(value: string): string[] {
+  return value
+    .split("\n")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
 }
 
 interface ActionQueueItem {
@@ -106,14 +256,6 @@ interface ActionQueueItem {
   rankReason: string;
 }
 
-type SignalPriority = "red" | "yellow" | "blue";
-
-interface SignalCounts {
-  red: number;
-  yellow: number;
-  blue: number;
-}
-
 interface WorkspaceAttentionDigestItem {
   key: string;
   kind: string;
@@ -126,13 +268,6 @@ interface WorkspaceDescriptor {
   eyebrow: string;
   title: string;
   summary: string;
-}
-
-interface JourneyStep {
-  id: string;
-  title: string;
-  summary: string;
-  tone: "active" | "warning" | "danger" | "steady";
 }
 
 interface WorkspaceResolutionState {
@@ -175,6 +310,16 @@ type ThemePreference = "system" | "light" | "dark";
 type ResolvedTheme = "light" | "dark";
 
 const DEFAULT_LISP_PAREN_COLORS = ["#6ec0c2", "#f4b267", "#9f8cff", "#7bc47f", "#f07c9b", "#56a3ff"];
+const DEFAULT_EDITOR_BUFFER_TITLE = "Main";
+const DEFAULT_EDITOR_BOUND_DRAFT = `;; Editor
+;; Sustain source and form editing here without collapsing into scratch workspace posture.
+
+(in-package :cl-user)
+
+`;
+const DEFAULT_EDITOR_UNBOUND_DRAFT = `;; Editor
+;; Bind a project and environment to retain editor buffers.
+`;
 
 const LISP_CONFIGURATION_SAMPLE = `(defun reconcile-runtime-state (work-item env)
   (let ((result (evaluate-in-context env '(describe work-item))))
@@ -183,14 +328,193 @@ const LISP_CONFIGURATION_SAMPLE = `(defun reconcile-runtime-state (work-item env
     result))`;
 
 const PUBLISHED_DOCUMENTATION_URL = "https://pauljbernard.github.io/sbcl-agent/";
+const UNDOCKED_SHELL_WINDOW_PREFIX = "window:undocked:";
+const SHELL_PANEL_DRAG_MIME = "application/x-sbcl-agent-shell-panel-id";
+
+function undockedShellWindowId(panelId: ShellDockPanelId): string {
+  return `${UNDOCKED_SHELL_WINDOW_PREFIX}${panelId}`;
+}
+
+function shellDockPanelIdFromUndockedWindowId(windowId: string): ShellDockPanelId | null {
+  if (!windowId.startsWith(UNDOCKED_SHELL_WINDOW_PREFIX)) {
+    return null;
+  }
+  const panelId = windowId.slice(UNDOCKED_SHELL_WINDOW_PREFIX.length);
+  return panelId in SHELL_DOCK_PANEL_DEFINITIONS ? (panelId as ShellDockPanelId) : null;
+}
+
+function readDraggedShellPanelId(dataTransfer: DataTransfer | null): ShellDockPanelId | null {
+  const panelId = dataTransfer?.getData(SHELL_PANEL_DRAG_MIME) ?? "";
+  return panelId in SHELL_DOCK_PANEL_DEFINITIONS ? (panelId as ShellDockPanelId) : null;
+}
+
+function createEditorBufferState({
+  bufferId,
+  title,
+  draft,
+  baselineDraft,
+  packageName,
+  dirty = false,
+  result = null
+  ,
+  sourceFilePath = null
+}: {
+  bufferId?: string;
+  title: string;
+  draft: string;
+  baselineDraft?: string;
+  packageName: string;
+  dirty?: boolean;
+  result?: CommandResultDto<RuntimeEvalResultDto> | null;
+  sourceFilePath?: string | null;
+}): EditorBufferStateDto {
+  return {
+    bufferId: bufferId ?? `editor-buffer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    title,
+    draft,
+    baselineDraft: baselineDraft ?? draft,
+    packageName,
+    dirty,
+    result,
+    sourceFilePath
+  };
+}
+
+function normalizeEditorBufferFormText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function basenameForPath(path: string): string {
+  const segments = path.split(/[\\/]/).filter((segment) => segment.length > 0);
+  return segments[segments.length - 1] ?? path;
+}
+
+function parentDirectoryForPath(path: string): string {
+  const normalized = path.trim();
+  if (normalized.length === 0) {
+    return normalized;
+  }
+  const separatorIndex = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
+  if (separatorIndex <= 0) {
+    return normalized;
+  }
+  return normalized.slice(0, separatorIndex);
+}
+
+function joinDirectoryAndFileName(directoryPath: string, fileName: string): string {
+  const normalizedDirectory = directoryPath.trim();
+  const normalizedFileName = fileName.trim();
+  if (normalizedDirectory.length === 0) {
+    return normalizedFileName;
+  }
+  if (normalizedFileName.length === 0) {
+    return normalizedDirectory;
+  }
+  const separator = normalizedDirectory.includes("\\") && !normalizedDirectory.includes("/") ? "\\" : "/";
+  const trimmedDirectory = normalizedDirectory.replace(/[\\/]+$/, "");
+  return `${trimmedDirectory}${separator}${normalizedFileName}`;
+}
+
+function extractTopLevelEditorBufferForms(source: string): string[] {
+  const forms: string[] = [];
+  let index = 0;
+
+  while (index < source.length) {
+    const char = source[index];
+    if (/\s/.test(char)) {
+      index += 1;
+      continue;
+    }
+    if (char === ";") {
+      while (index < source.length && source[index] !== "\n") {
+        index += 1;
+      }
+      continue;
+    }
+    if (char !== "(") {
+      const startIndex = index;
+      while (index < source.length && source[index] !== "\n") {
+        index += 1;
+      }
+      const text = source.slice(startIndex, index).trim();
+      if (text.length > 0) {
+        forms.push(text);
+      }
+      continue;
+    }
+
+    const startIndex = index;
+    let depth = 0;
+    let inString = false;
+    let escaping = false;
+    while (index < source.length) {
+      const current = source[index];
+      if (inString) {
+        if (escaping) {
+          escaping = false;
+        } else if (current === "\\") {
+          escaping = true;
+        } else if (current === "\"") {
+          inString = false;
+        }
+        index += 1;
+        continue;
+      }
+      if (current === "\"") {
+        inString = true;
+        index += 1;
+        continue;
+      }
+      if (current === ";") {
+        while (index < source.length && source[index] !== "\n") {
+          index += 1;
+        }
+        continue;
+      }
+      if (current === "(") {
+        depth += 1;
+      } else if (current === ")") {
+        depth -= 1;
+      }
+      index += 1;
+      if (depth === 0) {
+        break;
+      }
+    }
+    const text = source.slice(startIndex, index).trim();
+    if (text.length > 0) {
+      forms.push(text);
+    }
+  }
+
+  return forms;
+}
+
+function countChangedEditorBufferForms(baselineDraft: string, draft: string): number {
+  const baselineForms = extractTopLevelEditorBufferForms(baselineDraft);
+  const currentForms = extractTopLevelEditorBufferForms(draft);
+  const maxLength = Math.max(baselineForms.length, currentForms.length);
+  let count = 0;
+  for (let index = 0; index < maxLength; index += 1) {
+    const baseline = baselineForms[index] ?? null;
+    const current = currentForms[index] ?? null;
+    if (!baseline || !current) {
+      count += 1;
+      continue;
+    }
+    if (normalizeEditorBufferFormText(baseline) !== normalizeEditorBufferFormText(current)) {
+      count += 1;
+    }
+  }
+  return count;
+}
 
 type OperateSection = "orientation" | "journeys" | "evidence";
-type ConversationSection = "threads" | "turns" | "draft";
-type ConfigurationSection = "theme" | "lisp-code-view";
+type ConversationSection = "threads" | "turns" | "draft" | "repl";
+type ConfigurationSection = "theme" | "lisp-code-view" | "desktop-surface";
 type ExecutionSection = "listener" | "approvals" | "work";
 type RecoverySection = "incidents";
 type EvidenceSection = "artifacts" | "observation";
-type ShellProactiveLane = "recommendations" | "monitors" | "staged";
 
 type BrowserDomain =
   | "systems"
@@ -198,6 +522,11 @@ type BrowserDomain =
   | "symbols"
   | "classes-methods"
   | "runtime-objects"
+  | "console"
+  | "diagnostics"
+  | "processes"
+  | "performance"
+  | "host-io"
   | "source"
   | "xref"
   | "documentation"
@@ -216,6 +545,11 @@ const browserDomains: BrowserDomainDescriptor[] = [
   { id: "symbols", label: "Symbols", summary: "Functions, variables, macros, classes, and generic functions." },
   { id: "classes-methods", label: "Classes & Methods", summary: "CLOS classes, slots, and dispatch surfaces." },
   { id: "runtime-objects", label: "Runtime Objects", summary: "Active scopes and inspectable live runtime objects." },
+  { id: "console", label: "Console", summary: "Governed environment logs with source, severity, and operational correlation." },
+  { id: "diagnostics", label: "Diagnostics", summary: "Crash, spin, analytics, and retained host diagnostic reports." },
+  { id: "processes", label: "Processes", summary: "Runtime-linked processes, workers, tasks, and governed execution state." },
+  { id: "performance", label: "Performance", summary: "CPU and memory posture for the live runtime and its host." },
+  { id: "host-io", label: "Host I/O", summary: "Network and disk activity attached to the running environment." },
   { id: "source", label: "Source", summary: "Source-backed definitions, edits, staging, and reload." },
   { id: "xref", label: "XREF", summary: "Incoming and outgoing semantic references." },
   { id: "documentation", label: "Documentation", summary: "Docstrings and environment-linked reference material." },
@@ -240,8 +574,28 @@ const configurationSections: Array<{
     label: "Lisp Code View",
     summary: "Structured Lisp rendering, delimiter depth colors, and code-surface presentation.",
     family: "editor"
+  },
+  {
+    id: "desktop-surface",
+    label: "Desktop Surface",
+    summary: "Tooltip text, control iconography, conversation text, and iconified application bar scale across the shell desktop.",
+    family: "surface"
   }
 ];
+
+const DEFAULT_DESKTOP_TOOLTIP_SCALE_PERCENT = 100;
+const DEFAULT_DESKTOP_CONTROL_ICON_SCALE_PERCENT = 100;
+const DEFAULT_DESKTOP_DOCK_ICON_SCALE_PERCENT = 100;
+const DEFAULT_DESKTOP_CONVERSATION_TEXT_SCALE_PERCENT = 100;
+const DEFAULT_DESKTOP_SOURCE_CODE_TEXT_SCALE_PERCENT = 100;
+
+function normalizeDesktopSurfaceScalePercent(value: number | null | undefined): number {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return 100;
+  }
+
+  return Math.min(160, Math.max(70, Math.round(value)));
+}
 
 const operateSections: Array<{
   id: OperateSection;
@@ -284,6 +638,11 @@ const conversationSections: Array<{
     id: "draft",
     label: "Draft",
     summary: "Compose the next supervised continuation without dropping linked context."
+  },
+  {
+    id: "repl",
+    label: "REPL",
+    summary: "Use direct evaluation against the live image when agentic orchestration is not required."
   }
 ];
 
@@ -555,359 +914,6 @@ function normalizeParenDepthColors(colors?: string[] | null): string[] {
   return DEFAULT_LISP_PAREN_COLORS.map((fallback, index) => normalized[index] ?? fallback);
 }
 
-function classifyLispToken(token: string): string {
-  if (token.length === 0) {
-    return "plain";
-  }
-
-  if (token.startsWith(":")) {
-    return "keyword";
-  }
-
-  if (/^[+-]?\d+(\.\d+)?$/.test(token)) {
-    return "number";
-  }
-
-  if (token === "t" || token === "nil") {
-    return "atom";
-  }
-
-  if (token.startsWith("&")) {
-    return "lambda-keyword";
-  }
-
-  return "symbol";
-}
-
-function renderLispLine(line: string, lineIndex: number, parenDepthColors: string[]): ReactNode[] {
-  const nodes: ReactNode[] = [];
-  let depth = 0;
-  let token = "";
-  let keyIndex = 0;
-  let inString = false;
-  let escapingString = false;
-
-  function flushToken(): void {
-    if (!token) {
-      return;
-    }
-
-    nodes.push(
-      <span className={`lisp-token lisp-token-${classifyLispToken(token)}`} key={`token:${lineIndex}:${keyIndex++}`}>
-        {token}
-      </span>
-    );
-    token = "";
-  }
-
-  for (let index = 0; index < line.length; index += 1) {
-    const character = line[index] ?? "";
-
-    if (!inString && character === ";") {
-      flushToken();
-      nodes.push(
-        <span className="lisp-token lisp-token-comment" key={`comment:${lineIndex}:${keyIndex++}`}>
-          {line.slice(index)}
-        </span>
-      );
-      return nodes;
-    }
-
-    if (inString) {
-      token += character;
-
-      if (escapingString) {
-        escapingString = false;
-        continue;
-      }
-
-      if (character === "\\") {
-        escapingString = true;
-        continue;
-      }
-
-      if (character === "\"") {
-        nodes.push(
-          <span className="lisp-token lisp-token-string" key={`string:${lineIndex}:${keyIndex++}`}>
-            {token}
-          </span>
-        );
-        token = "";
-        inString = false;
-      }
-
-      continue;
-    }
-
-    if (character === "\"") {
-      flushToken();
-      token = "\"";
-      inString = true;
-      escapingString = false;
-      continue;
-    }
-
-    if (character === "(") {
-      flushToken();
-      const color = parenDepthColors[depth % parenDepthColors.length] ?? DEFAULT_LISP_PAREN_COLORS[0];
-      nodes.push(
-        <span className="lisp-paren" key={`open:${lineIndex}:${keyIndex++}`} style={{ color }}>
-          (
-        </span>
-      );
-      depth += 1;
-      continue;
-    }
-
-    if (character === ")") {
-      flushToken();
-      depth = Math.max(0, depth - 1);
-      const color = parenDepthColors[depth % parenDepthColors.length] ?? DEFAULT_LISP_PAREN_COLORS[0];
-      nodes.push(
-        <span className="lisp-paren" key={`close:${lineIndex}:${keyIndex++}`} style={{ color }}>
-          )
-        </span>
-      );
-      continue;
-    }
-
-    if (character === "'" || character === "`" || character === ",") {
-      flushToken();
-      nodes.push(
-        <span className="lisp-token lisp-token-quote" key={`quote:${lineIndex}:${keyIndex++}`}>
-          {character}
-        </span>
-      );
-      continue;
-    }
-
-    if (/\s/.test(character)) {
-      flushToken();
-      nodes.push(
-        <span className="lisp-token lisp-token-whitespace" key={`space:${lineIndex}:${keyIndex++}`}>
-          {character}
-        </span>
-      );
-      continue;
-    }
-
-    token += character;
-  }
-
-  if (inString && token) {
-    nodes.push(
-      <span className="lisp-token lisp-token-string" key={`string:${lineIndex}:${keyIndex++}`}>
-        {token}
-      </span>
-    );
-    token = "";
-  }
-
-  flushToken();
-  return nodes;
-}
-
-function LispCodeBlock({
-  code,
-  parenDepthColors,
-  className,
-  showLineNumbers = true
-}: {
-  code: string;
-  parenDepthColors: string[];
-  className?: string;
-  showLineNumbers?: boolean;
-}) {
-  const normalizedCode = code.replace(/\t/g, "  ");
-  const lines = normalizedCode.split("\n");
-
-  return (
-    <div className={className ? `lisp-code-block ${className}` : "lisp-code-block"}>
-      {lines.map((line, index) => (
-        <div className="lisp-code-line" key={`line:${index}`}>
-          {showLineNumbers ? <span className="lisp-code-line-number">{index + 1}</span> : null}
-          <code className="lisp-code-line-content">{renderLispLine(line, index, parenDepthColors)}</code>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function stripDocumentationFrontmatter(markdown: string): string {
-  if (!markdown.startsWith("---\n")) {
-    return markdown.trim();
-  }
-
-  const closingIndex = markdown.indexOf("\n---\n", 4);
-  if (closingIndex === -1) {
-    return markdown.trim();
-  }
-
-  return markdown.slice(closingIndex + 5).trim();
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function renderDocumentationInline(markdown: string): string {
-  return escapeHtml(markdown)
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-}
-
-function renderDocumentationMarkdown(markdown: string): string {
-  const lines = stripDocumentationFrontmatter(markdown).split("\n");
-  const html: string[] = [];
-  let paragraph: string[] = [];
-  let listItems: string[] = [];
-  let listType: "ul" | "ol" | null = null;
-  let codeFence: string[] = [];
-  let inCodeFence = false;
-  let tableRows: string[][] = [];
-
-  function flushParagraph(): void {
-    if (paragraph.length === 0) {
-      return;
-    }
-
-    html.push(`<p>${renderDocumentationInline(paragraph.join(" "))}</p>`);
-    paragraph = [];
-  }
-
-  function flushList(): void {
-    if (!listType || listItems.length === 0) {
-      return;
-    }
-
-    html.push(
-      `<${listType}>${listItems.map((item) => `<li>${renderDocumentationInline(item)}</li>`).join("")}</${listType}>`
-    );
-    listItems = [];
-    listType = null;
-  }
-
-  function flushTable(): void {
-    if (tableRows.length < 2) {
-      tableRows = [];
-      return;
-    }
-
-    const [header, separator, ...body] = tableRows;
-    const isSeparator = separator.every((cell) => /^:?-{3,}:?$/.test(cell));
-    if (!isSeparator) {
-      tableRows = [];
-      return;
-    }
-
-    html.push(
-      `<table><thead><tr>${header
-        .map((cell) => `<th>${renderDocumentationInline(cell)}</th>`)
-        .join("")}</tr></thead><tbody>${body
-        .map(
-          (row) =>
-            `<tr>${row.map((cell) => `<td>${renderDocumentationInline(cell)}</td>`).join("")}</tr>`
-        )
-        .join("")}</tbody></table>`
-    );
-    tableRows = [];
-  }
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    if (trimmed.startsWith("```")) {
-      flushParagraph();
-      flushList();
-      flushTable();
-      if (inCodeFence) {
-        html.push(`<pre><code>${escapeHtml(codeFence.join("\n"))}</code></pre>`);
-        codeFence = [];
-        inCodeFence = false;
-      } else {
-        inCodeFence = true;
-      }
-      continue;
-    }
-
-    if (inCodeFence) {
-      codeFence.push(line);
-      continue;
-    }
-
-    if (trimmed.length === 0) {
-      flushParagraph();
-      flushList();
-      flushTable();
-      continue;
-    }
-
-    if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
-      flushParagraph();
-      flushList();
-      tableRows.push(
-        trimmed
-          .slice(1, -1)
-          .split("|")
-          .map((cell) => cell.trim())
-      );
-      continue;
-    }
-
-    flushTable();
-
-    const headingMatch = trimmed.match(/^(#{1,3})\s+(.+)$/);
-    if (headingMatch) {
-      flushParagraph();
-      flushList();
-      const level = Math.min(headingMatch[1].length, 3);
-      html.push(`<h${level}>${renderDocumentationInline(headingMatch[2])}</h${level}>`);
-      continue;
-    }
-
-    const orderedMatch = trimmed.match(/^\d+\.\s+(.+)$/);
-    if (orderedMatch) {
-      flushParagraph();
-      if (listType && listType !== "ol") {
-        flushList();
-      }
-      listType = "ol";
-      listItems.push(orderedMatch[1]);
-      continue;
-    }
-
-    const bulletMatch = trimmed.match(/^-\s+(.+)$/);
-    if (bulletMatch) {
-      flushParagraph();
-      if (listType && listType !== "ul") {
-        flushList();
-      }
-      listType = "ul";
-      listItems.push(bulletMatch[1]);
-      continue;
-    }
-
-    flushList();
-    paragraph.push(trimmed);
-  }
-
-  flushParagraph();
-  flushList();
-  flushTable();
-
-  if (inCodeFence && codeFence.length > 0) {
-    html.push(`<pre><code>${escapeHtml(codeFence.join("\n"))}</code></pre>`);
-  }
-
-  return html.join("");
-}
-
 function slugifyProjectLabel(value: string): string {
   const normalized = value
     .trim()
@@ -922,7 +928,7 @@ function ensureDesktopProjects(
   binding: BindingDto | null,
   summary: EnvironmentSummaryDto | null
 ): ProjectProfileDto[] {
-  const normalized = [...(projects ?? [])];
+  const normalized = Array.isArray(projects) ? [...projects] : [];
   const environmentId = summary?.environmentId ?? binding?.environmentId ?? null;
   if (!environmentId) {
     return normalized;
@@ -974,52 +980,6 @@ function buildDefaultReplSession(environmentId: string, runtimeSummary: RuntimeS
   };
 }
 
-const SHELL_STACK_BREAKPOINT = 1180;
-
-function shellSidebarWidthForViewport(viewportWidth: number, pinned: boolean): number {
-  if (viewportWidth <= 1320) {
-    return pinned ? 212 : 56;
-  }
-  if (viewportWidth <= 1480) {
-    return pinned ? 224 : 64;
-  }
-  return pinned ? 248 : 64;
-}
-
-function shellSidebarDefaultWidthForViewport(viewportWidth: number): number {
-  return shellSidebarWidthForViewport(viewportWidth, true);
-}
-
-function shellSidebarMinWidthForViewport(viewportWidth: number): number {
-  return viewportWidth <= 1320 ? 188 : 204;
-}
-
-function shellInspectorDefaultWidthForViewport(viewportWidth: number): number {
-  if (viewportWidth <= 1320) {
-    return 256;
-  }
-  if (viewportWidth <= 1480) {
-    return 280;
-  }
-  return 304;
-}
-
-function shellInspectorMinWidthForViewport(viewportWidth: number): number {
-  return viewportWidth <= 1320 ? 220 : 240;
-}
-
-function shellCanvasMinWidthForViewport(viewportWidth: number): number {
-  return viewportWidth <= 1320 ? 360 : 420;
-}
-
-function shellGapForViewport(viewportWidth: number): number {
-  return viewportWidth <= 1480 ? 12 : 14;
-}
-
-function shellHorizontalPaddingForViewport(viewportWidth: number): number {
-  return viewportWidth <= 1480 ? 12 : 14;
-}
-
 export function App() {
   const [activeHostedApp, setActiveHostedApp] = useState<HostedAppId>("control-panel");
   const [desktopSpaces, setDesktopSpaces] = useState<Record<string, DesktopWindowRecord[]>>({
@@ -1052,21 +1012,44 @@ export function App() {
   const [selectedExecutionSection, setSelectedExecutionSection] = useState<ExecutionSection>("listener");
   const [selectedRecoverySection, setSelectedRecoverySection] = useState<RecoverySection>("incidents");
   const [selectedEvidenceSection, setSelectedEvidenceSection] = useState<EvidenceSection>("artifacts");
-  const [selectedProactiveLane, setSelectedProactiveLane] = useState<ShellProactiveLane>("recommendations");
   const [isWorkspaceTransitioning, setIsWorkspaceTransitioning] = useState(false);
-  const [sidebarPinned, setSidebarPinned] = useState(true);
-  const [canvasPinned, setCanvasPinned] = useState(true);
-  const [inspectorPinned, setInspectorPinned] = useState(true);
-  const [sidebarWidth, setSidebarWidth] = useState<number | null>(null);
-  const [inspectorWidth, setInspectorWidth] = useState<number | null>(null);
+  const [shellLayout, dispatchShellLayout] = useReducer(
+    shellLayoutReducer,
+    undefined,
+    createDefaultShellLayoutState
+  );
+  const shellLayoutRef = useRef(shellLayout);
+  shellLayoutRef.current = shellLayout;
   const [isSidebarResizing, setIsSidebarResizing] = useState(false);
   const [isInspectorResizing, setIsInspectorResizing] = useState(false);
   const [viewportWidth, setViewportWidth] = useState<number>(() =>
     typeof window === "undefined" ? 1600 : window.innerWidth
   );
+  const sidebarPinned = shellLayout.leftRail.mode === "expanded";
+  const canvasPinned = shellLayout.canvas.mode === "expanded";
+  const inspectorPinned = shellLayout.rightRail.mode === "expanded";
+  const sidebarWidth = shellLayout.leftRail.expandedWidth;
+  const inspectorWidth = shellLayout.rightRail.expandedWidth;
+  const leftRailPanels = shellRailPanelDefinitions(shellLayout, "left");
+  const rightRailPanels = shellRailPanelDefinitions(shellLayout, "right");
   const [shellTooltip, setShellTooltip] = useState<{ label: string; x: number; y: number } | null>(null);
   const [themePreference, setThemePreference] = useState<ThemePreference>("system");
   const [lispParenColors, setLispParenColors] = useState<string[]>(DEFAULT_LISP_PAREN_COLORS);
+  const [tooltipScalePercent, setTooltipScalePercent] = useState<number>(
+    DEFAULT_DESKTOP_TOOLTIP_SCALE_PERCENT
+  );
+  const [controlIconScalePercent, setControlIconScalePercent] = useState<number>(
+    DEFAULT_DESKTOP_CONTROL_ICON_SCALE_PERCENT
+  );
+  const [dockIconScalePercent, setDockIconScalePercent] = useState<number>(
+    DEFAULT_DESKTOP_DOCK_ICON_SCALE_PERCENT
+  );
+  const [conversationTextScalePercent, setConversationTextScalePercent] = useState<number>(
+    DEFAULT_DESKTOP_CONVERSATION_TEXT_SCALE_PERCENT
+  );
+  const [sourceCodeTextScalePercent, setSourceCodeTextScalePercent] = useState<number>(
+    DEFAULT_DESKTOP_SOURCE_CODE_TEXT_SCALE_PERCENT
+  );
   const [systemTheme, setSystemTheme] = useState<ResolvedTheme>("light");
   const [expandedWorkspaceMenus, setExpandedWorkspaceMenus] = useState<Record<string, boolean>>({
     environment: true,
@@ -1079,14 +1062,120 @@ export function App() {
   const [, setIsCommandCenterOpen] = useState(false);
   const [hostStatus, setHostStatus] = useState<HostStatusDto | null>(null);
   const [binding, setBinding] = useState<BindingDto | null>(null);
+  const [environmentImageRegistry, setEnvironmentImageRegistry] = useState<EnvironmentImageRegistryDto | null>(null);
   const [projects, setProjects] = useState<ProjectProfileDto[]>([]);
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+  const [projectListResult, setProjectListResult] = useState<QueryResultDto<ProjectListDto> | null>(null);
+  const [selectedGovernedProjectId, setSelectedGovernedProjectId] = useState<string | null>(null);
+  const [selectedProjectDetail, setSelectedProjectDetail] = useState<ProjectDetailDto | null>(null);
   const [selectedConversationThreadByProject, setSelectedConversationThreadByProject] = useState<Record<string, string>>({});
   const [replSessionsByProject, setReplSessionsByProject] = useState<Record<string, ReplSessionProfileDto[]>>({});
   const [currentReplSessionIdByProject, setCurrentReplSessionIdByProject] = useState<Record<string, string>>({});
   const [isProjectOpenDialogOpen, setIsProjectOpenDialogOpen] = useState(false);
   const [isProjectCreateDialogOpen, setIsProjectCreateDialogOpen] = useState(false);
+  const [isEditorSourceFileDialogOpen, setIsEditorSourceFileDialogOpen] = useState(false);
+  const [isEditorSourceFileSaveDialogOpen, setIsEditorSourceFileSaveDialogOpen] = useState(false);
+  const [isProjectConstitutionDialogOpen, setIsProjectConstitutionDialogOpen] = useState(false);
+  const [isProjectRequirementDialogOpen, setIsProjectRequirementDialogOpen] = useState(false);
+  const [isProjectFeatureSpecificationDialogOpen, setIsProjectFeatureSpecificationDialogOpen] = useState(false);
+  const [isProjectUserJourneyDialogOpen, setIsProjectUserJourneyDialogOpen] = useState(false);
+  const [isProjectArchitectureDecisionDialogOpen, setIsProjectArchitectureDecisionDialogOpen] = useState(false);
+  const [isProjectDesignSystemDialogOpen, setIsProjectDesignSystemDialogOpen] = useState(false);
+  const [isProjectStyleGuideDialogOpen, setIsProjectStyleGuideDialogOpen] = useState(false);
+  const [isProjectTestingStrategyDialogOpen, setIsProjectTestingStrategyDialogOpen] = useState(false);
+  const [isProjectReleaseReadinessDialogOpen, setIsProjectReleaseReadinessDialogOpen] = useState(false);
+  const [isProjectReadinessObligationsDialogOpen, setIsProjectReadinessObligationsDialogOpen] = useState(false);
+  const [isProjectSourceRootDialogOpen, setIsProjectSourceRootDialogOpen] = useState(false);
+  const [isProjectTestingHarnessDialogOpen, setIsProjectTestingHarnessDialogOpen] = useState(false);
+  const [isProjectQualityGateDialogOpen, setIsProjectQualityGateDialogOpen] = useState(false);
+  const [isWorkItemSteerDialogOpen, setIsWorkItemSteerDialogOpen] = useState(false);
+  const [isWorkItemResumeDialogOpen, setIsWorkItemResumeDialogOpen] = useState(false);
+  const [isWorkItemQuarantineDialogOpen, setIsWorkItemQuarantineDialogOpen] = useState(false);
+  const [isWorkItemRollbackDialogOpen, setIsWorkItemRollbackDialogOpen] = useState(false);
+  const [isWorkItemValidationDialogOpen, setIsWorkItemValidationDialogOpen] = useState(false);
+  const [isIncidentRemediationPlanDialogOpen, setIsIncidentRemediationPlanDialogOpen] = useState(false);
   const [newProjectTitleDraft, setNewProjectTitleDraft] = useState("");
+  const [editorSourceFilePathDraft, setEditorSourceFilePathDraft] = useState("");
+  const [editorSourceDirectoryPathDraft, setEditorSourceDirectoryPathDraft] = useState("");
+  const [editorSourceDirectoryListing, setEditorSourceDirectoryListing] = useState<FileSystemDirectoryListingDto | null>(null);
+  const [editorSourceSaveFileNameDraft, setEditorSourceSaveFileNameDraft] = useState("");
+  const [editorSourceSaveDirectoryPathDraft, setEditorSourceSaveDirectoryPathDraft] = useState("");
+  const [editorSourceSaveDirectoryListing, setEditorSourceSaveDirectoryListing] = useState<FileSystemDirectoryListingDto | null>(null);
+  const [projectConstitutionDraft, setProjectConstitutionDraft] = useState("{}");
+  const [projectReleaseReadinessStageDraft, setProjectReleaseReadinessStageDraft] = useState("");
+  const [projectReleaseReadinessSignoffStatusDraft, setProjectReleaseReadinessSignoffStatusDraft] = useState("");
+  const [projectReleaseReadinessTargetWindowDraft, setProjectReleaseReadinessTargetWindowDraft] = useState("");
+  const [projectReleaseReadinessRequiredApproversDraft, setProjectReleaseReadinessRequiredApproversDraft] = useState("");
+  const [projectReleaseReadinessObservationPlanDraft, setProjectReleaseReadinessObservationPlanDraft] = useState("");
+  const [projectReleaseReadinessOpenRisksDraft, setProjectReleaseReadinessOpenRisksDraft] = useState("");
+  const [projectReadinessObligationsDraft, setProjectReadinessObligationsDraft] = useState<ProjectReadinessObligationDraft[]>([
+    blankProjectReadinessObligationDraft()
+  ]);
+  const [projectRequirementTitleDraft, setProjectRequirementTitleDraft] = useState("");
+  const [projectRequirementSummaryDraft, setProjectRequirementSummaryDraft] = useState("");
+  const [projectRequirementPriorityDraft, setProjectRequirementPriorityDraft] = useState("high");
+  const [projectRequirementStatusDraft, setProjectRequirementStatusDraft] = useState("proposed");
+  const [projectFeatureSpecificationTitleDraft, setProjectFeatureSpecificationTitleDraft] = useState("");
+  const [projectFeatureSpecificationSummaryDraft, setProjectFeatureSpecificationSummaryDraft] = useState("");
+  const [projectFeatureSpecificationAcceptanceCriteriaDraft, setProjectFeatureSpecificationAcceptanceCriteriaDraft] = useState("");
+  const [projectFeatureSpecificationStatusDraft, setProjectFeatureSpecificationStatusDraft] = useState("proposed");
+  const [projectUserJourneyTitleDraft, setProjectUserJourneyTitleDraft] = useState("");
+  const [projectUserJourneySummaryDraft, setProjectUserJourneySummaryDraft] = useState("");
+  const [projectUserJourneyActorsDraft, setProjectUserJourneyActorsDraft] = useState("");
+  const [projectUserJourneyEntrypointsDraft, setProjectUserJourneyEntrypointsDraft] = useState("");
+  const [projectUserJourneyStepsDraft, setProjectUserJourneyStepsDraft] = useState("");
+  const [projectUserJourneyOutcomesDraft, setProjectUserJourneyOutcomesDraft] = useState("");
+  const [projectUserJourneyEdgeCasesDraft, setProjectUserJourneyEdgeCasesDraft] = useState("");
+  const [projectArchitectureDecisionTitleDraft, setProjectArchitectureDecisionTitleDraft] = useState("");
+  const [projectArchitectureDecisionSummaryDraft, setProjectArchitectureDecisionSummaryDraft] = useState("");
+  const [projectArchitectureDecisionStatusDraft, setProjectArchitectureDecisionStatusDraft] = useState("proposed");
+  const [projectArchitectureDecisionDriversDraft, setProjectArchitectureDecisionDriversDraft] = useState("");
+  const [projectArchitectureDecisionConsequencesDraft, setProjectArchitectureDecisionConsequencesDraft] = useState("");
+  const [projectArchitectureDecisionStackChoicesDraft, setProjectArchitectureDecisionStackChoicesDraft] = useState("");
+  const [projectDesignSystemDraft, setProjectDesignSystemDraft] = useState("{}");
+  const [projectStyleGuideDraft, setProjectStyleGuideDraft] = useState("{}");
+  const [projectTestingStrategyRequiredEvidenceDraft, setProjectTestingStrategyRequiredEvidenceDraft] = useState("");
+  const [projectTestingStrategySuiteExpectationsDraft, setProjectTestingStrategySuiteExpectationsDraft] = useState<ProjectTestingStrategySuiteExpectationDraft[]>([
+    blankProjectTestingStrategySuiteExpectationDraft()
+  ]);
+  const [projectTestingStrategyMaximumFailedTestsDraft, setProjectTestingStrategyMaximumFailedTestsDraft] = useState("");
+  const [projectTestingStrategyMaximumSayTurnLatencySecondsDraft, setProjectTestingStrategyMaximumSayTurnLatencySecondsDraft] = useState("");
+  const [projectTestingStrategyMaximumEnvironmentSaveLoadSecondsDraft, setProjectTestingStrategyMaximumEnvironmentSaveLoadSecondsDraft] = useState("");
+  const [projectTestingStrategyRequireCoverageDraft, setProjectTestingStrategyRequireCoverageDraft] = useState(false);
+  const [projectTestingStrategyRequireRecoveryReadyDraft, setProjectTestingStrategyRequireRecoveryReadyDraft] = useState(false);
+  const [projectSourceRootDraft, setProjectSourceRootDraft] = useState("");
+  const [projectTestingHarnessIdDraft, setProjectTestingHarnessIdDraft] = useState("");
+  const [projectTestingHarnessInventory, setProjectTestingHarnessInventory] = useState<ProjectTestingHarnessDto[]>([]);
+  const [projectQualityGateTitleDraft, setProjectQualityGateTitleDraft] = useState("");
+  const [projectQualityGateSummaryDraft, setProjectQualityGateSummaryDraft] = useState("");
+  const [projectQualityGateStatusDraft, setProjectQualityGateStatusDraft] = useState("proposed");
+  const [projectQualityGateRequiredHarnessIdsDraft, setProjectQualityGateRequiredHarnessIdsDraft] = useState("");
+  const [projectQualityGateMinimumLinkedWorkItemsDraft, setProjectQualityGateMinimumLinkedWorkItemsDraft] = useState("");
+  const [projectQualityGateMinimumLinkedIncidentsDraft, setProjectQualityGateMinimumLinkedIncidentsDraft] = useState("");
+  const [projectQualityGateMaximumFailedTestsDraft, setProjectQualityGateMaximumFailedTestsDraft] = useState("");
+  const [projectQualityGateMaximumSayTurnLatencySecondsDraft, setProjectQualityGateMaximumSayTurnLatencySecondsDraft] = useState("");
+  const [projectQualityGateMaximumEnvironmentSaveLoadSecondsDraft, setProjectQualityGateMaximumEnvironmentSaveLoadSecondsDraft] = useState("");
+  const [projectQualityGateRequireSourceRootsDraft, setProjectQualityGateRequireSourceRootsDraft] = useState(true);
+  const [projectQualityGateRequireCoverageDraft, setProjectQualityGateRequireCoverageDraft] = useState(false);
+  const [projectQualityGateRequireRecoveryReadyDraft, setProjectQualityGateRequireRecoveryReadyDraft] = useState(false);
+  const [workItemSteerPhaseDraft, setWorkItemSteerPhaseDraft] = useState("");
+  const [workItemSteerNextStepDraft, setWorkItemSteerNextStepDraft] = useState("");
+  const [workItemSteerNoteDraft, setWorkItemSteerNoteDraft] = useState("");
+  const [workItemResumeNoteDraft, setWorkItemResumeNoteDraft] = useState("");
+  const [workItemQuarantineReasonDraft, setWorkItemQuarantineReasonDraft] = useState("");
+  const [workItemRollbackReasonDraft, setWorkItemRollbackReasonDraft] = useState("");
+  const [workItemRollbackNoteDraft, setWorkItemRollbackNoteDraft] = useState("");
+  const [workItemValidationStatusDraft, setWorkItemValidationStatusDraft] = useState("passed");
+  const [incidentRemediationStatusDraft, setIncidentRemediationStatusDraft] =
+    useState<IncidentRemediationPlanDto["status"]>("draft");
+  const [incidentRemediationOwnerDraft, setIncidentRemediationOwnerDraft] = useState("");
+  const [incidentRemediationSummaryDraft, setIncidentRemediationSummaryDraft] = useState("");
+  const [incidentRemediationActionsDraft, setIncidentRemediationActionsDraft] = useState("");
+  const [incidentRemediationValidationDraft, setIncidentRemediationValidationDraft] = useState("");
+  const [incidentRemediationBlockersDraft, setIncidentRemediationBlockersDraft] = useState("");
+  const [isEnvironmentImageChooserOpen, setIsEnvironmentImageChooserOpen] = useState(false);
+  const [isEnvironmentExitDialogOpen, setIsEnvironmentExitDialogOpen] = useState(false);
+  const [environmentSaveAsNameDraft, setEnvironmentSaveAsNameDraft] = useState("");
   const [replSessionTitleDraft, setReplSessionTitleDraft] = useState("New Listener Session");
   const [summary, setSummary] = useState<EnvironmentSummaryDto | null>(null);
   const [status, setStatus] = useState<EnvironmentStatusDto | null>(null);
@@ -1116,8 +1205,35 @@ export function App() {
   } | null>(null);
   const [pendingConversationComposerFocusThreadId, setPendingConversationComposerFocusThreadId] = useState<string | null>(null);
   const [runtimeSummary, setRuntimeSummary] = useState<RuntimeSummaryDto | null>(null);
+  const [runtimeTelemetry, setRuntimeTelemetry] = useState<RuntimeTelemetrySnapshotDto | null>(null);
+  const [selectedTelemetryProcessId, setSelectedTelemetryProcessId] = useState<string | null>(null);
+  const [consoleLogStream, setConsoleLogStream] = useState<QueryResultDto<ConsoleLogStreamDto> | null>(null);
+  const [selectedConsolePlane, setSelectedConsolePlane] = useState<"environment" | "host">("environment");
+  const [selectedConsoleSourceFilter, setSelectedConsoleSourceFilter] = useState("All Sources");
+  const [selectedConsoleEntryId, setSelectedConsoleEntryId] = useState<string | null>(null);
+  const [diagnosticReports, setDiagnosticReports] = useState<DiagnosticReportSummaryDto[]>([]);
+  const [selectedDiagnosticSourceFilter, setSelectedDiagnosticSourceFilter] = useState("All Sources");
+  const [selectedDiagnosticReportId, setSelectedDiagnosticReportId] = useState<string | null>(null);
+  const [selectedDiagnosticReport, setSelectedDiagnosticReport] = useState<DiagnosticReportDetailDto | null>(null);
   const [runtimeForm, setRuntimeForm] = useState('(describe "sbcl-agent")');
   const [runtimeResult, setRuntimeResult] = useState<CommandResultDto<RuntimeEvalResultDto> | null>(null);
+  const [editorBuffersByProject, setEditorBuffersByProject] = useState<Record<string, EditorBufferStateDto[]>>({});
+  const [selectedEditorBufferIdByProject, setSelectedEditorBufferIdByProject] = useState<Record<string, string>>({});
+  const [currentEditorCursorSymbol, setCurrentEditorCursorSymbol] = useState<string | null>(null);
+  const [currentEditorCursorSymbolPackage, setCurrentEditorCursorSymbolPackage] = useState<string>("cl-user");
+  const [currentEditorCursorSymbolHelp, setCurrentEditorCursorSymbolHelp] = useState<{
+    detail: string;
+    info: string;
+    type?: string;
+    packageName?: string;
+    signature?: string | null;
+  } | null>(null);
+  const [workspacePackageByProject, setWorkspacePackageByProject] = useState<Record<string, string>>({});
+  const [workspaceDraftByProject, setWorkspaceDraftByProject] = useState<Record<string, string>>({});
+  const [workspaceResultByProject, setWorkspaceResultByProject] = useState<
+    Record<string, CommandResultDto<RuntimeEvalResultDto> | null>
+  >({});
+  const [workspaceHistoryByProject, setWorkspaceHistoryByProject] = useState<Record<string, ReplSessionHistoryEntryDto[]>>({});
   const [runtimeInspectorSymbol, setRuntimeInspectorSymbol] = useState("CAR");
   const [runtimeInspectorPackage, setRuntimeInspectorPackage] = useState("");
   const [runtimeInspectionMode, setRuntimeInspectionMode] =
@@ -1126,6 +1242,11 @@ export function App() {
   const runtimeInspectorPackageRef = useRef(runtimeInspectorPackage);
   const runtimeInspectionModeRef = useRef<RuntimeInspectionMode>(runtimeInspectionMode);
   const selectedThreadIdRef = useRef<string | null>(selectedThreadId);
+  const desktopPreferencesHydratedRef = useRef(false);
+  const desktopPreferencesPersistTimeoutRef = useRef<number | null>(null);
+  const shellPendingHydrationActionsRef = useRef<ShellLayoutAction[]>([]);
+  const suppressExitDesktopPreferencesFlushRef = useRef(false);
+  const startupImageSelectionHandledRef = useRef(false);
   const [runtimeInspection, setRuntimeInspection] =
     useState<QueryResultDto<RuntimeInspectionResultDto> | null>(null);
   const [runtimeEntityDetail, setRuntimeEntityDetail] =
@@ -1148,18 +1269,16 @@ export function App() {
   const [selectedApproval, setSelectedApproval] = useState<ApprovalRequestDto | null>(null);
   const [approvalDecision, setApprovalDecision] = useState<CommandResultDto<ApprovalDecisionDto> | null>(null);
   const [isDecidingApproval, setIsDecidingApproval] = useState(false);
-  const [dashboardApprovalRequests, setDashboardApprovalRequests] = useState<ApprovalRequestSummaryDto[] | null>(null);
   const [incidents, setIncidents] = useState<IncidentSummaryDto[]>([]);
   const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>(null);
   const [selectedIncident, setSelectedIncident] = useState<IncidentDetailDto | null>(null);
   const [pendingIncidentFocusId, setPendingIncidentFocusId] = useState<string | null>(null);
-  const [dashboardIncidents, setDashboardIncidents] = useState<IncidentSummaryDto[] | null>(null);
   const [workItems, setWorkItems] = useState<WorkItemSummaryDto[]>([]);
   const [selectedWorkItemId, setSelectedWorkItemId] = useState<string | null>(null);
   const [selectedWorkItem, setSelectedWorkItem] = useState<WorkItemDetailDto | null>(null);
+  const [selectedWorkItemPlan, setSelectedWorkItemPlan] = useState<WorkItemPlanDto | null>(null);
   const [selectedWorkflowRecord, setSelectedWorkflowRecord] = useState<WorkflowRecordDto | null>(null);
   const [pendingWorkItemFocusId, setPendingWorkItemFocusId] = useState<string | null>(null);
-  const [dashboardWorkItems, setDashboardWorkItems] = useState<WorkItemSummaryDto[] | null>(null);
   const [environmentEvents, setEnvironmentEvents] = useState<EnvironmentEventDto[]>([]);
   const [selectedEventCursor, setSelectedEventCursor] = useState<number | null>(null);
   const [eventFamilyFilter, setEventFamilyFilter] = useState<string>("all");
@@ -1167,6 +1286,54 @@ export function App() {
   const [documentationPages, setDocumentationPages] = useState<DocumentationPageSummaryDto[]>([]);
   const [selectedDocumentationSlug, setSelectedDocumentationSlug] = useState<string>("development-model");
   const [selectedDocumentationPage, setSelectedDocumentationPage] = useState<DocumentationPageDto | null>(null);
+  const activeWorkspaceRef = useRef<WorkspaceId>(activeWorkspace);
+  activeWorkspaceRef.current = activeWorkspace;
+  const richDesktopPreferencesRef = useRef<Partial<DesktopPreferencesDto>>({});
+  richDesktopPreferencesRef.current = {
+    selectedBrowserDomain,
+    selectedConfigurationSection,
+    conversationDraft,
+    editorBuffersByProject,
+    selectedEditorBufferIdByProject,
+    workspacePackageByProject,
+    workspaceDraftByProject,
+    workspaceResultByProject,
+    workspaceHistoryByProject
+  };
+  const persistRichDesktopPreferences = useCallback(async () => {
+    await window.sbclAgentDesktop.desktop.setDesktopPreferences({
+      lastWorkspace: activeWorkspaceRef.current,
+      ...richDesktopPreferencesRef.current
+    });
+  }, []);
+  const flushRichDesktopPreferences = useCallback(async () => {
+    if (desktopPreferencesPersistTimeoutRef.current !== null) {
+      window.clearTimeout(desktopPreferencesPersistTimeoutRef.current);
+      desktopPreferencesPersistTimeoutRef.current = null;
+    }
+    await persistRichDesktopPreferences();
+  }, [persistRichDesktopPreferences]);
+  const persistResolvedShellLayout = useCallback(async (nextShellLayout: ShellLayoutState) => {
+    shellLayoutRef.current = nextShellLayout;
+    await window.sbclAgentDesktop.desktop.setDesktopPreferences(
+      {
+        lastWorkspace: activeWorkspaceRef.current,
+        ...shellLayoutToDesktopPreferencesPatch(nextShellLayout)
+      }
+    );
+  }, []);
+  const persistShellDesktopPreferences = useCallback(async () => {
+    await persistResolvedShellLayout(shellLayoutRef.current);
+  }, [persistResolvedShellLayout]);
+  const applyShellLayoutAction = useCallback((action: ShellLayoutAction): ShellLayoutState => {
+    if (!desktopPreferencesHydratedRef.current) {
+      shellPendingHydrationActionsRef.current.push(action);
+    }
+    const nextShellLayout = shellLayoutReducer(shellLayoutRef.current, action);
+    shellLayoutRef.current = nextShellLayout;
+    dispatchShellLayout(action);
+    return nextShellLayout;
+  }, []);
   const effectiveEnvironmentId = summary?.environmentId ?? binding?.environmentId ?? null;
   const desktopWindows = desktopSpaces[activeDesktopId] ?? [];
   const focusedDesktopWindowId =
@@ -1183,8 +1350,20 @@ export function App() {
   const sidebarPanelRef = useRef<HTMLElement | null>(null);
   const canvasPanelRef = useRef<HTMLElement | null>(null);
   const inspectorPanelRef = useRef<HTMLElement | null>(null);
+  const leftRailListRef = useRef<HTMLDivElement | null>(null);
+  const rightRailListRef = useRef<HTMLDivElement | null>(null);
+  const desktopWindowStageDropTargetRef = useRef<HTMLDivElement | null>(null);
   const activeTooltipTargetRef = useRef<HTMLElement | null>(null);
   const activeTooltipTitleRef = useRef<string | null>(null);
+  const shellPanelDragSessionRef = useRef<{
+    panelId: ShellDockPanelId;
+    panelLabel: string;
+    origin: "left" | "right" | "undocked";
+    startX: number;
+    startY: number;
+    dragStarted: boolean;
+  } | null>(null);
+  const shellPanelDragCleanupRef = useRef<(() => void) | null>(null);
   const inspectorResizeSessionRef = useRef<{
     contentRight: number;
     minWidth: number;
@@ -1196,20 +1375,34 @@ export function App() {
     minWidth: number;
     maxWidth: number;
   } | null>(null);
-  const lastPersistedSidebarWidthRef = useRef<number | null>(null);
-  const lastPersistedInspectorWidthRef = useRef<number | null>(null);
+  const sidebarResizeCleanupRef = useRef<(() => void) | null>(null);
   const [splitterLayout, setSplitterLayout] = useState<{
     top: number;
     bottom: number;
     left: number;
     right: number;
   } | null>(null);
-
+  const inspectorResizeCleanupRef = useRef<(() => void) | null>(null);
+  const [shellPanelDragState, setShellPanelDragState] = useState<{
+    panelId: ShellDockPanelId;
+    panelLabel: string;
+    origin: "left" | "right" | "undocked";
+    x: number;
+    y: number;
+    target: "left" | "right" | "undocked" | null;
+  } | null>(null);
   function updateActiveDesktopWindows(updater: (windows: DesktopWindowRecord[]) => DesktopWindowRecord[]): void {
-    setDesktopSpaces((current) => ({
-      ...current,
-      [activeDesktopId]: updater(current[activeDesktopId] ?? [])
-    }));
+    setDesktopSpaces((current) => {
+      const currentWindows = current[activeDesktopId] ?? [];
+      const nextWindows = updater(currentWindows);
+      if (nextWindows === currentWindows) {
+        return current;
+      }
+      return {
+        ...current,
+        [activeDesktopId]: nextWindows
+      };
+    });
   }
 
   function updateRuntimeInspectorSymbol(value: string): void {
@@ -1319,11 +1512,11 @@ export function App() {
   const [artifacts, setArtifacts] = useState<ArtifactSummaryDto[]>([]);
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
   const [selectedArtifact, setSelectedArtifact] = useState<ArtifactDetailDto | null>(null);
-  const [dashboardArtifacts, setDashboardArtifacts] = useState<ArtifactSummaryDto[] | null>(null);
-  const [dashboardThreads, setDashboardThreads] = useState<ThreadSummaryDto[] | null>(null);
   const currentProjectReplSessions = currentProjectId ? replSessionsByProject[currentProjectId] ?? [] : [];
   const currentReplSessionId = currentProjectId ? currentReplSessionIdByProject[currentProjectId] ?? currentProjectReplSessions[0]?.sessionId ?? null : null;
   const currentProject = projects.find((project) => project.projectId === currentProjectId) ?? null;
+  const selectedProjectSummary =
+    projectListResult?.data.projects.find((project) => project.projectId === selectedGovernedProjectId) ?? null;
   const currentProjectConversationSessionCount = currentProjectId
     ? threads.length
     : 0;
@@ -1349,36 +1542,111 @@ export function App() {
     currentProjectReplSessions.find((session) => session.sessionId === currentReplSessionId) ??
     currentProjectReplSessions[0] ??
     null;
-  const queueThreads =
-    activeWorkspace === "dashboard"
-      ? dashboardThreads !== null
-        ? dashboardThreads
-        : threads
-      : threads;
-  const queueApprovals =
-    activeWorkspace === "dashboard"
-      ? dashboardApprovalRequests !== null
-        ? dashboardApprovalRequests
-        : approvalRequests
-      : approvalRequests;
-  const queueIncidents =
-    activeWorkspace === "dashboard"
-      ? dashboardIncidents !== null
-        ? dashboardIncidents
-        : incidents
-      : incidents;
-  const queueWorkItems =
-    activeWorkspace === "dashboard"
-      ? dashboardWorkItems !== null
-        ? dashboardWorkItems
-        : workItems
-      : workItems;
-  const queueArtifacts =
-    activeWorkspace === "dashboard"
-      ? dashboardArtifacts !== null
-        ? dashboardArtifacts
-        : artifacts
-      : artifacts;
+  const currentWorkspaceDraft = currentProjectId
+    ? workspaceDraftByProject[currentProjectId] ??
+      ";; Workspace\n;; Draft forms here, evaluate them deliberately, and keep useful results for later promotion.\n\n(in-package :cl-user)\n\n(values)\n"
+    : ";; Workspace\n;; Bind a project and environment to retain workspace state.\n";
+  const currentWorkspacePackage = currentProjectId
+    ? workspacePackageByProject[currentProjectId] ?? runtimeSummary?.currentPackage ?? "cl-user"
+    : runtimeSummary?.currentPackage ?? "cl-user";
+  const currentWorkspaceResult = currentProjectId ? workspaceResultByProject[currentProjectId] ?? null : null;
+  const currentEditorBuffers = useMemo<EditorBufferStateDto[]>(() => {
+    if (!currentProjectId) {
+      return [
+        createEditorBufferState({
+          bufferId: "editor-buffer-unbound-main",
+          title: DEFAULT_EDITOR_BUFFER_TITLE,
+          draft: DEFAULT_EDITOR_UNBOUND_DRAFT,
+          packageName: runtimeSummary?.currentPackage ?? "cl-user"
+        })
+      ];
+    }
+    return (
+      editorBuffersByProject[currentProjectId] ?? [
+        createEditorBufferState({
+          bufferId: `editor-buffer-${currentProjectId}-main`,
+          title: DEFAULT_EDITOR_BUFFER_TITLE,
+          draft: DEFAULT_EDITOR_BOUND_DRAFT,
+          packageName: runtimeSummary?.currentPackage ?? "cl-user"
+        })
+      ]
+    );
+  }, [currentProjectId, editorBuffersByProject, runtimeSummary?.currentPackage]);
+  const currentEditorBufferId = currentProjectId
+    ? selectedEditorBufferIdByProject[currentProjectId] ?? currentEditorBuffers[0]?.bufferId ?? null
+    : currentEditorBuffers[0]?.bufferId ?? null;
+  const currentEditorBuffer =
+    currentEditorBuffers.find((buffer) => buffer.bufferId === currentEditorBufferId) ?? currentEditorBuffers[0] ?? null;
+  const currentEditorDraft = currentEditorBuffer?.draft ?? DEFAULT_EDITOR_UNBOUND_DRAFT;
+  const currentEditorPackage = currentEditorBuffer?.packageName ?? runtimeSummary?.currentPackage ?? "cl-user";
+  const currentEditorResult = currentEditorBuffer?.result ?? null;
+  const currentEditorBufferTitle = currentEditorBuffer?.title ?? DEFAULT_EDITOR_BUFFER_TITLE;
+  const currentEditorBufferDirty = currentEditorBuffer?.dirty ?? false;
+  const currentEditorSourceFilePath = currentEditorBuffer?.sourceFilePath ?? sourcePreview?.data.path ?? null;
+  const currentEditorChangedFormCount = currentEditorBuffer
+    ? countChangedEditorBufferForms(currentEditorBuffer.baselineDraft, currentEditorBuffer.draft)
+    : 0;
+  const currentWorkspaceHistory = currentProjectId ? workspaceHistoryByProject[currentProjectId] ?? [] : [];
+  const transcriptEntries = useMemo<TranscriptSurfaceEntry[]>(
+    () =>
+      [
+        ...currentWorkspaceHistory.map((entry) => ({
+          key: `workspace:${entry.entryId}`,
+          timestamp: entry.timestamp,
+          source: "workspace" as const,
+          title: "Workspace Evaluation",
+          summary: entry.summary,
+          preview: entry.valuePreview ?? null,
+          form: entry.form,
+          status: entry.status,
+          family: "workspace"
+        })),
+        ...(currentProjectReplFocus?.history ?? []).map((entry) => ({
+          key: `listener:${entry.entryId}`,
+          timestamp: entry.timestamp,
+          source: "listener" as const,
+          title: currentProjectReplFocus?.title ?? "Listener Session",
+          summary: entry.summary,
+          preview: entry.valuePreview ?? null,
+          form: entry.form,
+          status: entry.status,
+          family: currentProjectReplFocus?.packageName ?? "listener"
+        })),
+        ...environmentEvents.slice(0, 12).map((event) => ({
+          key: `event:${event.cursor}`,
+          timestamp: event.timestamp,
+          source: "event" as const,
+          title: event.kind,
+          summary: event.summary,
+          preview: event.entityId ?? event.turnId ?? event.threadId ?? null,
+          family: event.family,
+          threadId: event.threadId ?? null,
+          turnId: event.turnId ?? null,
+          eventCursor: event.cursor
+        })),
+        ...(conversationStream?.content
+          ? [
+              {
+                key: `stream:${conversationStream.turnId ?? conversationStream.threadId}`,
+                timestamp: new Date().toISOString(),
+                source: "listener" as const,
+                title: "Conversation Stream",
+                summary: "An assistant response is currently streaming into the active conversational runtime.",
+                preview: conversationStream.content,
+                family: "conversation-stream",
+                threadId: conversationStream.threadId,
+                turnId: conversationStream.turnId
+              }
+            ]
+          : [])
+      ].sort((left, right) => right.timestamp.localeCompare(left.timestamp)),
+    [conversationStream?.content, conversationStream?.threadId, conversationStream?.turnId, currentProjectReplFocus, currentWorkspaceHistory, environmentEvents]
+  );
+  const queueThreads = threads;
+  const queueApprovals = approvalRequests;
+  const queueIncidents = incidents;
+  const queueWorkItems = workItems;
+  const queueArtifacts = artifacts;
   const prioritizedThreads = useMemo(
     () =>
       [...queueThreads].sort(
@@ -1625,14 +1893,27 @@ export function App() {
       });
     }
 
-    for (const workItem of prioritizedWorkItems.filter(
-      (item) =>
-        item.state === "blocked" ||
-        item.state === "quarantined" ||
-        item.state === "waiting" ||
-        item.validationBurden === "pending" ||
-        item.reconciliationBurden === "required"
-    ).slice(0, 6)) {
+    for (const workItem of prioritizedWorkItems
+      .filter((item) => {
+        const actionable =
+          item.state === "blocked" ||
+          item.state === "quarantined" ||
+          item.state === "waiting" ||
+          item.validationBurden === "pending" ||
+          item.reconciliationBurden === "required";
+        if (!actionable) {
+          return false;
+        }
+        if (
+          (item.state === "blocked" || item.state === "quarantined" || item.state === "waiting") &&
+          item.incidentCount > 0 &&
+          hasOpenIncidents
+        ) {
+          return false;
+        }
+        return true;
+      })
+      .slice(0, 6)) {
       const tone = toneForWorkState(workItem.state);
       const normalizedScore = Math.max(
         20,
@@ -1747,8 +2028,70 @@ export function App() {
       .slice(0, 24);
   }, [prioritizedApprovalRequests, prioritizedIncidents, prioritizedThreads, prioritizedWorkItems, queueArtifacts, runtimeSummary?.currentPackage, runtimeSummary?.runtimeId, status?.runtimeState, status?.workflowState]);
   useEffect(() => {
-    void loadInitialState();
+    async function initializeEnvironmentLifecycle(): Promise<void> {
+      try {
+        const registryResult = await window.sbclAgentDesktop.host.getEnvironmentImageRegistry();
+        setEnvironmentImageRegistry(registryResult.data);
+        if (registryResult.data.images.length > 0 && !startupImageSelectionHandledRef.current) {
+          setEnvironmentSaveAsNameDraft(registryResult.data.currentImageName ?? "");
+          setIsEnvironmentImageChooserOpen(true);
+          return;
+        }
+        await loadInitialState();
+      } catch (error) {
+        setErrorMessage(
+          error instanceof Error ? error.message : "Failed to initialize environment images."
+        );
+      }
+    }
+
+    void initializeEnvironmentLifecycle();
   }, []);
+
+  useEffect(() => {
+    if (!desktopPreferencesHydratedRef.current) {
+      return;
+    }
+
+    if (desktopPreferencesPersistTimeoutRef.current !== null) {
+      window.clearTimeout(desktopPreferencesPersistTimeoutRef.current);
+    }
+
+    desktopPreferencesPersistTimeoutRef.current = window.setTimeout(() => {
+      void persistRichDesktopPreferences();
+    }, 250);
+
+    return () => {
+      if (desktopPreferencesPersistTimeoutRef.current !== null) {
+        window.clearTimeout(desktopPreferencesPersistTimeoutRef.current);
+        desktopPreferencesPersistTimeoutRef.current = null;
+      }
+    };
+  }, [
+    persistRichDesktopPreferences
+  ]);
+
+  useEffect(() => {
+    if (!desktopPreferencesHydratedRef.current) {
+      return;
+    }
+
+    const flushRichDesktopPreferencesOnExit = () => {
+      if (suppressExitDesktopPreferencesFlushRef.current) {
+        return;
+      }
+      void flushRichDesktopPreferences();
+      void persistShellDesktopPreferences();
+    };
+
+    window.addEventListener("pagehide", flushRichDesktopPreferencesOnExit);
+    window.addEventListener("beforeunload", flushRichDesktopPreferencesOnExit);
+
+    return () => {
+      window.removeEventListener("pagehide", flushRichDesktopPreferencesOnExit);
+      window.removeEventListener("beforeunload", flushRichDesktopPreferencesOnExit);
+    };
+  }, [flushRichDesktopPreferences, persistShellDesktopPreferences]);
 
   useEffect(() => {
     const title = currentProject?.title ?? summary?.environmentLabel ?? "IntentOS Shell";
@@ -1778,6 +2121,11 @@ export function App() {
 
         if (action === "project:open") {
           setIsProjectOpenDialogOpen(true);
+          return;
+        }
+
+        if (action === "app:request-quit") {
+          openEnvironmentExitDialog();
         }
       })
       .then((handle) => {
@@ -1791,7 +2139,13 @@ export function App() {
         void window.sbclAgentDesktop.events.unsubscribe(subscriptionId);
       }
     };
-  }, [binding?.environmentId, handleSaveCurrentProject, summary?.environmentId, summary?.environmentLabel]);
+  }, [
+    binding?.environmentId,
+    environmentImageRegistry?.currentImageName,
+    handleSaveCurrentProject,
+    summary?.environmentId,
+    summary?.environmentLabel
+  ]);
 
   useEffect(() => {
     setSelectedConversationMessageId(null);
@@ -2069,12 +2423,15 @@ export function App() {
       const canvasRect = canvasPanelRef.current.getBoundingClientRect();
       const sidebarRect = sidebarPanelRef.current?.getBoundingClientRect() ?? canvasRect;
       const inspectorRect = inspectorPanelRef.current?.getBoundingClientRect() ?? canvasRect;
+      const leftGapCenter = sidebarRect.right + (canvasRect.left - sidebarRect.right) / 2;
+      const rightGapCenter = canvasRect.right + (inspectorRect.left - canvasRect.right) / 2;
 
+      const splitterHalfWidth = 24;
       setSplitterLayout({
         top: Math.max(0, top),
         bottom: Math.max(0, bottom),
-        left: sidebarRect.right - shellRect.left - 10,
-        right: shellRect.right - inspectorRect.left - 10
+        left: leftGapCenter - shellRect.left - splitterHalfWidth,
+        right: shellRect.right - rightGapCenter - splitterHalfWidth
       });
     }
 
@@ -2130,6 +2487,20 @@ export function App() {
   }, [lispParenColors]);
 
   useEffect(() => {
+    if (activeWorkspace === "projects" && effectiveEnvironmentId) {
+      void loadProjectWorkspace(effectiveEnvironmentId);
+    }
+  }, [activeWorkspace, effectiveEnvironmentId]);
+
+  useEffect(() => {
+    if (activeWorkspace !== "projects" || !effectiveEnvironmentId || !selectedGovernedProjectId) {
+      return;
+    }
+
+    void loadProjectDetail(selectedGovernedProjectId, effectiveEnvironmentId);
+  }, [activeWorkspace, effectiveEnvironmentId, selectedGovernedProjectId]);
+
+  useEffect(() => {
     if (activeWorkspace === "conversations" && effectiveEnvironmentId) {
       void loadConversationWorkspace(effectiveEnvironmentId);
     }
@@ -2148,8 +2519,27 @@ export function App() {
   }, [selectedTurnId, effectiveEnvironmentId]);
 
   useEffect(() => {
+    if (!currentProjectId) {
+      return;
+    }
+    const selectedBufferId = selectedEditorBufferIdByProject[currentProjectId];
+    const firstBufferId = currentEditorBuffers[0]?.bufferId ?? null;
+    if (!firstBufferId) {
+      return;
+    }
+    if (selectedBufferId && currentEditorBuffers.some((buffer) => buffer.bufferId === selectedBufferId)) {
+      return;
+    }
+    setSelectedEditorBufferIdByProject((current) => ({
+      ...current,
+      [currentProjectId]: firstBufferId
+    }));
+  }, [currentEditorBuffers, currentProjectId, selectedEditorBufferIdByProject]);
+
+  useEffect(() => {
     if (activeWorkspace === "runtime" && effectiveEnvironmentId) {
       void loadRuntimeWorkspace(effectiveEnvironmentId);
+      void loadRuntimeTelemetry(effectiveEnvironmentId);
       void loadWorkWorkspace(effectiveEnvironmentId);
       void loadApprovalWorkspace(effectiveEnvironmentId);
     }
@@ -2158,6 +2548,7 @@ export function App() {
   useEffect(() => {
     if (activeWorkspace === "browser" && effectiveEnvironmentId) {
       void loadRuntimeWorkspace(effectiveEnvironmentId);
+      void loadRuntimeTelemetry(effectiveEnvironmentId);
       void loadWorkWorkspace(effectiveEnvironmentId);
       void loadArtifactsWorkspace(effectiveEnvironmentId);
       void loadConversationWorkspace(effectiveEnvironmentId);
@@ -2167,67 +2558,52 @@ export function App() {
   }, [activeWorkspace, effectiveEnvironmentId]);
 
   useEffect(() => {
-    if (activeWorkspace === "dashboard" && effectiveEnvironmentId) {
-      void loadRuntimeWorkspace(effectiveEnvironmentId);
+    if ((activeWorkspace === "environment" || activeWorkspace === "projects") && effectiveEnvironmentId) {
       void loadWorkWorkspace(effectiveEnvironmentId);
-      void loadArtifactsWorkspace(effectiveEnvironmentId);
-      void loadConversationWorkspace(effectiveEnvironmentId);
       void loadApprovalWorkspace(effectiveEnvironmentId);
-      void loadIncidentWorkspace(effectiveEnvironmentId);
     }
   }, [activeWorkspace, effectiveEnvironmentId]);
 
   useEffect(() => {
-    if (activeWorkspace !== "dashboard" || !effectiveEnvironmentId) {
+    if (
+      activeWorkspace !== "browser" ||
+      !effectiveEnvironmentId ||
+      !["processes", "performance", "host-io"].includes(selectedBrowserDomain)
+    ) {
       return;
     }
 
-    let cancelled = false;
+    void loadRuntimeTelemetry(effectiveEnvironmentId);
+    const intervalId = window.setInterval(() => {
+      void loadRuntimeTelemetry(effectiveEnvironmentId);
+    }, 5000);
 
-    void Promise.allSettled([
-      window.sbclAgentDesktop.query.threadList(effectiveEnvironmentId),
-      window.sbclAgentDesktop.query.approvalRequestList(effectiveEnvironmentId),
-      window.sbclAgentDesktop.query.incidentList(effectiveEnvironmentId),
-      window.sbclAgentDesktop.query.workItemList(effectiveEnvironmentId),
-      window.sbclAgentDesktop.query.artifactList(effectiveEnvironmentId)
-    ])
-      .then((results) => {
-        if (cancelled) {
-          return;
-        }
+    return () => window.clearInterval(intervalId);
+  }, [activeWorkspace, effectiveEnvironmentId, selectedBrowserDomain]);
 
-        const [threadResult, approvalResult, incidentResult, workItemResult, artifactResult] = results;
+  useEffect(() => {
+    if (activeWorkspace !== "browser" || !effectiveEnvironmentId || selectedBrowserDomain !== "console") {
+      return;
+    }
 
-        setDashboardThreads(threadResult.status === "fulfilled" ? threadResult.value.data : []);
-        setDashboardApprovalRequests(approvalResult.status === "fulfilled" ? approvalResult.value.data : []);
-        setDashboardIncidents(incidentResult.status === "fulfilled" ? incidentResult.value.data : []);
-        setDashboardWorkItems(workItemResult.status === "fulfilled" ? workItemResult.value.data : []);
-        setDashboardArtifacts(artifactResult.status === "fulfilled" ? artifactResult.value.data : []);
+    void loadConsoleLogStream(effectiveEnvironmentId, selectedConsolePlane);
+  }, [activeWorkspace, effectiveEnvironmentId, selectedBrowserDomain, selectedConsolePlane]);
 
-        const rejected = results.find((result) => result.status === "rejected");
-        if (rejected) {
-          setErrorMessage(
-            rejected.reason instanceof Error
-              ? rejected.reason.message
-              : "One or more dashboard queue sources could not be refreshed."
-          );
-          return;
-        }
+  useEffect(() => {
+    if (activeWorkspace !== "browser" || !effectiveEnvironmentId || selectedBrowserDomain !== "diagnostics") {
+      return;
+    }
 
-        setErrorMessage((current) =>
-          current === "One or more dashboard queue sources could not be refreshed." ? null : current
-        );
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          setErrorMessage(error instanceof Error ? error.message : "Failed to refresh dashboard queue sources.");
-        }
-      });
+    void loadDiagnosticReports(effectiveEnvironmentId);
+  }, [activeWorkspace, effectiveEnvironmentId, selectedBrowserDomain]);
 
-    return () => {
-      cancelled = true;
-    };
-  }, [activeWorkspace, effectiveEnvironmentId]);
+  useEffect(() => {
+    if (!selectedDiagnosticReportId || !effectiveEnvironmentId) {
+      return;
+    }
+
+    void loadDiagnosticReportDetail(selectedDiagnosticReportId, effectiveEnvironmentId);
+  }, [selectedDiagnosticReportId, effectiveEnvironmentId]);
 
   useEffect(() => {
     if (activeWorkspace === "browser" && effectiveEnvironmentId && runtimeSummary?.currentPackage) {
@@ -2425,6 +2801,7 @@ export function App() {
 
   async function loadInitialState(): Promise<void> {
     try {
+      desktopPreferencesHydratedRef.current = false;
       const [nextHostStatus, nextBinding, desktopPreferences] = await Promise.all([
         window.sbclAgentDesktop.host.getHostStatus(),
         window.sbclAgentDesktop.host.getCurrentBinding(),
@@ -2434,18 +2811,78 @@ export function App() {
       setHostStatus(nextHostStatus);
       setBinding(nextBinding);
       setActiveWorkspace(desktopPreferences.lastWorkspace);
-      setSidebarPinned(desktopPreferences.sidebarPinned ?? true);
-      setSidebarWidth(desktopPreferences.sidebarWidth ?? null);
-      setCanvasPinned(desktopPreferences.canvasPinned ?? true);
-      setInspectorPinned(desktopPreferences.inspectorPinned);
-      setInspectorWidth(desktopPreferences.inspectorWidth ?? null);
+      setSelectedBrowserDomain(
+        browserDomains.some((domain) => domain.id === desktopPreferences.selectedBrowserDomain)
+          ? (desktopPreferences.selectedBrowserDomain as BrowserDomain)
+          : "symbols"
+      );
+      setSelectedConfigurationSection(
+        configurationSections.some((section) => section.id === desktopPreferences.selectedConfigurationSection)
+          ? (desktopPreferences.selectedConfigurationSection as ConfigurationSection)
+          : "theme"
+      );
+      const hydratedShellLayout = shellLayoutReducer(createDefaultShellLayoutState(), {
+        type: "hydrate",
+        preferences: {
+          sidebarPinned: desktopPreferences.sidebarPinned ?? true,
+          sidebarWidth: desktopPreferences.sidebarWidth ?? null,
+          sidebarActivePanelId: desktopPreferences.sidebarActivePanelId ?? null,
+          sidebarDockedPanelIds: desktopPreferences.sidebarDockedPanelIds,
+          canvasPinned: desktopPreferences.canvasPinned ?? true,
+          inspectorPinned: desktopPreferences.inspectorPinned ?? true,
+          inspectorWidth: desktopPreferences.inspectorWidth ?? null,
+          inspectorActivePanelId: desktopPreferences.inspectorActivePanelId ?? null,
+          inspectorDockedPanelIds: desktopPreferences.inspectorDockedPanelIds
+        }
+      });
+      const nextShellLayout = shellPendingHydrationActionsRef.current.reduce(
+        (currentState, action) => shellLayoutReducer(currentState, action),
+        hydratedShellLayout
+      );
+      shellLayoutRef.current = nextShellLayout;
+      dispatchShellLayout({ type: "replace_state", state: nextShellLayout });
       setThemePreference(desktopPreferences.themePreference);
+      setTooltipScalePercent(
+        normalizeDesktopSurfaceScalePercent(
+          desktopPreferences.desktopSurfaceView?.tooltipScalePercent
+        )
+      );
+      setControlIconScalePercent(
+        normalizeDesktopSurfaceScalePercent(
+          desktopPreferences.desktopSurfaceView?.controlIconScalePercent
+        )
+      );
+        setDockIconScalePercent(
+          normalizeDesktopSurfaceScalePercent(
+            desktopPreferences.desktopSurfaceView?.dockIconScalePercent
+          )
+        );
+        setConversationTextScalePercent(
+          normalizeDesktopSurfaceScalePercent(
+            desktopPreferences.desktopSurfaceView?.conversationTextScalePercent
+          )
+        );
+        setSourceCodeTextScalePercent(
+          normalizeDesktopSurfaceScalePercent(
+            desktopPreferences.desktopSurfaceView?.sourceCodeTextScalePercent
+          )
+        );
       setLispParenColors(normalizeParenDepthColors(desktopPreferences.lispCodeView?.parenDepthColors));
       setProjects(ensureDesktopProjects(desktopPreferences.projects, nextBinding, null));
       setCurrentProjectId(desktopPreferences.currentProjectId ?? desktopPreferences.projects?.[0]?.projectId ?? null);
       setSelectedConversationThreadByProject(desktopPreferences.selectedConversationThreadByProject ?? {});
+      setConversationDraft(
+        desktopPreferences.conversationDraft ??
+          "Start from the live environment focus and keep runtime, source, and governance context attached."
+      );
       setReplSessionsByProject(desktopPreferences.replSessionsByProject ?? {});
       setCurrentReplSessionIdByProject(desktopPreferences.currentReplSessionIdByProject ?? {});
+      setEditorBuffersByProject(desktopPreferences.editorBuffersByProject ?? {});
+      setSelectedEditorBufferIdByProject(desktopPreferences.selectedEditorBufferIdByProject ?? {});
+      setWorkspacePackageByProject(desktopPreferences.workspacePackageByProject ?? {});
+      setWorkspaceDraftByProject(desktopPreferences.workspaceDraftByProject ?? {});
+      setWorkspaceResultByProject(desktopPreferences.workspaceResultByProject ?? {});
+      setWorkspaceHistoryByProject(desktopPreferences.workspaceHistoryByProject ?? {});
 
       if (nextBinding?.environmentId) {
         const [summaryResult, statusResult, workspaceSummaryResult, desktopModelResult] = await Promise.all([
@@ -2470,8 +2907,103 @@ export function App() {
         setProjects(nextProjects);
         setCurrentProjectId((current) => current ?? desktopPreferences.currentProjectId ?? nextProjects[0]?.projectId ?? null);
       }
+      desktopPreferencesHydratedRef.current = true;
+      shellPendingHydrationActionsRef.current = [];
+      void persistResolvedShellLayout(nextShellLayout);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Failed to load desktop state.");
+    }
+  }
+
+  async function refreshEnvironmentImageRegistry(): Promise<EnvironmentImageRegistryDto> {
+    const registryResult = await window.sbclAgentDesktop.host.getEnvironmentImageRegistry();
+    setEnvironmentImageRegistry(registryResult.data);
+    return registryResult.data;
+  }
+
+  async function handleOpenEnvironmentImage(imageIdOrName: string): Promise<void> {
+    try {
+      startupImageSelectionHandledRef.current = true;
+      await window.sbclAgentDesktop.host.loadEnvironmentImage(imageIdOrName);
+      await refreshEnvironmentImageRegistry();
+      setIsEnvironmentImageChooserOpen(false);
+      await loadInitialState();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to open environment image.");
+    }
+  }
+
+  async function handleContinueWithCurrentEnvironmentImage(): Promise<void> {
+    try {
+      startupImageSelectionHandledRef.current = true;
+      setIsEnvironmentImageChooserOpen(false);
+      await loadInitialState();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to continue with current image.");
+    }
+  }
+
+  function openEnvironmentExitDialog(): void {
+    setEnvironmentSaveAsNameDraft(
+      environmentImageRegistry?.currentImageName ?? summary?.environmentLabel ?? "work-image"
+    );
+    setIsEnvironmentExitDialogOpen(true);
+  }
+
+  async function handleDiscardAndQuit(): Promise<void> {
+    try {
+      suppressExitDesktopPreferencesFlushRef.current = true;
+      if (desktopPreferencesPersistTimeoutRef.current !== null) {
+        window.clearTimeout(desktopPreferencesPersistTimeoutRef.current);
+        desktopPreferencesPersistTimeoutRef.current = null;
+      }
+      await window.sbclAgentDesktop.host.revertEnvironmentToImage();
+      await window.sbclAgentDesktop.desktop.quitApp();
+    } catch (error) {
+      suppressExitDesktopPreferencesFlushRef.current = false;
+      setErrorMessage(error instanceof Error ? error.message : "Failed to discard work image state.");
+    }
+  }
+
+  async function handleSaveCurrentImageAndQuit(): Promise<void> {
+    const imageName = environmentImageRegistry?.currentImageName ?? null;
+    if (!imageName) {
+      return;
+    }
+
+    try {
+      suppressExitDesktopPreferencesFlushRef.current = true;
+      await flushRichDesktopPreferences();
+      await window.sbclAgentDesktop.host.saveEnvironmentImage({
+        name: imageName,
+        overwrite: true
+      });
+      await refreshEnvironmentImageRegistry();
+      await window.sbclAgentDesktop.desktop.quitApp();
+    } catch (error) {
+      suppressExitDesktopPreferencesFlushRef.current = false;
+      setErrorMessage(error instanceof Error ? error.message : "Failed to save current image.");
+    }
+  }
+
+  async function handleSaveAsNewImageAndQuit(): Promise<void> {
+    const imageName = environmentSaveAsNameDraft.trim();
+    if (imageName.length === 0) {
+      return;
+    }
+
+    try {
+      suppressExitDesktopPreferencesFlushRef.current = true;
+      await flushRichDesktopPreferences();
+      await window.sbclAgentDesktop.host.saveEnvironmentImage({
+        name: imageName,
+        overwrite: false
+      });
+      await refreshEnvironmentImageRegistry();
+      await window.sbclAgentDesktop.desktop.quitApp();
+    } catch (error) {
+      suppressExitDesktopPreferencesFlushRef.current = false;
+      setErrorMessage(error instanceof Error ? error.message : "Failed to save image.");
     }
   }
 
@@ -2498,6 +3030,7 @@ export function App() {
     setProjects(nextProjects);
     setCurrentProjectId(nextCurrentProjectId);
     await window.sbclAgentDesktop.desktop.setDesktopPreferences({
+      lastWorkspace: activeWorkspaceRef.current,
       projects: nextProjects,
       currentProjectId: nextCurrentProjectId
     });
@@ -2510,6 +3043,7 @@ export function App() {
     };
     setSelectedConversationThreadByProject(nextSelections);
     await window.sbclAgentDesktop.desktop.setDesktopPreferences({
+      lastWorkspace: activeWorkspaceRef.current,
       selectedConversationThreadByProject: nextSelections
     });
   }
@@ -2521,6 +3055,7 @@ export function App() {
     setReplSessionsByProject(nextSessionsByProject);
     setCurrentReplSessionIdByProject(nextCurrentSessionIds);
     await window.sbclAgentDesktop.desktop.setDesktopPreferences({
+      lastWorkspace: activeWorkspaceRef.current,
       replSessionsByProject: nextSessionsByProject,
       currentReplSessionIdByProject: nextCurrentSessionIds
     });
@@ -2628,6 +3163,960 @@ export function App() {
     }
   }
 
+  function openProjectConstitutionDialog(): void {
+    setProjectConstitutionDraft(JSON.stringify(selectedProjectDetail?.constitution ?? {}, null, 2));
+    setIsProjectConstitutionDialogOpen(true);
+  }
+
+  async function handleSaveProjectConstitution(): Promise<void> {
+    if (!effectiveEnvironmentId || !selectedGovernedProjectId) {
+      setErrorMessage("Select a governed project before editing its constitution.");
+      return;
+    }
+
+    let constitution: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(projectConstitutionDraft);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("Project constitutions must be stored as a JSON object.");
+      }
+      constitution = parsed as Record<string, unknown>;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to parse the project constitution draft.");
+      return;
+    }
+
+    try {
+      const result = await window.sbclAgentDesktop.command.updateProjectConstitution({
+        environmentId: effectiveEnvironmentId,
+        projectId: selectedGovernedProjectId,
+        constitution
+      });
+      setSelectedProjectDetail(result.data);
+      await loadProjectWorkspace(effectiveEnvironmentId);
+      await loadProjectDetail(selectedGovernedProjectId, effectiveEnvironmentId);
+      setIsProjectConstitutionDialogOpen(false);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to save the project constitution.");
+    }
+  }
+
+  function openProjectRequirementDialog(): void {
+    setProjectRequirementTitleDraft("");
+    setProjectRequirementSummaryDraft("");
+    setProjectRequirementPriorityDraft("high");
+    setProjectRequirementStatusDraft("proposed");
+    setIsProjectRequirementDialogOpen(true);
+  }
+
+  async function handleCreateProjectRequirement(): Promise<void> {
+    if (!effectiveEnvironmentId || !selectedGovernedProjectId) {
+      setErrorMessage("Select a governed project before adding a requirement.");
+      return;
+    }
+
+    const title = projectRequirementTitleDraft.trim();
+    const summary = projectRequirementSummaryDraft.trim();
+    if (!title || !summary) {
+      setErrorMessage("Requirement title and summary are required.");
+      return;
+    }
+
+    try {
+      const result = await window.sbclAgentDesktop.command.appendProjectRequirement({
+        environmentId: effectiveEnvironmentId,
+        projectId: selectedGovernedProjectId,
+        title,
+        summary,
+        priority: projectRequirementPriorityDraft,
+        status: projectRequirementStatusDraft,
+        kind: "functional",
+        scope: "panel-authored",
+        verificationKind: "review"
+      });
+      setSelectedProjectDetail(result.data);
+      await loadProjectWorkspace(effectiveEnvironmentId);
+      await loadProjectDetail(selectedGovernedProjectId, effectiveEnvironmentId);
+      setIsProjectRequirementDialogOpen(false);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to add the project requirement.");
+    }
+  }
+
+  function openProjectFeatureSpecificationDialog(): void {
+    setProjectFeatureSpecificationTitleDraft("");
+    setProjectFeatureSpecificationSummaryDraft("");
+    setProjectFeatureSpecificationAcceptanceCriteriaDraft("");
+    setProjectFeatureSpecificationStatusDraft("proposed");
+    setIsProjectFeatureSpecificationDialogOpen(true);
+  }
+
+  async function handleCreateProjectFeatureSpecification(): Promise<void> {
+    if (!effectiveEnvironmentId || !selectedGovernedProjectId) {
+      setErrorMessage("Select a governed project before adding a feature specification.");
+      return;
+    }
+
+    const title = projectFeatureSpecificationTitleDraft.trim();
+    const summary = projectFeatureSpecificationSummaryDraft.trim();
+    if (!title || !summary) {
+      setErrorMessage("Feature specification title and summary are required.");
+      return;
+    }
+
+    const acceptanceCriteria = projectFeatureSpecificationAcceptanceCriteriaDraft
+      .split("\n")
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+    try {
+      const result = await window.sbclAgentDesktop.command.appendProjectFeatureSpecification({
+        environmentId: effectiveEnvironmentId,
+        projectId: selectedGovernedProjectId,
+        title,
+        summary,
+        status: projectFeatureSpecificationStatusDraft,
+        acceptanceCriteria
+      });
+      setSelectedProjectDetail(result.data);
+      await loadProjectWorkspace(effectiveEnvironmentId);
+      await loadProjectDetail(selectedGovernedProjectId, effectiveEnvironmentId);
+      setIsProjectFeatureSpecificationDialogOpen(false);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to add the feature specification.");
+    }
+  }
+
+  function openProjectUserJourneyDialog(): void {
+    setProjectUserJourneyTitleDraft("");
+    setProjectUserJourneySummaryDraft("");
+    setProjectUserJourneyActorsDraft("");
+    setProjectUserJourneyEntrypointsDraft("");
+    setProjectUserJourneyStepsDraft("");
+    setProjectUserJourneyOutcomesDraft("");
+    setProjectUserJourneyEdgeCasesDraft("");
+    setIsProjectUserJourneyDialogOpen(true);
+  }
+
+  async function handleCreateProjectUserJourney(): Promise<void> {
+    if (!effectiveEnvironmentId || !selectedGovernedProjectId) {
+      setErrorMessage("Select a governed project before adding a user journey.");
+      return;
+    }
+
+    const title = projectUserJourneyTitleDraft.trim();
+    const summary = projectUserJourneySummaryDraft.trim();
+    if (!title || !summary) {
+      setErrorMessage("User journey title and summary are required.");
+      return;
+    }
+
+    const toLines = (value: string) => value.split("\n").map((item) => item.trim()).filter(Boolean);
+
+    try {
+      const result = await window.sbclAgentDesktop.command.appendProjectUserJourney({
+        environmentId: effectiveEnvironmentId,
+        projectId: selectedGovernedProjectId,
+        title,
+        summary,
+        actors: toLines(projectUserJourneyActorsDraft),
+        entrypoints: toLines(projectUserJourneyEntrypointsDraft),
+        steps: toLines(projectUserJourneyStepsDraft),
+        outcomes: toLines(projectUserJourneyOutcomesDraft),
+        edgeCases: toLines(projectUserJourneyEdgeCasesDraft)
+      });
+      setSelectedProjectDetail(result.data);
+      await loadProjectWorkspace(effectiveEnvironmentId);
+      await loadProjectDetail(selectedGovernedProjectId, effectiveEnvironmentId);
+      setIsProjectUserJourneyDialogOpen(false);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to add the user journey.");
+    }
+  }
+
+  function openProjectArchitectureDecisionDialog(): void {
+    setProjectArchitectureDecisionTitleDraft("");
+    setProjectArchitectureDecisionSummaryDraft("");
+    setProjectArchitectureDecisionStatusDraft("proposed");
+    setProjectArchitectureDecisionDriversDraft("");
+    setProjectArchitectureDecisionConsequencesDraft("");
+    setProjectArchitectureDecisionStackChoicesDraft("");
+    setIsProjectArchitectureDecisionDialogOpen(true);
+  }
+
+  async function handleCreateProjectArchitectureDecision(): Promise<void> {
+    if (!effectiveEnvironmentId || !selectedGovernedProjectId) {
+      setErrorMessage("Select a governed project before adding an architecture decision.");
+      return;
+    }
+
+    const title = projectArchitectureDecisionTitleDraft.trim();
+    const summary = projectArchitectureDecisionSummaryDraft.trim();
+    if (!title || !summary) {
+      setErrorMessage("Architecture decision title and summary are required.");
+      return;
+    }
+
+    const toLines = (value: string) => value.split("\n").map((item) => item.trim()).filter(Boolean);
+
+    try {
+      const result = await window.sbclAgentDesktop.command.appendProjectArchitectureDecision({
+        environmentId: effectiveEnvironmentId,
+        projectId: selectedGovernedProjectId,
+        title,
+        summary,
+        status: projectArchitectureDecisionStatusDraft,
+        drivers: toLines(projectArchitectureDecisionDriversDraft),
+        consequences: toLines(projectArchitectureDecisionConsequencesDraft),
+        stackChoices: toLines(projectArchitectureDecisionStackChoicesDraft)
+      });
+      setSelectedProjectDetail(result.data);
+      await loadProjectWorkspace(effectiveEnvironmentId);
+      await loadProjectDetail(selectedGovernedProjectId, effectiveEnvironmentId);
+      setIsProjectArchitectureDecisionDialogOpen(false);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to add the architecture decision.");
+    }
+  }
+
+  function openProjectDesignSystemDialog(): void {
+    setProjectDesignSystemDraft(JSON.stringify(selectedProjectDetail?.designSystem ?? {}, null, 2));
+    setIsProjectDesignSystemDialogOpen(true);
+  }
+
+  async function handleSaveProjectDesignSystem(): Promise<void> {
+    if (!effectiveEnvironmentId || !selectedGovernedProjectId) {
+      setErrorMessage("Select a governed project before editing its design system.");
+      return;
+    }
+
+    let designSystem: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(projectDesignSystemDraft);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("Project design systems must be stored as a JSON object.");
+      }
+      designSystem = parsed as Record<string, unknown>;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to parse the project design system draft.");
+      return;
+    }
+
+    try {
+      const result = await window.sbclAgentDesktop.command.updateProjectDesignSystem({
+        environmentId: effectiveEnvironmentId,
+        projectId: selectedGovernedProjectId,
+        designSystem
+      });
+      setSelectedProjectDetail(result.data);
+      await loadProjectWorkspace(effectiveEnvironmentId);
+      await loadProjectDetail(selectedGovernedProjectId, effectiveEnvironmentId);
+      setIsProjectDesignSystemDialogOpen(false);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to save the project design system.");
+    }
+  }
+
+  function openProjectStyleGuideDialog(): void {
+    setProjectStyleGuideDraft(JSON.stringify(selectedProjectDetail?.styleGuide ?? {}, null, 2));
+    setIsProjectStyleGuideDialogOpen(true);
+  }
+
+  function openProjectReleaseReadinessDialog(): void {
+    const releaseReadiness = selectedProjectDetail?.releaseReadiness;
+    setProjectReleaseReadinessStageDraft(releaseReadiness?.stage ?? "");
+    setProjectReleaseReadinessSignoffStatusDraft(releaseReadiness?.signoffStatus ?? "");
+    setProjectReleaseReadinessTargetWindowDraft(releaseReadiness?.targetWindow ?? "");
+    setProjectReleaseReadinessRequiredApproversDraft((releaseReadiness?.requiredApprovers ?? []).join("\n"));
+    setProjectReleaseReadinessObservationPlanDraft((releaseReadiness?.observationPlan ?? []).join("\n"));
+    setProjectReleaseReadinessOpenRisksDraft((releaseReadiness?.openRisks ?? []).join("\n"));
+    setIsProjectReleaseReadinessDialogOpen(true);
+  }
+
+  function openProjectReadinessObligationsDialog(): void {
+    const obligations = (selectedProjectDetail?.readinessObligations ?? []).map((item) => ({
+      obligationId: item.obligationId,
+      title: item.title,
+      summary: item.summary,
+      status: item.status,
+      owner: item.owner ?? "",
+      dueWindow: item.dueWindow ?? "",
+      blocking: item.blocking,
+      evidenceKindsDraft: item.evidenceKinds.join(", ")
+    }));
+    setProjectReadinessObligationsDraft(
+      obligations.length > 0 ? obligations : [blankProjectReadinessObligationDraft()]
+    );
+    setIsProjectReadinessObligationsDialogOpen(true);
+  }
+
+  async function handleSaveProjectReleaseReadiness(): Promise<void> {
+    if (!effectiveEnvironmentId || !selectedGovernedProjectId) {
+      setErrorMessage("Select a governed project before editing its release readiness.");
+      return;
+    }
+
+    const splitDraftValues = (value: string): string[] =>
+      value
+        .split(/[,\n]/)
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0);
+
+    const releaseReadiness: ProjectReleaseReadinessDto = {
+      stage: projectReleaseReadinessStageDraft.trim() || null,
+      signoffStatus: projectReleaseReadinessSignoffStatusDraft.trim() || null,
+      targetWindow: projectReleaseReadinessTargetWindowDraft.trim() || null,
+      requiredApprovers: splitDraftValues(projectReleaseReadinessRequiredApproversDraft),
+      observationPlan: splitDraftValues(projectReleaseReadinessObservationPlanDraft),
+      openRisks: splitDraftValues(projectReleaseReadinessOpenRisksDraft)
+    };
+
+    try {
+      const result = await window.sbclAgentDesktop.command.updateProjectReleaseReadiness({
+        environmentId: effectiveEnvironmentId,
+        projectId: selectedGovernedProjectId,
+        releaseReadiness
+      });
+      setSelectedProjectDetail(result.data);
+      await loadProjectWorkspace(effectiveEnvironmentId);
+      await loadProjectDetail(selectedGovernedProjectId, effectiveEnvironmentId);
+      setIsProjectReleaseReadinessDialogOpen(false);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to save the project release readiness.");
+    }
+  }
+
+  function updateProjectReadinessObligationDraft(
+    index: number,
+    patch: Partial<ProjectReadinessObligationDraft>
+  ): void {
+    setProjectReadinessObligationsDraft((current) =>
+      current.map((entry, entryIndex) => (entryIndex === index ? { ...entry, ...patch } : entry))
+    );
+  }
+
+  function addProjectReadinessObligationDraft(): void {
+    setProjectReadinessObligationsDraft((current) => [...current, blankProjectReadinessObligationDraft()]);
+  }
+
+  function removeProjectReadinessObligationDraft(index: number): void {
+    setProjectReadinessObligationsDraft((current) => {
+      const next = current.filter((_, entryIndex) => entryIndex !== index);
+      return next.length > 0 ? next : [blankProjectReadinessObligationDraft()];
+    });
+  }
+
+  async function handleSaveProjectReadinessObligations(): Promise<void> {
+    if (!effectiveEnvironmentId || !selectedGovernedProjectId) {
+      setErrorMessage("Select a governed project before editing its readiness obligations.");
+      return;
+    }
+
+    const splitDraftValues = (value: string): string[] =>
+      value
+        .split(/[,\n]/)
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0);
+
+    let readinessObligations: ProjectReadinessObligationDto[];
+    try {
+      readinessObligations = projectReadinessObligationsDraft
+        .map((entry, index) => ({
+          obligationId: entry.obligationId.trim() || `readiness-obligation-${index + 1}`,
+          title: entry.title.trim(),
+          summary: entry.summary.trim(),
+          status: entry.status.trim() || "blocked",
+          owner: entry.owner.trim() || null,
+          dueWindow: entry.dueWindow.trim() || null,
+          blocking: entry.blocking,
+          evidenceKinds: splitDraftValues(entry.evidenceKindsDraft)
+        }))
+        .filter((entry) => entry.title.length > 0 || entry.summary.length > 0 || entry.evidenceKinds.length > 0);
+
+      readinessObligations.forEach((entry) => {
+        if (!entry.title) {
+          throw new Error("Each readiness obligation must include a title.");
+        }
+      });
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to parse project readiness obligations.");
+      return;
+    }
+
+    try {
+      const result = await window.sbclAgentDesktop.command.updateProjectReadinessObligations({
+        environmentId: effectiveEnvironmentId,
+        projectId: selectedGovernedProjectId,
+        readinessObligations
+      });
+      setSelectedProjectDetail(result.data);
+      await loadProjectWorkspace(effectiveEnvironmentId);
+      await loadProjectDetail(selectedGovernedProjectId, effectiveEnvironmentId);
+      setIsProjectReadinessObligationsDialogOpen(false);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to save the project readiness obligations.");
+    }
+  }
+
+  async function openProjectTestingStrategyDialog(): Promise<void> {
+    const testingStrategy = selectedProjectDetail?.testingStrategy;
+    const requiredEvidence = testingStrategy?.requiredEvidence ?? [];
+    const suiteExpectations = (testingStrategy?.suiteExpectations ?? []).map((item) => ({
+      harnessId: item.harnessId,
+      purpose: item.purpose ?? "",
+      evidenceKindsDraft: item.evidenceKinds.join(", ")
+    }));
+    const thresholdPolicy = testingStrategy?.thresholdPolicy ?? null;
+
+    setProjectTestingStrategyRequiredEvidenceDraft(requiredEvidence.join("\n"));
+    setProjectTestingStrategySuiteExpectationsDraft(
+      suiteExpectations.length > 0 ? suiteExpectations : [blankProjectTestingStrategySuiteExpectationDraft()]
+    );
+    setProjectTestingStrategyMaximumFailedTestsDraft(thresholdPolicy?.maxFailedTests != null ? String(thresholdPolicy.maxFailedTests) : "");
+    setProjectTestingStrategyMaximumSayTurnLatencySecondsDraft(
+      thresholdPolicy?.maxSayTurnLatencySeconds != null ? String(thresholdPolicy.maxSayTurnLatencySeconds) : ""
+    );
+    setProjectTestingStrategyMaximumEnvironmentSaveLoadSecondsDraft(
+      thresholdPolicy?.maxEnvironmentSaveLoadSeconds != null ? String(thresholdPolicy.maxEnvironmentSaveLoadSeconds) : ""
+    );
+    setProjectTestingStrategyRequireCoverageDraft(Boolean(thresholdPolicy?.requireCoverage));
+    setProjectTestingStrategyRequireRecoveryReadyDraft(Boolean(thresholdPolicy?.requireRecoveryReady));
+
+    try {
+      await ensureProjectTestingHarnessInventory();
+      setIsProjectTestingStrategyDialogOpen(true);
+      setErrorMessage(null);
+    } catch (error) {
+      setProjectTestingHarnessInventory([]);
+      setIsProjectTestingStrategyDialogOpen(true);
+      setErrorMessage(error instanceof Error ? error.message : "Failed to load the testing harness inventory.");
+    }
+  }
+
+  async function handleSaveProjectStyleGuide(): Promise<void> {
+    if (!effectiveEnvironmentId || !selectedGovernedProjectId) {
+      setErrorMessage("Select a governed project before editing its style guide.");
+      return;
+    }
+
+    let styleGuide: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(projectStyleGuideDraft);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("Project style guides must be stored as a JSON object.");
+      }
+      styleGuide = parsed as Record<string, unknown>;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to parse the project style guide draft.");
+      return;
+    }
+
+    try {
+      const result = await window.sbclAgentDesktop.command.updateProjectStyleGuide({
+        environmentId: effectiveEnvironmentId,
+        projectId: selectedGovernedProjectId,
+        styleGuide
+      });
+      setSelectedProjectDetail(result.data);
+      await loadProjectWorkspace(effectiveEnvironmentId);
+      await loadProjectDetail(selectedGovernedProjectId, effectiveEnvironmentId);
+      setIsProjectStyleGuideDialogOpen(false);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to save the project style guide.");
+    }
+  }
+
+  function updateProjectTestingStrategySuiteExpectation(
+    index: number,
+    patch: Partial<ProjectTestingStrategySuiteExpectationDraft>
+  ): void {
+    setProjectTestingStrategySuiteExpectationsDraft((current) =>
+      current.map((entry, entryIndex) => (entryIndex === index ? { ...entry, ...patch } : entry))
+    );
+  }
+
+  function addProjectTestingStrategySuiteExpectation(): void {
+    setProjectTestingStrategySuiteExpectationsDraft((current) => [...current, blankProjectTestingStrategySuiteExpectationDraft()]);
+  }
+
+  function removeProjectTestingStrategySuiteExpectation(index: number): void {
+    setProjectTestingStrategySuiteExpectationsDraft((current) => {
+      const next = current.filter((_, entryIndex) => entryIndex != index);
+      return next.length > 0 ? next : [blankProjectTestingStrategySuiteExpectationDraft()];
+    });
+  }
+
+  async function handleSaveProjectTestingStrategy(): Promise<void> {
+    if (!effectiveEnvironmentId || !selectedGovernedProjectId) {
+      setErrorMessage("Select a governed project before editing its testing strategy.");
+      return;
+    }
+
+    const parseOptionalNumber = (value: string, label: string): number | null => {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        return null;
+      }
+      const parsed = Number(trimmed);
+      if (Number.isNaN(parsed)) {
+        throw new Error(`${label} must be a number.`);
+      }
+      return parsed;
+    };
+
+    const splitDraftValues = (value: string): string[] =>
+      value
+        .split(/[,\n]/)
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0);
+
+    let testingStrategy: ProjectTestingStrategyDto;
+    try {
+      const requiredEvidence = splitDraftValues(projectTestingStrategyRequiredEvidenceDraft);
+      const suiteExpectations = projectTestingStrategySuiteExpectationsDraft
+        .map((entry) => ({
+          harnessId: entry.harnessId.trim(),
+          purpose: entry.purpose.trim(),
+          evidenceKinds: splitDraftValues(entry.evidenceKindsDraft)
+        }))
+        .filter((entry) => entry.harnessId.length > 0 || entry.purpose.length > 0 || entry.evidenceKinds.length > 0)
+        .map((entry) => {
+          if (!entry.harnessId) {
+            throw new Error("Each suite expectation must include a harness id.");
+          }
+          return {
+            harnessId: entry.harnessId,
+            purpose: entry.purpose || null,
+            evidenceKinds: entry.evidenceKinds
+          };
+        });
+
+      const maxFailedTests = parseOptionalNumber(projectTestingStrategyMaximumFailedTestsDraft, "Max failed tests");
+      const maxSayTurnLatencySeconds = parseOptionalNumber(
+        projectTestingStrategyMaximumSayTurnLatencySecondsDraft,
+        "Max say turn latency"
+      );
+      const maxEnvironmentSaveLoadSeconds = parseOptionalNumber(
+        projectTestingStrategyMaximumEnvironmentSaveLoadSecondsDraft,
+        "Max save/load latency"
+      );
+
+      testingStrategy = {
+        requiredEvidence,
+        suiteExpectations,
+        thresholdPolicy:
+          maxFailedTests != null ||
+          maxSayTurnLatencySeconds != null ||
+          maxEnvironmentSaveLoadSeconds != null ||
+          projectTestingStrategyRequireCoverageDraft ||
+          projectTestingStrategyRequireRecoveryReadyDraft
+            ? {
+                maxFailedTests,
+                maxSayTurnLatencySeconds,
+                maxEnvironmentSaveLoadSeconds,
+                requireCoverage: projectTestingStrategyRequireCoverageDraft,
+                requireRecoveryReady: projectTestingStrategyRequireRecoveryReadyDraft
+              }
+            : null
+      };
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to parse the project testing strategy draft.");
+      return;
+    }
+
+    try {
+      const result = await window.sbclAgentDesktop.command.updateProjectTestingStrategy({
+        environmentId: effectiveEnvironmentId,
+        projectId: selectedGovernedProjectId,
+        testingStrategy
+      });
+      setSelectedProjectDetail(result.data);
+      await loadProjectWorkspace(effectiveEnvironmentId);
+      await loadProjectDetail(selectedGovernedProjectId, effectiveEnvironmentId);
+      setIsProjectTestingStrategyDialogOpen(false);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to save the project testing strategy.");
+    }
+  }
+
+  function openProjectSourceRootDialog(): void {
+    setProjectSourceRootDraft("");
+    setIsProjectSourceRootDialogOpen(true);
+  }
+
+  async function handleCreateProjectSourceRoot(): Promise<void> {
+    if (!effectiveEnvironmentId || !selectedGovernedProjectId) {
+      setErrorMessage("Select a governed project before adding a source root.");
+      return;
+    }
+    const sourceRoot = projectSourceRootDraft.trim();
+    if (!sourceRoot) {
+      setErrorMessage("Source root path is required.");
+      return;
+    }
+    try {
+      const result = await window.sbclAgentDesktop.command.appendProjectSourceRoot({
+        environmentId: effectiveEnvironmentId,
+        projectId: selectedGovernedProjectId,
+        sourceRoot
+      });
+      setSelectedProjectDetail(result.data);
+      await loadProjectWorkspace(effectiveEnvironmentId);
+      await loadProjectDetail(selectedGovernedProjectId, effectiveEnvironmentId);
+      setIsProjectSourceRootDialogOpen(false);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to add the source root.");
+    }
+  }
+
+  async function ensureProjectTestingHarnessInventory(): Promise<ProjectTestingHarnessDto[]> {
+    if (!effectiveEnvironmentId) {
+      setProjectTestingHarnessInventory([]);
+      return [];
+    }
+    const result = await window.sbclAgentDesktop.query.projectTestingHarnessInventory(effectiveEnvironmentId);
+    setProjectTestingHarnessInventory(result.data);
+    return result.data;
+  }
+
+  async function openProjectTestingHarnessDialog(): Promise<void> {
+    setProjectTestingHarnessIdDraft("");
+    try {
+      await ensureProjectTestingHarnessInventory();
+      setIsProjectTestingHarnessDialogOpen(true);
+      setErrorMessage(null);
+    } catch (error) {
+      setProjectTestingHarnessInventory([]);
+      setIsProjectTestingHarnessDialogOpen(true);
+      setErrorMessage(error instanceof Error ? error.message : "Failed to load the testing harness inventory.");
+    }
+  }
+
+  async function handleBindProjectTestingHarness(): Promise<void> {
+    if (!effectiveEnvironmentId || !selectedGovernedProjectId) {
+      setErrorMessage("Select a governed project before binding a testing harness.");
+      return;
+    }
+    const harnessId = projectTestingHarnessIdDraft.trim();
+    if (!harnessId) {
+      setErrorMessage("Testing harness id is required.");
+      return;
+    }
+    try {
+      const result = await window.sbclAgentDesktop.command.bindProjectTestingHarness({
+        environmentId: effectiveEnvironmentId,
+        projectId: selectedGovernedProjectId,
+        harnessId
+      });
+      setSelectedProjectDetail(result.data);
+      await loadProjectWorkspace(effectiveEnvironmentId);
+      await loadProjectDetail(selectedGovernedProjectId, effectiveEnvironmentId);
+      setIsProjectTestingHarnessDialogOpen(false);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to bind the testing harness.");
+    }
+  }
+
+  async function openProjectQualityGateDialog(): Promise<void> {
+    setProjectQualityGateTitleDraft("");
+    setProjectQualityGateSummaryDraft("");
+    setProjectQualityGateStatusDraft("proposed");
+    setProjectQualityGateRequiredHarnessIdsDraft("");
+    setProjectQualityGateMinimumLinkedWorkItemsDraft("");
+    setProjectQualityGateMinimumLinkedIncidentsDraft("");
+    setProjectQualityGateMaximumFailedTestsDraft("");
+    setProjectQualityGateMaximumSayTurnLatencySecondsDraft("");
+    setProjectQualityGateMaximumEnvironmentSaveLoadSecondsDraft("");
+    setProjectQualityGateRequireSourceRootsDraft(true);
+    setProjectQualityGateRequireCoverageDraft(false);
+    setProjectQualityGateRequireRecoveryReadyDraft(false);
+    try {
+      await ensureProjectTestingHarnessInventory();
+      setIsProjectQualityGateDialogOpen(true);
+      setErrorMessage(null);
+    } catch (error) {
+      setProjectTestingHarnessInventory([]);
+      setIsProjectQualityGateDialogOpen(true);
+      setErrorMessage(error instanceof Error ? error.message : "Failed to load the testing harness inventory.");
+    }
+  }
+
+  async function handleCreateProjectQualityGate(): Promise<void> {
+    if (!effectiveEnvironmentId || !selectedGovernedProjectId) {
+      setErrorMessage("Select a governed project before adding a quality gate.");
+      return;
+    }
+    const title = projectQualityGateTitleDraft.trim();
+    if (!title) {
+      setErrorMessage("Quality gate title is required.");
+      return;
+    }
+    const maximumFailedTestsValue = projectQualityGateMaximumFailedTestsDraft.trim();
+    const maximumFailedTests = maximumFailedTestsValue ? Number.parseInt(maximumFailedTestsValue, 10) : undefined;
+    if (maximumFailedTestsValue && Number.isNaN(maximumFailedTests)) {
+      setErrorMessage("Max failed tests must be a valid integer.");
+      return;
+    }
+    const minimumLinkedWorkItemsValue = projectQualityGateMinimumLinkedWorkItemsDraft.trim();
+    const minimumLinkedWorkItems = minimumLinkedWorkItemsValue ? Number.parseInt(minimumLinkedWorkItemsValue, 10) : undefined;
+    if (minimumLinkedWorkItemsValue && Number.isNaN(minimumLinkedWorkItems)) {
+      setErrorMessage("Minimum linked work items must be a valid integer.");
+      return;
+    }
+    const minimumLinkedIncidentsValue = projectQualityGateMinimumLinkedIncidentsDraft.trim();
+    const minimumLinkedIncidents = minimumLinkedIncidentsValue ? Number.parseInt(minimumLinkedIncidentsValue, 10) : undefined;
+    if (minimumLinkedIncidentsValue && Number.isNaN(minimumLinkedIncidents)) {
+      setErrorMessage("Minimum linked incidents must be a valid integer.");
+      return;
+    }
+    const maximumSayTurnLatencySecondsValue = projectQualityGateMaximumSayTurnLatencySecondsDraft.trim();
+    const maximumSayTurnLatencySeconds = maximumSayTurnLatencySecondsValue ? Number.parseFloat(maximumSayTurnLatencySecondsValue) : undefined;
+    if (maximumSayTurnLatencySecondsValue && Number.isNaN(maximumSayTurnLatencySeconds)) {
+      setErrorMessage("Max say turn latency must be a valid number.");
+      return;
+    }
+    const maximumEnvironmentSaveLoadSecondsValue = projectQualityGateMaximumEnvironmentSaveLoadSecondsDraft.trim();
+    const maximumEnvironmentSaveLoadSeconds = maximumEnvironmentSaveLoadSecondsValue
+      ? Number.parseFloat(maximumEnvironmentSaveLoadSecondsValue)
+      : undefined;
+    if (maximumEnvironmentSaveLoadSecondsValue && Number.isNaN(maximumEnvironmentSaveLoadSeconds)) {
+      setErrorMessage("Max save/load latency must be a valid number.");
+      return;
+    }
+    const requiredHarnessIds = projectQualityGateRequiredHarnessIdsDraft
+      .split("\n")
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
+    try {
+      const result = await window.sbclAgentDesktop.command.appendProjectQualityGate({
+        environmentId: effectiveEnvironmentId,
+        projectId: selectedGovernedProjectId,
+        title,
+        summary: projectQualityGateSummaryDraft.trim() || undefined,
+        status: projectQualityGateStatusDraft,
+        requiredHarnessIds: requiredHarnessIds.length > 0 ? requiredHarnessIds : undefined,
+        minimumLinkedWorkItems,
+        minimumLinkedIncidents,
+        requireSourceRoots: projectQualityGateRequireSourceRootsDraft,
+        requireCoverage: projectQualityGateRequireCoverageDraft,
+        requireRecoveryReady: projectQualityGateRequireRecoveryReadyDraft,
+        maximumFailedTests,
+        maximumSayTurnLatencySeconds,
+        maximumEnvironmentSaveLoadSeconds
+      });
+      setSelectedProjectDetail(result.data);
+      await loadProjectWorkspace(effectiveEnvironmentId);
+      await loadProjectDetail(selectedGovernedProjectId, effectiveEnvironmentId);
+      setIsProjectQualityGateDialogOpen(false);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to add the quality gate.");
+    }
+  }
+
+  function openWorkItemSteerDialog(): void {
+    setWorkItemSteerPhaseDraft(selectedWorkflowRecord?.phase ?? "");
+    setWorkItemSteerNextStepDraft("");
+    setWorkItemSteerNoteDraft(selectedWorkItem?.waitingReason ?? "");
+    setIsWorkItemSteerDialogOpen(true);
+  }
+
+  function openWorkItemResumeDialog(): void {
+    setWorkItemResumeNoteDraft(selectedWorkItem?.waitingReason ?? "");
+    setIsWorkItemResumeDialogOpen(true);
+  }
+
+  function openWorkItemQuarantineDialog(): void {
+    setWorkItemQuarantineReasonDraft(selectedWorkItem?.waitingReason ?? "");
+    setIsWorkItemQuarantineDialogOpen(true);
+  }
+
+  function openWorkItemRollbackDialog(): void {
+    setWorkItemRollbackReasonDraft(selectedWorkItem?.waitingReason ?? "");
+    setWorkItemRollbackNoteDraft("");
+    setIsWorkItemRollbackDialogOpen(true);
+  }
+
+  function openWorkItemValidationDialog(): void {
+    setWorkItemValidationStatusDraft("passed");
+    setIsWorkItemValidationDialogOpen(true);
+  }
+
+  function openIncidentRemediationPlanDialog(): void {
+    const plan = selectedIncident?.remediationPlan;
+    setIncidentRemediationStatusDraft(plan?.status ?? "draft");
+    setIncidentRemediationOwnerDraft(plan?.owner ?? "");
+    setIncidentRemediationSummaryDraft(plan?.summary ?? "");
+    setIncidentRemediationActionsDraft((plan?.actions ?? []).join("\n"));
+    setIncidentRemediationValidationDraft((plan?.validationSteps ?? []).join("\n"));
+    setIncidentRemediationBlockersDraft((plan?.blockers ?? []).join("\n"));
+    setIsIncidentRemediationPlanDialogOpen(true);
+  }
+
+  async function handleSteerWorkItem(): Promise<void> {
+    if (!effectiveEnvironmentId || !selectedWorkItemId) {
+      setErrorMessage("Select a governed work item before steering execution.");
+      return;
+    }
+
+    try {
+      const result = await window.sbclAgentDesktop.command.steerWorkItem({
+        environmentId: effectiveEnvironmentId,
+        workItemId: selectedWorkItemId,
+        phase: workItemSteerPhaseDraft.trim() || null,
+        nextStep: workItemSteerNextStepDraft.trim() || null,
+        note: workItemSteerNoteDraft.trim() || null
+      });
+      setSelectedWorkItem(result.data);
+      await refreshWorkWorkspaceSelection(result.data.workItemId);
+      setIsWorkItemSteerDialogOpen(false);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to steer the work item.");
+    }
+  }
+
+  async function handleResumeWorkItem(): Promise<void> {
+    if (!effectiveEnvironmentId || !selectedWorkItemId) {
+      setErrorMessage("Select a governed work item before resuming execution.");
+      return;
+    }
+
+    try {
+      const result = await window.sbclAgentDesktop.command.resumeWorkItem({
+        environmentId: effectiveEnvironmentId,
+        workItemId: selectedWorkItemId,
+        note: workItemResumeNoteDraft.trim() || null
+      });
+      setSelectedWorkItem(result.data);
+      await refreshWorkWorkspaceSelection(result.data.workItemId);
+      setIsWorkItemResumeDialogOpen(false);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to resume the work item.");
+    }
+  }
+
+  async function handleQuarantineWorkItem(): Promise<void> {
+    if (!effectiveEnvironmentId || !selectedWorkItemId) {
+      setErrorMessage("Select a governed work item before quarantining execution.");
+      return;
+    }
+
+    const reason = workItemQuarantineReasonDraft.trim();
+    if (!reason) {
+      setErrorMessage("A quarantine reason is required.");
+      return;
+    }
+
+    try {
+      const result = await window.sbclAgentDesktop.command.quarantineWorkItem({
+        environmentId: effectiveEnvironmentId,
+        workItemId: selectedWorkItemId,
+        reason
+      });
+      setSelectedWorkItem(result.data);
+      await refreshWorkWorkspaceSelection(result.data.workItemId);
+      setIsWorkItemQuarantineDialogOpen(false);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to quarantine the work item.");
+    }
+  }
+
+  async function handleRollbackWorkItem(): Promise<void> {
+    if (!effectiveEnvironmentId || !selectedWorkItemId) {
+      setErrorMessage("Select a governed work item before requesting rollback.");
+      return;
+    }
+
+    try {
+      const result = await window.sbclAgentDesktop.command.rollbackWorkItem({
+        environmentId: effectiveEnvironmentId,
+        workItemId: selectedWorkItemId,
+        reason: workItemRollbackReasonDraft.trim() || null,
+        note: workItemRollbackNoteDraft.trim() || null
+      });
+      setSelectedWorkItem(result.data);
+      await refreshWorkWorkspaceSelection(result.data.workItemId);
+      setIsWorkItemRollbackDialogOpen(false);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to roll back the work item.");
+    }
+  }
+
+  async function handleCompleteWorkItemValidations(): Promise<void> {
+    if (!effectiveEnvironmentId || !selectedWorkItemId) {
+      setErrorMessage("Select a governed work item before updating validation status.");
+      return;
+    }
+
+    try {
+      const result = await window.sbclAgentDesktop.command.completeWorkItemValidations({
+        environmentId: effectiveEnvironmentId,
+        workItemId: selectedWorkItemId,
+        status: workItemValidationStatusDraft
+      });
+      setSelectedWorkItem(result.data);
+      await refreshWorkWorkspaceSelection(result.data.workItemId);
+      setIsWorkItemValidationDialogOpen(false);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to update work item validations.");
+    }
+  }
+
+  async function handleUpdateIncidentRemediationPlan(): Promise<void> {
+    const incidentId = selectedIncident?.incidentId ?? selectedIncidentId;
+    if (!effectiveEnvironmentId || !incidentId) {
+      setErrorMessage("Select an incident before updating remediation.");
+      return;
+    }
+
+    const summaryDraft = incidentRemediationSummaryDraft.trim();
+    if (!summaryDraft) {
+      setErrorMessage("A remediation summary is required.");
+      return;
+    }
+
+    try {
+      const result = await window.sbclAgentDesktop.command.updateIncidentRemediationPlan({
+        environmentId: effectiveEnvironmentId,
+        incidentId,
+        remediationPlan: {
+          status: incidentRemediationStatusDraft,
+          owner: incidentRemediationOwnerDraft.trim() || null,
+          summary: summaryDraft,
+          actions: draftLines(incidentRemediationActionsDraft),
+          validationSteps: draftLines(incidentRemediationValidationDraft),
+          blockers: draftLines(incidentRemediationBlockersDraft)
+        }
+      });
+      setSelectedIncident(result.data);
+      await loadIncidentWorkspace(effectiveEnvironmentId);
+      await loadIncidentDetail(result.data.incidentId, effectiveEnvironmentId);
+      setIsIncidentRemediationPlanDialogOpen(false);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Failed to update the incident remediation plan."
+      );
+    }
+  }
+
   async function handleCreateProjectFromEnvironment(requestedTitleOverride?: string): Promise<void> {
     const environmentId = summary?.environmentId || binding?.environmentId || "";
     if (!environmentId) {
@@ -2641,17 +4130,34 @@ export function App() {
       return;
     }
 
-    const nextProject: ProjectProfileDto = {
-      projectId,
-      title,
-      environmentId,
-      summary: "Desktop project profile awaiting or reusing governed environment binding."
-    };
-    const nextProjects = [nextProject, ...projects.filter((project) => project.projectId !== projectId)];
-
     try {
-      await persistProjectRegistry(nextProjects, projectId);
+      const createProject = window.sbclAgentDesktop.command.createProject;
+      if (typeof createProject !== "function") {
+        throw new Error(
+          "The desktop preload bridge does not expose createProject yet. Restart IntentOS Shell so the updated preload bundle is loaded."
+        );
+      }
+      const result = await createProject({
+        environmentId,
+        title,
+        summary: "Governed project created from the desktop shell."
+      });
+      const createdProject: ProjectProfileDto = {
+        projectId: result.data.projectId,
+        title: result.data.title,
+        environmentId,
+        summary: result.data.summary
+      };
+      const nextProjects = [
+        createdProject,
+        ...projects.filter((project) => project.projectId !== createdProject.projectId)
+      ];
+      await persistProjectRegistry(nextProjects, createdProject.projectId);
+      setSelectedGovernedProjectId(result.data.projectId);
+      setSelectedProjectDetail(result.data);
       await loadEnvironmentBinding(environmentId);
+      await loadProjectWorkspace(environmentId);
+      await loadProjectDetail(result.data.projectId, environmentId);
       setIsProjectCreateDialogOpen(false);
       setErrorMessage(null);
     } catch (error) {
@@ -2843,13 +4349,40 @@ export function App() {
     }
   }
 
+  async function loadProjectWorkspace(environmentId: string): Promise<void> {
+    try {
+      const result = await window.sbclAgentDesktop.query.projectList(environmentId);
+      setProjectListResult(result);
+      setSelectedGovernedProjectId((current) => {
+        if (current && result.data.projects.some((project) => project.projectId === current)) {
+          return current;
+        }
+        if (currentProjectId && result.data.projects.some((project) => project.projectId === currentProjectId)) {
+          return currentProjectId;
+        }
+        return result.data.currentProjectId ?? result.data.projects[0]?.projectId ?? null;
+      });
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to load project workspace.");
+    }
+  }
+
+  async function loadProjectDetail(projectId: string, environmentId: string): Promise<void> {
+    try {
+      const result = await window.sbclAgentDesktop.query.projectDetail(projectId, environmentId);
+      setSelectedProjectDetail(result.data);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to load project detail.");
+    }
+  }
+
   async function loadConversationWorkspace(environmentId: string): Promise<void> {
     try {
       const threadResult = await window.sbclAgentDesktop.query.threadList(environmentId);
       setThreads(threadResult.data);
 
       const preferredThreadId =
-        (currentProjectId ? selectedConversationThreadByProject[currentProjectId] : null) ?? selectedThreadId;
+        selectedThreadId ?? (currentProjectId ? selectedConversationThreadByProject[currentProjectId] : null);
       const nextThreadId =
         preferredThreadId && threadResult.data.some((thread) => thread.threadId === preferredThreadId)
           ? preferredThreadId
@@ -2906,6 +4439,51 @@ export function App() {
     }
   }
 
+  async function loadRuntimeTelemetry(environmentId: string): Promise<void> {
+    try {
+      const result = await window.sbclAgentDesktop.query.runtimeTelemetrySnapshot(environmentId);
+      setRuntimeTelemetry(result.data);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to load runtime telemetry.");
+    }
+  }
+
+  async function loadConsoleLogStream(
+    environmentId: string,
+    plane: "environment" | "host" = selectedConsolePlane
+  ): Promise<void> {
+    try {
+      const result = await window.sbclAgentDesktop.query.consoleLogStream({
+        environmentId,
+        plane,
+        limit: 100
+      });
+      setConsoleLogStream(result);
+      setSelectedConsoleEntryId((current) => current ?? result.data.entries[0]?.entryId ?? null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to load console stream.");
+    }
+  }
+
+  async function loadDiagnosticReports(environmentId: string): Promise<void> {
+    try {
+      const result = await window.sbclAgentDesktop.query.diagnosticReportList(environmentId);
+      setDiagnosticReports(result.data);
+      setSelectedDiagnosticReportId((current) => current ?? result.data[0]?.reportId ?? null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to load diagnostic reports.");
+    }
+  }
+
+  async function loadDiagnosticReportDetail(reportId: string, environmentId: string): Promise<void> {
+    try {
+      const result = await window.sbclAgentDesktop.query.diagnosticReportDetail(reportId, environmentId);
+      setSelectedDiagnosticReport(result.data);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to load diagnostic report detail.");
+    }
+  }
+
   async function loadPackageBrowser(packageName?: string): Promise<void> {
     if (!effectiveEnvironmentId) {
       return;
@@ -2959,6 +4537,477 @@ export function App() {
       }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Runtime evaluation failed.");
+    } finally {
+      setIsEvaluating(false);
+    }
+  }
+
+  function setCurrentWorkspaceDraft(value: string): void {
+    if (!currentProjectId) {
+      return;
+    }
+    setWorkspaceDraftByProject((current) => ({
+      ...current,
+      [currentProjectId]: value
+    }));
+  }
+
+  function setCurrentWorkspacePackage(value: string): void {
+    if (!currentProjectId) {
+      return;
+    }
+    setWorkspacePackageByProject((current) => ({
+      ...current,
+      [currentProjectId]: value
+    }));
+  }
+
+  function updateCurrentEditorBuffers(
+    updater: (buffers: EditorBufferStateDto[]) => EditorBufferStateDto[]
+  ): void {
+    if (!currentProjectId) {
+      return;
+    }
+    setEditorBuffersByProject((current) => {
+      const existingBuffers =
+        current[currentProjectId] ?? [
+          createEditorBufferState({
+            bufferId: `editor-buffer-${currentProjectId}-main`,
+            title: DEFAULT_EDITOR_BUFFER_TITLE,
+            draft: DEFAULT_EDITOR_BOUND_DRAFT,
+            packageName: runtimeSummary?.currentPackage ?? "cl-user"
+          })
+        ];
+      const nextBuffers = updater(existingBuffers);
+      if (nextBuffers === existingBuffers) {
+        return current;
+      }
+      return {
+        ...current,
+        [currentProjectId]: nextBuffers
+      };
+    });
+  }
+
+  function setCurrentEditorBufferId(bufferId: string): void {
+    if (!currentProjectId) {
+      return;
+    }
+    setSelectedEditorBufferIdByProject((current) => ({
+      ...current,
+      [currentProjectId]: bufferId
+    }));
+  }
+
+  function setCurrentEditorDraft(value: string): void {
+    if (!currentProjectId || !currentEditorBufferId) {
+      return;
+    }
+    updateCurrentEditorBuffers((buffers) =>
+      buffers.map((buffer) =>
+        buffer.bufferId === currentEditorBufferId
+          ? {
+              ...buffer,
+              draft: value,
+              dirty: true
+            }
+          : buffer
+      )
+    );
+  }
+
+  function setCurrentEditorPackage(value: string): void {
+    if (!currentProjectId || !currentEditorBufferId) {
+      return;
+    }
+    updateCurrentEditorBuffers((buffers) =>
+      buffers.map((buffer) =>
+        buffer.bufferId === currentEditorBufferId
+          ? {
+              ...buffer,
+              packageName: value,
+              dirty: true
+            }
+          : buffer
+      )
+    );
+  }
+
+  function createEditorBuffer(): void {
+    if (!currentProjectId) {
+      return;
+    }
+    const nextBuffer = createEditorBufferState({
+      title: `Buffer ${currentEditorBuffers.length + 1}`,
+      draft: DEFAULT_EDITOR_BOUND_DRAFT,
+      packageName: currentEditorPackage.trim() || runtimeSummary?.currentPackage || "cl-user"
+    });
+    updateCurrentEditorBuffers((buffers) => [...buffers, nextBuffer]);
+    setSelectedEditorBufferIdByProject((current) => ({
+      ...current,
+      [currentProjectId]: nextBuffer.bufferId
+    }));
+  }
+
+  function cloneCurrentEditorBuffer(): void {
+    if (!currentProjectId || !currentEditorBuffer) {
+      return;
+    }
+    const nextBuffer = createEditorBufferState({
+      title: `${currentEditorBuffer.title} Copy`,
+      draft: currentEditorBuffer.draft,
+      packageName: currentEditorBuffer.packageName,
+      dirty: true,
+      result: currentEditorBuffer.result,
+      sourceFilePath: null
+    });
+    updateCurrentEditorBuffers((buffers) => [...buffers, nextBuffer]);
+    setSelectedEditorBufferIdByProject((current) => ({
+      ...current,
+      [currentProjectId]: nextBuffer.bufferId
+    }));
+  }
+
+  function deleteCurrentEditorBuffers(bufferIds: string[]): void {
+    if (!currentProjectId || bufferIds.length === 0) {
+      return;
+    }
+    const deleteIds = new Set(bufferIds);
+    const remainingBuffers = currentEditorBuffers.filter((buffer) => !deleteIds.has(buffer.bufferId));
+    const fallbackBuffer =
+      remainingBuffers.length > 0
+        ? null
+        : createEditorBufferState({
+            title: DEFAULT_EDITOR_BUFFER_TITLE,
+            draft: DEFAULT_EDITOR_BOUND_DRAFT,
+            packageName: currentEditorPackage.trim() || runtimeSummary?.currentPackage || "cl-user"
+          });
+    const nextBuffers = fallbackBuffer ? [fallbackBuffer] : remainingBuffers;
+    const nextSelectedBufferId =
+      nextBuffers.some((buffer) => buffer.bufferId === currentEditorBufferId)
+        ? currentEditorBufferId
+        : nextBuffers[0]?.bufferId ?? null;
+
+    updateCurrentEditorBuffers(() => nextBuffers);
+    if (nextSelectedBufferId) {
+      setSelectedEditorBufferIdByProject((current) => ({
+        ...current,
+        [currentProjectId]: nextSelectedBufferId
+      }));
+    }
+  }
+
+  function acceptCurrentEditorBufferBaseline(): void {
+    if (!currentProjectId || !currentEditorBufferId) {
+      return;
+    }
+    updateCurrentEditorBuffers((buffers) =>
+      buffers.map((buffer) =>
+        buffer.bufferId === currentEditorBufferId
+          ? {
+              ...buffer,
+              baselineDraft: buffer.draft,
+              dirty: false
+            }
+          : buffer
+      )
+    );
+  }
+
+  function revertCurrentEditorBufferToBaseline(): void {
+    if (!currentProjectId || !currentEditorBufferId) {
+      return;
+    }
+    updateCurrentEditorBuffers((buffers) =>
+      buffers.map((buffer) =>
+        buffer.bufferId === currentEditorBufferId
+          ? {
+              ...buffer,
+              draft: buffer.baselineDraft,
+              dirty: false
+            }
+          : buffer
+      )
+    );
+  }
+
+  function openEditorSourceFileDialog(): void {
+    const initialPath = sourcePreview?.data.path ?? "";
+    setEditorSourceFilePathDraft(initialPath);
+    setEditorSourceDirectoryPathDraft(parentDirectoryForPath(initialPath));
+    setEditorSourceDirectoryListing(null);
+    setIsEditorSourceFileDialogOpen(true);
+    void loadEditorSourceDirectory(parentDirectoryForPath(initialPath));
+  }
+
+  function openEditorSourceFileSaveDialog(): void {
+    const initialPath = currentEditorSourceFilePath ?? "";
+    setEditorSourceSaveFileNameDraft(
+      initialPath.trim().length > 0
+        ? basenameForPath(initialPath)
+        : currentEditorBufferTitle.toLowerCase().endsWith(".lisp")
+          ? currentEditorBufferTitle
+          : `${currentEditorBufferTitle.replace(/\s+/g, "-").toLowerCase()}.lisp`
+    );
+    setEditorSourceSaveDirectoryPathDraft(parentDirectoryForPath(initialPath));
+    setEditorSourceSaveDirectoryListing(null);
+    setIsEditorSourceFileSaveDialogOpen(true);
+    void loadEditorSourceSaveDirectory(parentDirectoryForPath(initialPath));
+  }
+
+  async function loadEditorSourceDirectory(path?: string): Promise<void> {
+    try {
+      const fileSystemDirectory = window.sbclAgentDesktop.query.fileSystemDirectory;
+      if (typeof fileSystemDirectory !== "function") {
+        setErrorMessage("The running desktop host does not yet expose file browsing. Restart the desktop app so the updated preload bridge is active.");
+        return;
+      }
+      const result = await fileSystemDirectory({
+        path: path && path.trim().length > 0 ? path.trim() : undefined
+      });
+      setEditorSourceDirectoryListing(result.data);
+      setEditorSourceDirectoryPathDraft(result.data.currentPath);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to load the source directory.");
+    }
+  }
+
+  async function loadEditorSourceSaveDirectory(path?: string): Promise<void> {
+    try {
+      const fileSystemDirectory = window.sbclAgentDesktop.query.fileSystemDirectory;
+      if (typeof fileSystemDirectory !== "function") {
+        setErrorMessage("The running desktop host does not yet expose file browsing. Restart the desktop app so the updated preload bridge is active.");
+        return;
+      }
+      const result = await fileSystemDirectory({
+        path: path && path.trim().length > 0 ? path.trim() : undefined
+      });
+      setEditorSourceSaveDirectoryListing(result.data);
+      setEditorSourceSaveDirectoryPathDraft(result.data.currentPath);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to load the target directory.");
+    }
+  }
+
+  function navigateEditorSourceDirectory(path: string): void {
+    void loadEditorSourceDirectory(path);
+  }
+
+  function navigateEditorSourceParentDirectory(): void {
+    if (!editorSourceDirectoryListing?.parentPath) {
+      return;
+    }
+    void loadEditorSourceDirectory(editorSourceDirectoryListing.parentPath);
+  }
+
+  function navigateEditorSourceSaveDirectory(path: string): void {
+    void loadEditorSourceSaveDirectory(path);
+  }
+
+  function navigateEditorSourceSaveParentDirectory(): void {
+    if (!editorSourceSaveDirectoryListing?.parentPath) {
+      return;
+    }
+    void loadEditorSourceSaveDirectory(editorSourceSaveDirectoryListing.parentPath);
+  }
+
+  async function handleLoadEditorSourceFile(): Promise<void> {
+    if (!effectiveEnvironmentId || !currentProjectId || !currentEditorBufferId || editorSourceFilePathDraft.trim().length === 0) {
+      return;
+    }
+
+    try {
+      const path = editorSourceFilePathDraft.trim();
+      const result = await window.sbclAgentDesktop.query.sourcePreview({
+        environmentId: effectiveEnvironmentId,
+        path,
+        contextRadius: 8
+      });
+      setSourcePreview(result);
+      updateCurrentEditorBuffers((buffers) =>
+        buffers.map((buffer) =>
+          buffer.bufferId === currentEditorBufferId
+            ? {
+                ...buffer,
+              title: basenameForPath(result.data.path),
+              draft: result.data.editableContent,
+              baselineDraft: result.data.editableContent,
+              packageName: buffer.packageName || runtimeSummary?.currentPackage || "cl-user",
+              dirty: false,
+              result: null,
+              sourceFilePath: result.data.path
+            }
+          : buffer
+      )
+    );
+    setIsEditorSourceFileDialogOpen(false);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to load the source file into the editor.");
+    }
+  }
+
+  async function persistCurrentEditorBufferToPath(path: string, overwrite: boolean): Promise<void> {
+    if (!currentProjectId || !currentEditorBufferId) {
+      return;
+    }
+
+    const result = await window.sbclAgentDesktop.command.writeSourceFile({
+      path,
+      content: currentEditorDraft,
+      overwrite
+    });
+    updateCurrentEditorBuffers((buffers) =>
+      buffers.map((buffer) =>
+        buffer.bufferId === currentEditorBufferId
+          ? {
+              ...buffer,
+              title: basenameForPath(result.data.path),
+              baselineDraft: buffer.draft,
+              dirty: false,
+              sourceFilePath: result.data.path
+            }
+          : buffer
+      )
+    );
+
+    if (effectiveEnvironmentId) {
+      try {
+        const preview = await window.sbclAgentDesktop.query.sourcePreview({
+          environmentId: effectiveEnvironmentId,
+          path: result.data.path,
+          contextRadius: 8
+        });
+        setSourcePreview(preview);
+      } catch {
+        setSourcePreview((current) =>
+          current
+            ? {
+                ...current,
+                data: {
+                  ...current.data,
+                  path: result.data.path,
+                  editableContent: currentEditorDraft,
+                  content: currentEditorDraft,
+                  summary: `Source preview for ${result.data.path}.`
+                }
+              }
+            : current
+        );
+      }
+    }
+  }
+
+  async function handleSaveCurrentEditorBuffer(): Promise<void> {
+    if (!currentEditorSourceFilePath) {
+      openEditorSourceFileSaveDialog();
+      return;
+    }
+
+    try {
+      const confirmed = window.confirm(`Overwrite existing source file?\n\n${currentEditorSourceFilePath}`);
+      if (!confirmed) {
+        return;
+      }
+      await persistCurrentEditorBufferToPath(currentEditorSourceFilePath, true);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to save the editor buffer.");
+    }
+  }
+
+  async function handleSaveCurrentEditorBufferAs(): Promise<void> {
+    const targetPath = joinDirectoryAndFileName(editorSourceSaveDirectoryPathDraft, editorSourceSaveFileNameDraft);
+    if (targetPath.trim().length === 0) {
+      return;
+    }
+
+    try {
+      const fileAlreadyExists = editorSourceSaveDirectoryListing?.files.some((entry) => entry.path === targetPath) ?? false;
+      if (fileAlreadyExists) {
+        const confirmed = window.confirm(`Overwrite existing source file?\n\n${targetPath}`);
+        if (!confirmed) {
+          return;
+        }
+      }
+      await persistCurrentEditorBufferToPath(targetPath, fileAlreadyExists);
+      setIsEditorSourceFileSaveDialogOpen(false);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to save the editor buffer.");
+    }
+  }
+
+  async function evaluateEditorBuffer(): Promise<void> {
+    if (!effectiveEnvironmentId || !currentProjectId || !currentEditorBufferId || currentEditorDraft.trim().length === 0) {
+      return;
+    }
+
+    setIsEvaluating(true);
+    setErrorMessage(null);
+
+    try {
+      const result = await window.sbclAgentDesktop.command.evaluateInContext({
+        environmentId: effectiveEnvironmentId,
+        form: currentEditorDraft,
+        packageName: currentEditorPackage.trim() || runtimeSummary?.currentPackage
+      });
+      updateCurrentEditorBuffers((buffers) =>
+        buffers.map((buffer) =>
+          buffer.bufferId === currentEditorBufferId
+            ? {
+                ...buffer,
+                result
+              }
+            : buffer
+        )
+      );
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Editor evaluation failed.");
+    } finally {
+      setIsEvaluating(false);
+    }
+  }
+
+  async function evaluateWorkspaceForm(): Promise<void> {
+    if (!effectiveEnvironmentId || !currentProjectId || currentWorkspaceDraft.trim().length === 0) {
+      return;
+    }
+
+    await evaluateWorkspaceSource(currentWorkspaceDraft);
+  }
+
+  async function evaluateWorkspaceSource(form: string): Promise<void> {
+    if (!effectiveEnvironmentId || !currentProjectId || form.trim().length === 0) {
+      return;
+    }
+
+    setIsEvaluating(true);
+    setErrorMessage(null);
+
+    try {
+      const result = await window.sbclAgentDesktop.command.evaluateInContext({
+        environmentId: effectiveEnvironmentId,
+        form,
+        packageName: currentWorkspacePackage.trim() || runtimeSummary?.currentPackage
+      });
+      setWorkspaceResultByProject((current) => ({
+        ...current,
+        [currentProjectId]: result
+      }));
+      setWorkspaceHistoryByProject((current) => ({
+        ...current,
+        [currentProjectId]: [
+          {
+            entryId: `workspace:${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            form,
+            status: result.status,
+            summary: result.data.summary,
+            valuePreview: result.data.valuePreview ?? null
+          },
+          ...(current[currentProjectId] ?? [])
+        ].slice(0, 12)
+      }));
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Workspace evaluation failed.");
     } finally {
       setIsEvaluating(false);
     }
@@ -3122,46 +5171,6 @@ export function App() {
     }
   }
 
-  async function refreshDashboardQueueSources(environmentId: string): Promise<void> {
-    const results = await Promise.allSettled([
-      window.sbclAgentDesktop.query.threadList(environmentId),
-      window.sbclAgentDesktop.query.approvalRequestList(environmentId),
-      window.sbclAgentDesktop.query.incidentList(environmentId),
-      window.sbclAgentDesktop.query.workItemList(environmentId),
-      window.sbclAgentDesktop.query.artifactList(environmentId)
-    ]);
-
-    const [threadResult, approvalResult, incidentResult, workItemResult, artifactResult] = results;
-
-    setDashboardThreads(threadResult.status === "fulfilled" ? threadResult.value.data : []);
-    setDashboardApprovalRequests(approvalResult.status === "fulfilled" ? approvalResult.value.data : []);
-    setDashboardIncidents(incidentResult.status === "fulfilled" ? incidentResult.value.data : []);
-    setDashboardWorkItems(workItemResult.status === "fulfilled" ? workItemResult.value.data : []);
-    setDashboardArtifacts(artifactResult.status === "fulfilled" ? artifactResult.value.data : []);
-  }
-
-  async function refreshDashboardQueueSourcesFast(environmentId: string): Promise<void> {
-    const approvalResult = await window.sbclAgentDesktop.query.approvalRequestList(environmentId);
-    setDashboardApprovalRequests(approvalResult.data);
-
-    void Promise.allSettled([
-      window.sbclAgentDesktop.query.incidentList(environmentId),
-      window.sbclAgentDesktop.query.workItemList(environmentId),
-      window.sbclAgentDesktop.query.artifactList(environmentId)
-    ]).then(([incidentResult, workItemResult, artifactResult]) => {
-      setDashboardIncidents(incidentResult.status === "fulfilled" ? incidentResult.value.data : []);
-      setDashboardWorkItems(workItemResult.status === "fulfilled" ? workItemResult.value.data : []);
-      setDashboardArtifacts(artifactResult.status === "fulfilled" ? artifactResult.value.data : []);
-    });
-
-    void window.sbclAgentDesktop.query
-      .threadList(environmentId)
-      .then((threadResult) => {
-        setDashboardThreads(threadResult.data);
-      })
-      .catch(() => undefined);
-  }
-
   async function submitApprovalDecisionForRequest(
     requestId: string,
     decision: "approve" | "deny"
@@ -3186,7 +5195,10 @@ export function App() {
       setApprovalDecision(result);
       await loadApprovalWorkspace(effectiveEnvironmentId);
       await loadApprovalDetail(requestId, effectiveEnvironmentId);
-      await refreshDashboardQueueSources(effectiveEnvironmentId);
+      await loadWorkWorkspace(effectiveEnvironmentId);
+      if (decision === "approve") {
+        await loadProjectWorkspace(effectiveEnvironmentId);
+      }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Approval decision failed.");
     } finally {
@@ -3201,40 +5213,6 @@ export function App() {
 
     await submitApprovalDecisionForRequest(selectedApprovalId, decision);
   }
-
-  async function submitDashboardApprovalDecisionForRequest(
-    requestId: string,
-    decision: "approve" | "deny"
-  ): Promise<void> {
-    if (!effectiveEnvironmentId || !requestId) {
-      return;
-    }
-
-    setIsDecidingApproval(true);
-    setErrorMessage(null);
-
-    const input: ApprovalDecisionInput = {
-      environmentId: effectiveEnvironmentId,
-      requestId
-    };
-
-    try {
-      const result =
-        decision === "approve"
-          ? await window.sbclAgentDesktop.command.approveRequest(input)
-          : await window.sbclAgentDesktop.command.denyRequest(input);
-      setApprovalDecision(result);
-      setApprovalRequests((current) =>
-        current.filter((request) => request.requestId !== requestId)
-      );
-      await refreshDashboardQueueSourcesFast(effectiveEnvironmentId);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Dashboard approval decision failed.");
-    } finally {
-      setIsDecidingApproval(false);
-    }
-  }
-
   async function loadIncidentWorkspace(environmentId: string): Promise<void> {
     try {
       const result = await window.sbclAgentDesktop.query.incidentList(environmentId);
@@ -3268,10 +5246,22 @@ export function App() {
     try {
       const result = await window.sbclAgentDesktop.query.workItemDetail(workItemId, environmentId);
       setSelectedWorkItem(result.data);
+      const plan = await window.sbclAgentDesktop.query.workItemPlan(workItemId, environmentId);
+      setSelectedWorkItemPlan(plan.data);
       const workflow = await window.sbclAgentDesktop.query.workflowRecordDetail(result.data.workflowRecordId, environmentId);
       setSelectedWorkflowRecord(workflow.data);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Failed to load work item detail.");
+    }
+  }
+
+  async function refreshWorkWorkspaceSelection(workItemId: string | null): Promise<void> {
+    if (!effectiveEnvironmentId) {
+      return;
+    }
+    await loadWorkWorkspace(effectiveEnvironmentId);
+    if (workItemId) {
+      await loadWorkItemDetail(workItemId, effectiveEnvironmentId);
     }
   }
 
@@ -3401,10 +5391,6 @@ export function App() {
       current[priority] += item.value;
     }
 
-    if (base.has("dashboard")) {
-      base.set("dashboard", signalCountsFromItems(globalAttentionItems));
-    }
-
     return base;
   }, [globalAttentionItems]);
 
@@ -3510,24 +5496,13 @@ export function App() {
     };
 
     appendSignal(
-      "dashboard",
-      "Dashboard",
-      "Open the prioritized queue and route directly into the most important governed work.",
-      workspaceAttention.get("dashboard"),
-      "desktop-window-notification-glyph-dashboard",
-      () => {
-        openDesktopWindow("window:detailed-surface");
-        void navigateToWorkspace("dashboard");
-      }
-    );
-    appendSignal(
       "orientation",
       "Orientation",
       "Open the current environment posture and active continuation context.",
       operateSectionSignals.get("orientation"),
       "desktop-window-notification-glyph-orientation",
       () => {
-        openDesktopWindow("window:control-panel");
+        openDesktopWindow("window:operate-surface");
         void navigateToOperateSection("orientation");
       }
     );
@@ -3538,7 +5513,7 @@ export function App() {
       operateSectionSignals.get("journeys"),
       "desktop-window-notification-glyph-journeys",
       () => {
-        openDesktopWindow("window:control-panel");
+        openDesktopWindow("window:operate-surface");
         void navigateToOperateSection("journeys");
       }
     );
@@ -3549,7 +5524,7 @@ export function App() {
       operateSectionSignals.get("evidence"),
       "desktop-window-notification-glyph-evidence",
       () => {
-        openDesktopWindow("window:control-panel");
+        openDesktopWindow("window:operate-surface");
         void navigateToOperateSection("evidence");
       }
     );
@@ -3575,17 +5550,35 @@ export function App() {
           title: "Operational Brief",
           summary: "Start from the environment, understand the active continuation, and move into the next supervised action without reconstructing the system from scattered panels."
         };
-      case "dashboard":
+      case "projects":
         return {
-          eyebrow: "Dashboard",
-          title: "Prioritized Queue",
-          summary: "Dashboard is the fine-grained operational backlog: ordered issues, current pressure, and direct routing into the page that can resolve each one."
+          eyebrow: "Projects",
+          title: "Governed SDLC Context",
+          summary: "Projects bind constitutions, requirements, journeys, design rules, architecture, and execution evidence into one governed product context."
         };
       case "conversations":
         return {
           eyebrow: "Conversations",
           title: "Thread Continuity",
           summary: "Conversations are durable work objects. Turns, approvals, incidents, and evidence stay attached to the active thread instead of being split into separate operational silos."
+        };
+      case "editor":
+        return {
+          eyebrow: "Editor",
+          title: "Sustained Editing Surface",
+          summary: "Editor is the sustained Lisp editing instrument for longer-lived source and form work, distinct from scratch workspace evaluation and from Browser-local inspection."
+        };
+      case "workspace":
+        return {
+          eyebrow: "Workspace",
+          title: "Scratch Lisp Surface",
+          summary: "Workspace is the deliberate scratch surface for drafting forms, evaluating them under governance, and retaining useful results without forcing that work into either thread supervision or execution-journey posture."
+        };
+      case "transcript":
+        return {
+          eyebrow: "Transcript",
+          title: "Durable Output Stream",
+          summary: "Transcript is the durable cross-surface output lane for runtime evaluations, workspace results, and environment events so feedback stays ambient and inspectable instead of buried inside individual instruments."
         };
       case "browser":
         return {
@@ -3641,36 +5634,50 @@ export function App() {
     const panelLabel =
       desktopModel?.activePanel === "display"
         ? "Display Surface"
-        : desktopModel?.activePanel === "governance"
-          ? "Governance Queue"
-          : desktopModel?.activePanel === "inspector"
+        : desktopModel?.activePanel === "inspector"
             ? "Inspector"
+            : desktopModel?.activePanel === "governance"
+              ? "Operate Surface"
             : desktopModel?.activePanel === "object-browser"
               ? "Object Browser"
               : activeHostedApp === "control-panel"
                 ? "Control Panel Surface"
                 : `${activeHostedAppDescriptor.label} Surface`;
-    const proactiveLaneLabel =
-      selectedProactiveLane === "recommendations"
-        ? "Recommendations"
-        : selectedProactiveLane === "monitors"
-          ? "Monitors"
-          : "Staged Continuations";
-
     return {
       panelLabel,
-      proactiveLaneLabel,
       summary:
         activeHostedApp === "control-panel"
-          ? `${panelLabel} is currently anchored to the Control Panel and foregrounding ${proactiveLaneLabel.toLowerCase()}.`
-          : `${panelLabel} is currently anchored to ${activeHostedAppDescriptor.label} while the shell foregrounds ${proactiveLaneLabel.toLowerCase()}.`
+          ? `${panelLabel} is currently anchored to the Control Panel with governed attention routed through the desktop shell.`
+          : `${panelLabel} is currently anchored to ${activeHostedAppDescriptor.label} while the shell routes governed attention through the desktop.`
     };
-  }, [activeHostedApp, activeHostedAppDescriptor.label, desktopModel?.activePanel, selectedProactiveLane]);
+  }, [activeHostedApp, activeHostedAppDescriptor.label, desktopModel?.activePanel]);
 
   const selectedBrowserDomainDescriptor = useMemo(
     () => browserDomains.find((domain) => domain.id === selectedBrowserDomain) ?? browserDomains[0],
     [selectedBrowserDomain]
   );
+
+  const selectedOperateSurfaceDescriptor = useMemo(() => {
+    if (activeWorkspace === "runtime") {
+      return executionSections.find((section) => section.id === selectedExecutionSection) ?? executionSections[0];
+    }
+
+    if (activeWorkspace === "incidents") {
+      return recoverySections.find((section) => section.id === selectedRecoverySection) ?? recoverySections[0];
+    }
+
+    if (activeWorkspace === "artifacts") {
+      return evidenceSections.find((section) => section.id === selectedEvidenceSection) ?? evidenceSections[0];
+    }
+
+    return operateSections.find((section) => section.id === selectedOperateSection) ?? operateSections[0];
+  }, [
+    activeWorkspace,
+    selectedEvidenceSection,
+    selectedExecutionSection,
+    selectedOperateSection,
+    selectedRecoverySection
+  ]);
 
   const browserSurfaceEntries = useMemo<BrowserSurfaceEntry[]>(() => {
     switch (selectedBrowserDomain) {
@@ -3730,6 +5737,69 @@ export function App() {
           detail: scope.summary,
           meta: scope.kind
         }));
+      case "console":
+        return (consoleLogStream?.data.entries ?? []).slice(0, 4).map((entry) => ({
+          key: entry.entryId,
+          title: entry.source,
+          detail: entry.message,
+          meta: entry.type
+        }));
+      case "diagnostics":
+        return diagnosticReports.slice(0, 4).map((report) => ({
+          key: report.reportId,
+          title: report.title,
+          detail: report.summary,
+          meta: report.kind
+        }));
+      case "processes":
+        return (runtimeTelemetry?.processes ?? []).slice(0, 4).map((process) => ({
+          key: process.processId,
+          title: process.label,
+          detail: process.summary,
+          meta: process.state
+        }));
+      case "performance":
+        return [
+          {
+            key: "cpu",
+            title: "CPU Posture",
+            detail: runtimeTelemetry?.cpu.summary ?? "CPU telemetry is not yet available.",
+            meta:
+              runtimeTelemetry?.cpu.utilizationPercent != null
+                ? `${runtimeTelemetry.cpu.utilizationPercent.toFixed(1)}%`
+                : "n/a"
+          },
+          {
+            key: "memory",
+            title: "Memory Posture",
+            detail: runtimeTelemetry?.memory.summary ?? "Memory telemetry is not yet available.",
+            meta:
+              runtimeTelemetry?.memory.rssMb != null
+                ? `${runtimeTelemetry.memory.rssMb.toFixed(1)} MB`
+                : "n/a"
+          }
+        ];
+      case "host-io":
+        return [
+          {
+            key: "network",
+            title: "Network",
+            detail: runtimeTelemetry?.network.summary ?? "Network telemetry is not yet available.",
+            meta:
+              runtimeTelemetry?.network.openConnectionCount != null
+                ? `${runtimeTelemetry.network.openConnectionCount} open`
+                : "n/a"
+          },
+          {
+            key: "disk",
+            title: "Disk I/O",
+            detail: runtimeTelemetry?.disk.summary ?? "Disk telemetry is not yet available.",
+            meta:
+              runtimeTelemetry?.disk.readKbps != null || runtimeTelemetry?.disk.writeKbps != null
+                ? `${runtimeTelemetry.disk.readKbps ?? 0}/${runtimeTelemetry.disk.writeKbps ?? 0} KB/s`
+                : "n/a"
+          }
+        ];
       case "source": {
         const sourceEntries = [
           ...(runtimeEntityDetail?.data.relatedItems ?? []),
@@ -3809,7 +5879,7 @@ export function App() {
       default:
         return [];
     }
-  }, [approvalRequests, incidents, packageBrowser, runtimeEntityDetail, runtimeInspection, runtimeSummary, selectedBrowserDomain, sourcePreview, threads, workItems]);
+  }, [approvalRequests, consoleLogStream, diagnosticReports, incidents, packageBrowser, runtimeEntityDetail, runtimeInspection, runtimeSummary, runtimeTelemetry, selectedBrowserDomain, sourcePreview, threads, workItems]);
   const shellProactiveLead = useMemo(
     () => globalAttentionItems.find((item) => item.value > 0) ?? globalAttentionItems[0] ?? null,
     [globalAttentionItems]
@@ -3820,11 +5890,28 @@ export function App() {
     () => globalAttentionItems.filter((item) => item.value > 0).slice(0, 5),
     [globalAttentionItems]
   );
-  const shellStagedActions = useMemo(() => dashboardActionQueue.slice(0, 3), [dashboardActionQueue]);
+  const governedAttentionSignalCount = useMemo(
+    () => shellRecommendedTargets.length + shellMonitorItems.length + dashboardActionQueue.length,
+    [dashboardActionQueue.length, shellMonitorItems.length, shellRecommendedTargets.length]
+  );
 
   const workspaceResolution = useMemo<WorkspaceResolutionState | null>(() => {
     switch (canonicalWorkspace(activeWorkspace)) {
-      case "dashboard":
+      case "projects":
+        if (!(projectListResult?.data.projects.length ?? 0)) {
+          return {
+            label: "Resolving governed projects",
+            summary: "The desktop is loading project constitutions, requirements, journeys, and linked SDLC evidence.",
+            tone: "warning"
+          };
+        }
+        if (selectedGovernedProjectId && !selectedProjectDetail) {
+          return {
+            label: "Resolving project detail",
+            summary: "The selected project record is still attaching constitution, requirements, architecture, and linked evidence.",
+            tone: "warning"
+          };
+        }
         return null;
       case "conversations":
         if (!selectedThread) {
@@ -3900,10 +5987,13 @@ export function App() {
     artifacts.length,
     environmentEvents.length,
     incidents.length,
+    projectListResult?.data.projects.length,
     runtimeSummary,
     selectedArtifact,
     selectedEvent,
+    selectedGovernedProjectId,
     selectedIncident,
+    selectedProjectDetail,
     selectedThread,
     selectedTurn,
     selectedWorkItem,
@@ -3912,7 +6002,7 @@ export function App() {
 
   async function navigateToWorkspace(workspace: WorkspaceId): Promise<void> {
     const nextWorkspace = canonicalWorkspace(workspace);
-    setActiveHostedApp(appForWorkspace(nextWorkspace));
+    setActiveHostedApp("control-panel");
     setActiveWorkspace(nextWorkspace);
     const environmentId = effectiveEnvironmentId ?? binding?.environmentId;
     const nextPanelId = workspaceToDesktopPanelId(nextWorkspace);
@@ -3933,8 +6023,10 @@ export function App() {
 
     if (desktopActionResult?.data.desktopModel) {
       setDesktopModel(desktopActionResult.data.desktopModel);
-      setActiveWorkspace((current) =>
-        desktopPanelToWorkspaceId(desktopActionResult.data.desktopModel.activePanel, current)
+      setActiveWorkspace(
+        nextPanelId === "workspace" || nextPanelId === "display"
+          ? nextWorkspace
+          : desktopPanelToWorkspaceId(desktopActionResult.data.desktopModel.activePanel, nextWorkspace)
       );
     }
   }
@@ -3950,110 +6042,235 @@ export function App() {
     }
   }
 
+  function workspaceForDesktopWindow(window: DesktopWindowRecord): WorkspaceId | null {
+    switch (window.id) {
+      case "window:browser-surface":
+        return "browser";
+      case "window:projects-surface":
+        return "projects";
+      case "window:editor-surface":
+        return "editor";
+      case "window:workspace-surface":
+        return "workspace";
+      case "window:transcript-surface":
+        return "transcript";
+      case "window:configuration-surface":
+        return "configuration";
+      case "window:conversations-surface":
+        return "conversations";
+      default:
+        return null;
+    }
+  }
+
   async function toggleInspectorPinned(): Promise<void> {
-    const nextPinned = !inspectorPinned;
-    setInspectorPinned(nextPinned);
-    updateActiveDesktopWindows((current) =>
-      updateWindowState(current, "window:inspector", nextPinned ? "open" : "minimized")
-    );
-    await window.sbclAgentDesktop.desktop.setDesktopPreferences({ inspectorPinned: nextPinned });
+    await persistResolvedShellLayout(applyShellLayoutAction({ type: "toggle_right_rail" }));
   }
 
   async function toggleCanvasPinned(): Promise<void> {
-    const nextPinned = !canvasPinned;
-    setCanvasPinned(nextPinned);
-    await window.sbclAgentDesktop.desktop.setDesktopPreferences({ canvasPinned: nextPinned });
+    await persistResolvedShellLayout(applyShellLayoutAction({ type: "toggle_canvas" }));
   }
 
   async function toggleSidebarPinned(): Promise<void> {
-    const nextPinned = !sidebarPinned;
-    setSidebarPinned(nextPinned);
-    if (nextPinned && sidebarWidth === null) {
-      setSidebarWidth(shellSidebarDefaultWidthForViewport(viewportWidth));
+    await persistResolvedShellLayout(applyShellLayoutAction({
+      type: "toggle_left_rail",
+      defaultExpandedWidth: shellSidebarDefaultWidthForViewport(viewportWidth)
+    }));
+  }
+
+  function activateShellRailPanel(rail: "left" | "right", panelId: ShellDockPanelId): void {
+    applyShellLayoutAction({ type: "activate_rail_panel", rail, panelId });
+  }
+
+  async function undockShellPanel(panelId: ShellDockPanelId): Promise<void> {
+    await persistResolvedShellLayout(applyShellLayoutAction({ type: "undock_panel", panelId }));
+  }
+
+  async function dockShellPanel(panelId: ShellDockPanelId, rail: "left" | "right"): Promise<void> {
+    await persistResolvedShellLayout(applyShellLayoutAction({ type: "dock_panel", panelId, rail }));
+  }
+
+  async function reorderShellRailPanel(
+    rail: "left" | "right",
+    panelId: ShellDockPanelId,
+    direction: "backward" | "forward"
+  ): Promise<void> {
+    const currentRailState = rail === "left" ? shellLayoutRef.current.leftRail : shellLayoutRef.current.rightRail;
+    const currentIndex = currentRailState.dockedPanelIds.indexOf(panelId);
+    if (currentIndex < 0) {
+      return;
     }
-    await window.sbclAgentDesktop.desktop.setDesktopPreferences({
-      sidebarPinned: nextPinned,
-      sidebarWidth: nextPinned ? (sidebarWidth ?? shellSidebarDefaultWidthForViewport(viewportWidth)) : sidebarWidth
+    const nextIndex = direction === "backward" ? currentIndex - 1 : currentIndex + 1;
+    if (nextIndex < 0 || nextIndex >= currentRailState.dockedPanelIds.length) {
+      return;
+    }
+    const nextPanelIds = [...currentRailState.dockedPanelIds];
+    [nextPanelIds[currentIndex], nextPanelIds[nextIndex]] = [nextPanelIds[nextIndex], nextPanelIds[currentIndex]];
+    await persistResolvedShellLayout(
+      applyShellLayoutAction({ type: "reorder_rail_panels", rail, panelIds: nextPanelIds })
+    );
+  }
+
+  function shellDropTargetForPoint(clientX: number, clientY: number): "left" | "right" | "undocked" | null {
+    const targets: Array<["left" | "right" | "undocked", HTMLElement | null]> = [
+      ["left", leftRailListRef.current],
+      ["right", rightRailListRef.current],
+      ["undocked", desktopWindowStageDropTargetRef.current]
+    ];
+
+    for (const [target, element] of targets) {
+      if (!element) {
+        continue;
+      }
+      const rect = element.getBoundingClientRect();
+      if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
+        return target;
+      }
+    }
+
+    return null;
+  }
+
+  async function applyShellPanelDrop(
+    panelId: ShellDockPanelId,
+    origin: "left" | "right" | "undocked",
+    target: "left" | "right" | "undocked" | null
+  ): Promise<void> {
+    if (!target) {
+      return;
+    }
+
+    if (target === "undocked") {
+      if (origin !== "undocked") {
+        await undockShellPanel(panelId);
+      }
+      return;
+    }
+
+    if (origin === "undocked") {
+      await dockShellPanel(panelId, target);
+    } else {
+      activateShellRailPanel(target, panelId);
+    }
+  }
+
+  function beginNativeShellPanelDrag(
+    panelId: ShellDockPanelId,
+    panelLabel: string,
+    origin: "left" | "right" | "undocked"
+  ): void {
+    setShellPanelDragState({
+      panelId,
+      panelLabel,
+      origin,
+      x: 0,
+      y: 0,
+      target: null
     });
   }
 
-  useEffect(() => {
-    if (!isSidebarResizing) {
-      return;
-    }
+  function endNativeShellPanelDrag(): void {
+    setShellPanelDragState(null);
+  }
 
-    function handlePointerMove(event: PointerEvent): void {
-      const session = sidebarResizeSessionRef.current;
+  function beginShellPanelPointerDrag(
+    panelId: ShellDockPanelId,
+    panelLabel: string,
+    origin: "left" | "right" | "undocked",
+    clientX: number,
+    clientY: number
+  ): void {
+    shellPanelDragCleanupRef.current?.();
+    shellPanelDragSessionRef.current = {
+      panelId,
+      panelLabel,
+      origin,
+      startX: clientX,
+      startY: clientY,
+      dragStarted: false
+    };
+    setShellPanelDragState({
+      panelId,
+      panelLabel,
+      origin,
+      x: clientX,
+      y: clientY,
+      target: shellDropTargetForPoint(clientX, clientY)
+    });
+
+    function handleMouseMove(event: MouseEvent): void {
+      const session = shellPanelDragSessionRef.current;
       if (!session) {
         return;
       }
 
-      const nextWidth = Math.min(
-        Math.max(event.clientX - session.contentLeft, session.minWidth),
-        session.maxWidth
-      );
-      lastPersistedSidebarWidthRef.current = nextWidth;
-      setSidebarWidth(nextWidth);
-    }
-
-    function handlePointerUp(): void {
-      setIsSidebarResizing(false);
-      document.body.classList.remove("shell-sidebar-resizing");
-      const nextWidth = lastPersistedSidebarWidthRef.current;
-      sidebarResizeSessionRef.current = null;
-      if (typeof nextWidth === "number") {
-        void window.sbclAgentDesktop.desktop.setDesktopPreferences({ sidebarWidth: nextWidth });
+      const deltaX = event.clientX - session.startX;
+      const deltaY = event.clientY - session.startY;
+      const distance = Math.hypot(deltaX, deltaY);
+      if (!session.dragStarted && distance < 8) {
+        return;
       }
+
+      if (!session.dragStarted) {
+        session.dragStarted = true;
+        document.body.classList.add("shell-panel-dragging");
+      }
+
+      setShellPanelDragState({
+        panelId: session.panelId,
+        panelLabel: session.panelLabel,
+        origin: session.origin,
+        x: event.clientX,
+        y: event.clientY,
+        target: shellDropTargetForPoint(event.clientX, event.clientY)
+      });
     }
 
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp, { once: true });
-
-    return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
-    };
-  }, [isSidebarResizing]);
-
-  useEffect(() => {
-    if (!isInspectorResizing) {
-      return;
-    }
-
-    function handlePointerMove(event: PointerEvent): void {
-      const session = inspectorResizeSessionRef.current;
+    function handleMouseUp(event: MouseEvent): void {
+      const session = shellPanelDragSessionRef.current;
       if (!session) {
         return;
       }
 
-      const nextWidth = Math.min(
-        Math.max(session.contentRight - event.clientX - session.gap / 2, session.minWidth),
-        session.maxWidth
-      );
-      lastPersistedInspectorWidthRef.current = nextWidth;
-      setInspectorWidth(nextWidth);
-    }
+      const dropTarget = session.dragStarted ? shellDropTargetForPoint(event.clientX, event.clientY) : null;
+      document.body.classList.remove("shell-panel-dragging");
+      shellPanelDragSessionRef.current = null;
+      setShellPanelDragState(null);
+      shellPanelDragCleanupRef.current?.();
+      shellPanelDragCleanupRef.current = null;
 
-    function handlePointerUp(): void {
-      setIsInspectorResizing(false);
-      document.body.classList.remove("shell-inspector-resizing");
-      const nextWidth = lastPersistedInspectorWidthRef.current;
-      inspectorResizeSessionRef.current = null;
-      if (typeof nextWidth === "number") {
-        void window.sbclAgentDesktop.desktop.setDesktopPreferences({ inspectorWidth: nextWidth });
+      if (!session.dragStarted) {
+        return;
       }
+
+      void applyShellPanelDrop(session.panelId, session.origin, dropTarget);
     }
 
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp, { once: true });
-
-    return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    shellPanelDragCleanupRef.current = () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+      document.body.classList.remove("shell-panel-dragging");
     };
-  }, [isInspectorResizing]);
+  }
 
-  function startSidebarResize(event: React.PointerEvent<HTMLButtonElement>): void {
+  useEffect(
+    () => () => {
+      shellPanelDragCleanupRef.current?.();
+    },
+    []
+  );
+
+  useEffect(
+    () => () => {
+      sidebarResizeCleanupRef.current?.();
+      inspectorResizeCleanupRef.current?.();
+    },
+    []
+  );
+
+  function startSidebarResize(event: React.MouseEvent<HTMLButtonElement>): void {
     if (!sidebarPinned || !canvasPinned || viewportWidth <= SHELL_STACK_BREAKPOINT || !shellRef.current) {
       return;
     }
@@ -4089,13 +6306,45 @@ export function App() {
       minWidth: minSidebarWidth,
       maxWidth: maxSidebarWidth
     };
-    lastPersistedSidebarWidthRef.current = sidebarWidth ?? shellSidebarDefaultWidthForViewport(viewportWidth);
+    sidebarResizeCleanupRef.current?.();
+
+    function handleMouseMove(moveEvent: MouseEvent): void {
+      const session = sidebarResizeSessionRef.current;
+      if (!session) {
+        return;
+      }
+
+      const nextWidth = Math.min(
+        Math.max(moveEvent.clientX - session.contentLeft, session.minWidth),
+        session.maxWidth
+      );
+      applyShellLayoutAction({ type: "set_left_rail_width", width: nextWidth });
+    }
+
+    function handleMouseUp(): void {
+      if (!sidebarResizeSessionRef.current) {
+        return;
+      }
+      setIsSidebarResizing(false);
+      document.body.classList.remove("shell-sidebar-resizing");
+      sidebarResizeSessionRef.current = null;
+      sidebarResizeCleanupRef.current?.();
+      sidebarResizeCleanupRef.current = null;
+      void persistShellDesktopPreferences();
+    }
+
+    document.addEventListener("mousemove", handleMouseMove, true);
+    document.addEventListener("mouseup", handleMouseUp, true);
+    sidebarResizeCleanupRef.current = () => {
+      document.removeEventListener("mousemove", handleMouseMove, true);
+      document.removeEventListener("mouseup", handleMouseUp, true);
+    };
     setIsSidebarResizing(true);
     document.body.classList.add("shell-sidebar-resizing");
     event.preventDefault();
   }
 
-  function startInspectorResize(event: React.PointerEvent<HTMLButtonElement>): void {
+  function startInspectorResize(event: React.MouseEvent<HTMLButtonElement>): void {
     if (!canvasPinned || !inspectorPinned || viewportWidth <= SHELL_STACK_BREAKPOINT || !shellRef.current) {
       return;
     }
@@ -4111,7 +6360,7 @@ export function App() {
     const gap = shellGapForViewport(viewportWidth);
     const effectiveSidebarWidth = sidebarPinned
       ? Math.max(sidebarWidth ?? shellSidebarDefaultWidthForViewport(viewportWidth), shellSidebarMinWidthForViewport(viewportWidth))
-      : shellSidebarWidthForViewport(viewportWidth, false);
+      : shellSidebarRailWidthForViewport(viewportWidth);
     const minInspectorWidth = shellInspectorMinWidthForViewport(viewportWidth);
     const minCanvasWidth = shellCanvasMinWidthForViewport(viewportWidth);
     const maxInspectorWidth = Math.max(minInspectorWidth, contentWidth - effectiveSidebarWidth - minCanvasWidth - gap * 2);
@@ -4122,36 +6371,99 @@ export function App() {
       maxWidth: maxInspectorWidth,
       gap
     };
-    lastPersistedInspectorWidthRef.current = inspectorWidth ?? shellInspectorDefaultWidthForViewport(viewportWidth);
+    inspectorResizeCleanupRef.current?.();
+
+    function handleMouseMove(moveEvent: MouseEvent): void {
+      const session = inspectorResizeSessionRef.current;
+      if (!session) {
+        return;
+      }
+
+      const nextWidth = Math.min(
+        Math.max(session.contentRight - moveEvent.clientX - session.gap / 2, session.minWidth),
+        session.maxWidth
+      );
+      applyShellLayoutAction({ type: "set_right_rail_width", width: nextWidth });
+    }
+
+    function handleMouseUp(): void {
+      if (!inspectorResizeSessionRef.current) {
+        return;
+      }
+      setIsInspectorResizing(false);
+      document.body.classList.remove("shell-inspector-resizing");
+      inspectorResizeSessionRef.current = null;
+      inspectorResizeCleanupRef.current?.();
+      inspectorResizeCleanupRef.current = null;
+      void persistShellDesktopPreferences();
+    }
+
+    document.addEventListener("mousemove", handleMouseMove, true);
+    document.addEventListener("mouseup", handleMouseUp, true);
+    inspectorResizeCleanupRef.current = () => {
+      document.removeEventListener("mousemove", handleMouseMove, true);
+      document.removeEventListener("mouseup", handleMouseUp, true);
+    };
     setIsInspectorResizing(true);
     document.body.classList.add("shell-inspector-resizing");
     event.preventDefault();
   }
 
-  const desktopShellInlineColumns =
-    canvasPinned && inspectorPinned && viewportWidth > SHELL_STACK_BREAKPOINT
-      ? (() => {
-          const effectiveSidebarWidth = sidebarPinned
-            ? Math.max(sidebarWidth ?? shellSidebarDefaultWidthForViewport(viewportWidth), shellSidebarMinWidthForViewport(viewportWidth))
-            : shellSidebarWidthForViewport(viewportWidth, false);
-          const gap = shellGapForViewport(viewportWidth);
-          const availableWidth = viewportWidth - shellHorizontalPaddingForViewport(viewportWidth) * 2;
-          const minInspectorWidth = shellInspectorMinWidthForViewport(viewportWidth);
-          const maxInspectorWidth = Math.max(
-            minInspectorWidth,
-            availableWidth - effectiveSidebarWidth - shellCanvasMinWidthForViewport(viewportWidth) - gap * 2
-          );
-          const effectiveInspectorWidth = Math.min(
-            Math.max(inspectorWidth ?? shellInspectorDefaultWidthForViewport(viewportWidth), minInspectorWidth),
-            maxInspectorWidth
-          );
-          return `${effectiveSidebarWidth}px minmax(0, 1fr) ${effectiveInspectorWidth}px`;
-        })()
-      : undefined;
+  function handleShellResizeCaptureMouseMove(event: React.MouseEvent<HTMLDivElement>): void {
+    if (sidebarResizeSessionRef.current) {
+      const session = sidebarResizeSessionRef.current;
+      const nextWidth = Math.min(
+        Math.max(event.clientX - session.contentLeft, session.minWidth),
+        session.maxWidth
+      );
+      applyShellLayoutAction({ type: "set_left_rail_width", width: nextWidth });
+      return;
+    }
+
+    if (inspectorResizeSessionRef.current) {
+      const session = inspectorResizeSessionRef.current;
+      const nextWidth = Math.min(
+        Math.max(session.contentRight - event.clientX, session.minWidth),
+        session.maxWidth
+      );
+      applyShellLayoutAction({ type: "set_right_rail_width", width: nextWidth });
+    }
+  }
+
+  function handleShellResizeCaptureMouseUp(): void {
+    if (sidebarResizeSessionRef.current) {
+      setIsSidebarResizing(false);
+      document.body.classList.remove("shell-sidebar-resizing");
+      sidebarResizeSessionRef.current = null;
+      sidebarResizeCleanupRef.current?.();
+      sidebarResizeCleanupRef.current = null;
+      void persistShellDesktopPreferences();
+      return;
+    }
+
+    if (inspectorResizeSessionRef.current) {
+      setIsInspectorResizing(false);
+      document.body.classList.remove("shell-inspector-resizing");
+      inspectorResizeSessionRef.current = null;
+      inspectorResizeCleanupRef.current?.();
+      inspectorResizeCleanupRef.current = null;
+      void persistShellDesktopPreferences();
+    }
+  }
+
+  const shellRenderLayout = deriveShellRenderLayout(shellLayout, viewportWidth);
+  const effectiveSidebarColumnWidth = shellRenderLayout.sidebarColumnWidth;
+  const effectiveInspectorColumnWidth = shellRenderLayout.inspectorColumnWidth;
+  const shellGap = shellRenderLayout.gap;
+  const shellHorizontalPadding = shellRenderLayout.horizontalPadding;
+  const shellCanvasMinWidth = shellRenderLayout.canvasMinWidth;
+  const shellInspectorMinWidth = shellRenderLayout.inspectorMinWidth;
+  const desktopShellInlineColumns = shellRenderLayout.desktopShellInlineColumns;
 
   async function applyThemePreference(nextThemePreference: ThemePreference): Promise<void> {
     setThemePreference(nextThemePreference);
     await window.sbclAgentDesktop.desktop.setDesktopPreferences({
+      lastWorkspace: activeWorkspaceRef.current,
       themePreference: nextThemePreference
     });
   }
@@ -4162,9 +6474,46 @@ export function App() {
     );
     setLispParenColors(nextColors);
     await window.sbclAgentDesktop.desktop.setDesktopPreferences({
+      lastWorkspace: activeWorkspaceRef.current,
       lispCodeView: {
         parenDepthColors: nextColors
       }
+    });
+  }
+
+  async function updateDesktopSurfaceScalePreference(
+    key: "tooltipScalePercent" | "controlIconScalePercent" | "dockIconScalePercent" | "conversationTextScalePercent" | "sourceCodeTextScalePercent",
+    value: number
+  ): Promise<void> {
+    const normalizedValue = normalizeDesktopSurfaceScalePercent(value);
+    const nextDesktopSurfaceView = {
+      tooltipScalePercent:
+        key === "tooltipScalePercent" ? normalizedValue : tooltipScalePercent,
+      controlIconScalePercent:
+        key === "controlIconScalePercent" ? normalizedValue : controlIconScalePercent,
+      dockIconScalePercent:
+        key === "dockIconScalePercent" ? normalizedValue : dockIconScalePercent,
+      conversationTextScalePercent:
+        key === "conversationTextScalePercent" ? normalizedValue : conversationTextScalePercent,
+      sourceCodeTextScalePercent:
+        key === "sourceCodeTextScalePercent" ? normalizedValue : sourceCodeTextScalePercent
+    };
+
+    if (key === "tooltipScalePercent") {
+      setTooltipScalePercent(normalizedValue);
+    } else if (key === "controlIconScalePercent") {
+      setControlIconScalePercent(normalizedValue);
+    } else if (key === "dockIconScalePercent") {
+      setDockIconScalePercent(normalizedValue);
+    } else if (key === "conversationTextScalePercent") {
+      setConversationTextScalePercent(normalizedValue);
+    } else {
+      setSourceCodeTextScalePercent(normalizedValue);
+    }
+
+    await window.sbclAgentDesktop.desktop.setDesktopPreferences({
+      lastWorkspace: activeWorkspaceRef.current,
+      desktopSurfaceView: nextDesktopSurfaceView
     });
   }
 
@@ -4182,6 +6531,11 @@ export function App() {
     await navigateToWorkspace("browser");
   }
 
+  async function navigateToProjectsSurface(): Promise<void> {
+    openDesktopWindow("window:projects-surface");
+    await navigateToWorkspace("projects");
+  }
+
   async function navigateToConfigurationSurface(): Promise<void> {
     openDesktopWindow("window:configuration-surface");
     await navigateToWorkspace("configuration");
@@ -4190,7 +6544,13 @@ export function App() {
   async function navigateToOperateSection(section: OperateSection): Promise<void> {
     setSelectedOperateSection(section);
     setExpandedWorkspaceMenus((current) => ({ ...current, environment: true }));
+    openDesktopWindow("window:operate-surface");
     await navigateToWorkspace("environment");
+    if (effectiveEnvironmentId) {
+      await loadWorkWorkspace(effectiveEnvironmentId);
+      await loadApprovalWorkspace(effectiveEnvironmentId);
+    }
+    setActiveWorkspace("environment");
   }
 
   async function navigateToConversationSection(section: ConversationSection): Promise<void> {
@@ -4200,7 +6560,38 @@ export function App() {
     await navigateToWorkspace("conversations");
   }
 
-  async function continueThreadFromDashboard(threadId: string): Promise<void> {
+  async function navigateToWorkspaceSurface(): Promise<void> {
+    openDesktopWindow("window:workspace-surface");
+    await navigateToWorkspace("workspace");
+  }
+
+  async function navigateToEditorSurface(): Promise<void> {
+    openDesktopWindow("window:editor-surface");
+    await navigateToWorkspace("editor");
+  }
+
+  async function navigateToTranscriptSurface(): Promise<void> {
+    openDesktopWindow("window:transcript-surface");
+    await navigateToWorkspace("transcript");
+  }
+
+  function conversationSectionLabel(section: ConversationSection): string {
+    return section === "threads"
+      ? "Threads"
+      : section === "turns"
+        ? "Turns"
+        : section === "draft"
+          ? "Draft"
+          : "REPL";
+  }
+
+  function activateConversationInspectorSection(section: ConversationSection): void {
+    setSelectedConversationSection(section);
+    setActiveHostedApp("control-panel");
+    setActiveWorkspace("conversations");
+  }
+
+  async function continueThread(threadId: string): Promise<void> {
     setSelectedThreadId(threadId);
     setSelectedThread(null);
     setSelectedTurnId(null);
@@ -4212,13 +6603,13 @@ export function App() {
     await navigateToConversationSection("threads");
   }
 
-  async function continueWorkItemFromDashboard(workItemId: string): Promise<void> {
+  async function continueWorkItem(workItemId: string): Promise<void> {
     setSelectedWorkItemId(workItemId);
     setPendingWorkItemFocusId(workItemId);
     await navigateToExecutionSection("work");
   }
 
-  async function continueRecoveryFromDashboard(incidentId: string): Promise<void> {
+  async function continueRecovery(incidentId: string): Promise<void> {
     setSelectedIncidentId(incidentId);
     setPendingIncidentFocusId(incidentId);
     await navigateToRecoverySection("incidents");
@@ -4253,17 +6644,18 @@ export function App() {
   }
 
   async function navigateToDesktopPanel(panelId: DesktopPanelId): Promise<void> {
+    if (panelId === "governance") {
+      await navigateToOperateSection("journeys");
+      return;
+    }
     focusDesktopWindow(
       panelId === "display"
         ? "window:display"
-        : panelId === "governance"
-          ? "window:governance"
-          : "window:inspector"
+        : "window:inspector"
     );
     if (panelId === "inspector" && !inspectorPinned) {
-      setInspectorPinned(true);
+      void persistResolvedShellLayout(applyShellLayoutAction({ type: "expand_right_rail" }));
       updateActiveDesktopWindows((current) => updateWindowState(current, "window:inspector", "open"));
-      void window.sbclAgentDesktop.desktop.setDesktopPreferences({ inspectorPinned: true });
     }
     const environmentId = effectiveEnvironmentId ?? binding?.environmentId;
     setActiveHostedApp("control-panel");
@@ -4300,19 +6692,11 @@ export function App() {
 
   function minimizeDesktopWindow(windowId: string): void {
     updateActiveDesktopWindows((current) => updateWindowState(current, windowId, "minimized"));
-    if (windowId === "window:inspector" && inspectorPinned) {
-      setInspectorPinned(false);
-      void window.sbclAgentDesktop.desktop.setDesktopPreferences({ inspectorPinned: false });
-    }
   }
 
   function restoreDesktopWindow(windowId: string): void {
     focusDesktopWindow(windowId);
     updateActiveDesktopWindows((current) => updateWindowState(current, windowId, "open"));
-    if (windowId === "window:inspector" && !inspectorPinned) {
-      setInspectorPinned(true);
-      void window.sbclAgentDesktop.desktop.setDesktopPreferences({ inspectorPinned: true });
-    }
   }
 
   function openDesktopWindow(windowId: string): void {
@@ -4321,10 +6705,6 @@ export function App() {
 
   function closeDesktopWindow(windowId: string): void {
     updateActiveDesktopWindows((current) => updateWindowState(current, windowId, "closed"));
-    if (windowId === "window:inspector" && inspectorPinned) {
-      setInspectorPinned(false);
-      void window.sbclAgentDesktop.desktop.setDesktopPreferences({ inspectorPinned: false });
-    }
   }
 
   function resetDesktopWindowLayoutState(): void {
@@ -4378,12 +6758,13 @@ export function App() {
         "window:control-panel",
         "window:listener-workbench",
         "window:inspector",
-        "window:governance",
         "window:display",
         "window:shell-context",
-        "window:proactivity",
         "window:detailed-surface",
         "window:browser-surface",
+        "window:editor-surface",
+        "window:workspace-surface",
+        "window:transcript-surface",
         "window:configuration-surface",
         "window:conversations-surface"
       ]
@@ -4470,19 +6851,27 @@ export function App() {
   async function navigateToExecutionSection(section: ExecutionSection): Promise<void> {
     setSelectedExecutionSection(section);
     setExpandedWorkspaceMenus((current) => ({ ...current, runtime: true }));
+    openDesktopWindow("window:operate-surface");
     await navigateToWorkspace("runtime");
   }
 
   async function navigateToRecoverySection(section: RecoverySection): Promise<void> {
     setSelectedRecoverySection(section);
     setExpandedWorkspaceMenus((current) => ({ ...current, incidents: true }));
+    openDesktopWindow("window:operate-surface");
     await navigateToWorkspace("incidents");
   }
 
   async function navigateToEvidenceSection(section: EvidenceSection): Promise<void> {
     setSelectedEvidenceSection(section);
     setExpandedWorkspaceMenus((current) => ({ ...current, artifacts: true }));
+    openDesktopWindow("window:operate-surface");
     await navigateToWorkspace("artifacts");
+  }
+
+  async function openApprovalRequest(requestId: string): Promise<void> {
+    setSelectedApprovalId(requestId);
+    await navigateToExecutionSection("approvals");
   }
 
   async function navigateToLinkedEntity(entity: LinkedEntityRefDto): Promise<void> {
@@ -4542,7 +6931,44 @@ export function App() {
 
   useEffect(() => {
     updateActiveDesktopWindows((current) => {
+      const activeUndockedPanelIds = new Set(shellLayout.undockedPanelIds);
       let next = current;
+      let removedUndockedWindow = false;
+
+      for (const window of current) {
+        const panelId = shellDockPanelIdFromUndockedWindowId(window.id);
+        if (panelId && !activeUndockedPanelIds.has(panelId)) {
+          removedUndockedWindow = true;
+          break;
+        }
+      }
+
+      if (removedUndockedWindow) {
+        next = current.filter((window) => {
+          const panelId = shellDockPanelIdFromUndockedWindowId(window.id);
+          return !panelId || activeUndockedPanelIds.has(panelId);
+        });
+      }
+
+      function defaultFrameForUndockedPanel(panelId: ShellDockPanelId): {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+      } {
+        switch (panelId) {
+          case "shell-navigation":
+            return { x: 24, y: 22, width: 90, height: 90 };
+          case "shell-utilities":
+            return { x: 34, y: 28, width: 74, height: 52 };
+          case "workspace-inspector":
+            return { x: 152, y: 24, width: 78, height: 82 };
+          case "editor-symbol":
+            return { x: 144, y: 34, width: 76, height: 58 };
+          default:
+            return { x: 28, y: 24, width: 76, height: 60 };
+        }
+      }
 
       if (!suppressedDesktopWindowIds.includes("window:control-panel")) {
         next = upsertDesktopWindow(next, {
@@ -4589,22 +7015,6 @@ export function App() {
         });
       }
 
-      if ((desktopModel?.governanceCount ?? 0) > 0 && !suppressedDesktopWindowIds.includes("window:governance")) {
-        next = upsertDesktopWindow(next, {
-          id: "window:governance",
-          kind: "utility",
-          title: "Governance Queue",
-          summary:
-            desktopModel?.panels?.governance?.selectedTitle ??
-            "Approvals, governed work, incidents, and mutation pressure.",
-          state: next.find((window) => window.id === "window:governance")?.state ?? "minimized",
-          zIndex: next.find((window) => window.id === "window:governance")?.zIndex ?? 4,
-          ...DEFAULT_DESKTOP_WINDOW_FRAMES["window:governance"],
-          closable: true,
-          panelId: "governance"
-        });
-      }
-
       if ((desktopModel?.displayCount ?? 0) > 0 && !suppressedDesktopWindowIds.includes("window:display")) {
         next = upsertDesktopWindow(next, {
           id: "window:display",
@@ -4630,21 +7040,6 @@ export function App() {
           state: next.find((window) => window.id === "window:shell-context")?.state ?? "minimized",
           zIndex: next.find((window) => window.id === "window:shell-context")?.zIndex ?? 6,
           ...DEFAULT_DESKTOP_WINDOW_FRAMES["window:shell-context"],
-          closable: true
-        });
-      }
-
-      if (!suppressedDesktopWindowIds.includes("window:proactivity")) {
-        next = upsertDesktopWindow(next, {
-          id: "window:proactivity",
-          kind: "utility",
-          title: "Proactivity",
-          summary:
-            shellProactiveLead?.summary ??
-            "Governed pressure, recommendations, monitors, and staged continuations.",
-          state: next.find((window) => window.id === "window:proactivity")?.state ?? "minimized",
-          zIndex: next.find((window) => window.id === "window:proactivity")?.zIndex ?? 7,
-          ...DEFAULT_DESKTOP_WINDOW_FRAMES["window:proactivity"],
           closable: true
         });
       }
@@ -4675,6 +7070,80 @@ export function App() {
         });
       }
 
+      if (!suppressedDesktopWindowIds.includes("window:projects-surface")) {
+        next = upsertDesktopWindow(next, {
+          id: "window:projects-surface",
+          kind: "utility",
+          title: "Projects Surface",
+          summary:
+            selectedProjectDetail?.summary ??
+            selectedProjectSummary?.summary ??
+            "Open or create a governed project.",
+          state: next.find((window) => window.id === "window:projects-surface")?.state ?? "minimized",
+          zIndex: next.find((window) => window.id === "window:projects-surface")?.zIndex ?? 10,
+          ...DEFAULT_DESKTOP_WINDOW_FRAMES["window:projects-surface"],
+          closable: true
+        });
+      }
+
+      if (!suppressedDesktopWindowIds.includes("window:editor-surface")) {
+        next = upsertDesktopWindow(next, {
+          id: "window:editor-surface",
+          kind: "utility",
+          title: "Editor Surface",
+          summary:
+            currentEditorResult?.data.summary ??
+            "",
+          state: next.find((window) => window.id === "window:editor-surface")?.state ?? "minimized",
+          zIndex: next.find((window) => window.id === "window:editor-surface")?.zIndex ?? 10,
+          ...DEFAULT_DESKTOP_WINDOW_FRAMES["window:editor-surface"],
+          closable: true
+        });
+      }
+
+      if (!suppressedDesktopWindowIds.includes("window:workspace-surface")) {
+        next = upsertDesktopWindow(next, {
+          id: "window:workspace-surface",
+          kind: "utility",
+          title: "Workspace Surface",
+          summary:
+            currentWorkspaceResult?.data.summary ??
+            "Draft Lisp forms, evaluate them deliberately, and retain scratch history without turning direct live work into either a thread or an execution queue.",
+          state: next.find((window) => window.id === "window:workspace-surface")?.state ?? "minimized",
+          zIndex: next.find((window) => window.id === "window:workspace-surface")?.zIndex ?? 11,
+          ...DEFAULT_DESKTOP_WINDOW_FRAMES["window:workspace-surface"],
+          closable: true
+        });
+      }
+
+      if (!suppressedDesktopWindowIds.includes("window:transcript-surface")) {
+        next = upsertDesktopWindow(next, {
+          id: "window:transcript-surface",
+          kind: "utility",
+          title: "Transcript Surface",
+          summary:
+            transcriptEntries[0]?.summary ??
+            "Durable runtime, workspace, and event output stays visible here instead of being trapped inside whichever surface produced it.",
+          state: next.find((window) => window.id === "window:transcript-surface")?.state ?? "minimized",
+          zIndex: next.find((window) => window.id === "window:transcript-surface")?.zIndex ?? 12,
+          ...DEFAULT_DESKTOP_WINDOW_FRAMES["window:transcript-surface"],
+          closable: true
+        });
+      }
+
+      if (!suppressedDesktopWindowIds.includes("window:operate-surface")) {
+        next = upsertDesktopWindow(next, {
+          id: "window:operate-surface",
+          kind: "utility",
+          title: "Operate Surface",
+          summary: `${selectedOperateSurfaceDescriptor.label}: ${selectedOperateSurfaceDescriptor.summary}`,
+          state: next.find((window) => window.id === "window:operate-surface")?.state ?? "minimized",
+          zIndex: next.find((window) => window.id === "window:operate-surface")?.zIndex ?? 13,
+          ...DEFAULT_DESKTOP_WINDOW_FRAMES["window:operate-surface"],
+          closable: true
+        });
+      }
+
       if (!suppressedDesktopWindowIds.includes("window:configuration-surface")) {
         next = upsertDesktopWindow(next, {
           id: "window:configuration-surface",
@@ -4682,7 +7151,7 @@ export function App() {
           title: "Configuration Surface",
           summary: `${configurationSections.find((section) => section.id === selectedConfigurationSection)?.label ?? "Configuration"}: ${workspaceDescriptor.summary}`,
           state: next.find((window) => window.id === "window:configuration-surface")?.state ?? "minimized",
-          zIndex: next.find((window) => window.id === "window:configuration-surface")?.zIndex ?? 10,
+          zIndex: next.find((window) => window.id === "window:configuration-surface")?.zIndex ?? 14,
           ...DEFAULT_DESKTOP_WINDOW_FRAMES["window:configuration-surface"],
           closable: true
         });
@@ -4693,17 +7162,35 @@ export function App() {
           id: "window:conversations-surface",
           kind: "utility",
           title: "Conversations Surface",
-          summary: `${selectedConversationSection === "threads" ? "Threads" : selectedConversationSection === "turns" ? "Turns" : "Draft"}: durable conversation work stays attached to the current environment.`,
+          summary: `${conversationSectionLabel(selectedConversationSection)}: durable conversation work stays attached to the current environment.`,
           state: next.find((window) => window.id === "window:conversations-surface")?.state ?? "minimized",
-          zIndex: next.find((window) => window.id === "window:conversations-surface")?.zIndex ?? 11,
+          zIndex: next.find((window) => window.id === "window:conversations-surface")?.zIndex ?? 15,
           ...DEFAULT_DESKTOP_WINDOW_FRAMES["window:conversations-surface"],
           closable: true
         });
       }
 
+      for (const panelId of shellLayout.undockedPanelIds) {
+        const panelDefinition = SHELL_DOCK_PANEL_DEFINITIONS[panelId];
+        if (!panelDefinition) {
+          continue;
+        }
+        const frame = defaultFrameForUndockedPanel(panelId);
+        next = upsertDesktopWindow(next, {
+          id: undockedShellWindowId(panelId),
+          kind: "utility",
+          title: panelDefinition.label,
+          summary: `${panelDefinition.label} is floating in the desktop stage until it is docked back into its owning rail.`,
+          state: next.find((window) => window.id === undockedShellWindowId(panelId))?.state ?? "open",
+          zIndex: next.find((window) => window.id === undockedShellWindowId(panelId))?.zIndex ?? 16,
+          ...frame,
+          closable: false
+        });
+      }
+
       return next;
     });
-  }, [activeDesktopId, activeHostedAppDescriptor.label, desktopModel, inspectorPinned, runtimeSummary, selectedBrowserDomainDescriptor.label, selectedBrowserDomainDescriptor.summary, selectedConfigurationSection, selectedConversationSection, shellCurrentSurfaceSummary.summary, shellProactiveLead?.summary, suppressedDesktopWindowIds, summary?.activeContext.focusSummary, workspaceDescriptor.summary]);
+  }, [activeDesktopId, activeHostedAppDescriptor.label, currentWorkspaceResult?.data.summary, desktopModel, inspectorPinned, runtimeSummary, selectedBrowserDomainDescriptor.label, selectedBrowserDomainDescriptor.summary, selectedConfigurationSection, selectedConversationSection, selectedOperateSurfaceDescriptor.label, selectedOperateSurfaceDescriptor.summary, selectedProjectDetail?.summary, selectedProjectSummary?.summary, shellCurrentSurfaceSummary.summary, shellProactiveLead?.summary, shellLayout.undockedPanelIds, suppressedDesktopWindowIds, summary?.activeContext.focusSummary, transcriptEntries, workspaceDescriptor.summary]);
 
   useEffect(() => {
     if (desktopCompositionInitializedById[activeDesktopId]) {
@@ -4746,15 +7233,6 @@ export function App() {
           };
         }
 
-        if (window.id === "window:governance") {
-          return {
-            ...window,
-            summary:
-              desktopModel?.panels?.governance?.selectedTitle ??
-              "Approvals, governed work, incidents, and mutation pressure."
-          };
-        }
-
         if (window.id === "window:display") {
           return {
             ...window,
@@ -4767,15 +7245,6 @@ export function App() {
           return {
             ...window,
             summary: shellCurrentSurfaceSummary.summary
-          };
-        }
-
-        if (window.id === "window:proactivity") {
-          return {
-            ...window,
-            summary:
-              shellProactiveLead?.summary ??
-              "Governed pressure, recommendations, monitors, and staged continuations."
           };
         }
 
@@ -4793,6 +7262,50 @@ export function App() {
           };
         }
 
+        if (window.id === "window:projects-surface") {
+          return {
+            ...window,
+            summary:
+              selectedProjectDetail?.summary ??
+              selectedProjectSummary?.summary ??
+              "Open or create a governed project."
+          };
+        }
+
+        if (window.id === "window:editor-surface") {
+          return {
+            ...window,
+            summary:
+              currentEditorResult?.data.summary ??
+              ""
+          };
+        }
+
+        if (window.id === "window:workspace-surface") {
+          return {
+            ...window,
+            summary:
+              currentWorkspaceResult?.data.summary ??
+              "Draft Lisp forms, evaluate them deliberately, and retain scratch history without turning direct live work into either a thread or an execution queue."
+          };
+        }
+
+        if (window.id === "window:transcript-surface") {
+          return {
+            ...window,
+            summary:
+              transcriptEntries[0]?.summary ??
+              "Durable runtime, workspace, and event output stays visible here instead of being trapped inside whichever surface produced it."
+          };
+        }
+
+        if (window.id === "window:operate-surface") {
+          return {
+            ...window,
+            summary: `${selectedOperateSurfaceDescriptor.label}: ${selectedOperateSurfaceDescriptor.summary}`
+          };
+        }
+
         if (window.id === "window:configuration-surface") {
           return {
             ...window,
@@ -4803,58 +7316,287 @@ export function App() {
         if (window.id === "window:conversations-surface") {
           return {
             ...window,
-            summary: `${selectedConversationSection === "threads" ? "Threads" : selectedConversationSection === "turns" ? "Turns" : "Draft"}: durable conversation work stays attached to the current environment.`
+            summary: `${conversationSectionLabel(selectedConversationSection)}: durable conversation work stays attached to the current environment.`
           };
         }
 
         return window;
       }),
-    [activeHostedAppDescriptor.label, desktopModel?.panels?.display?.selectedTitle, desktopModel?.panels?.governance?.selectedTitle, desktopWindows, runtimeSummary, selectedBrowserDomainDescriptor.label, selectedBrowserDomainDescriptor.summary, selectedConfigurationSection, selectedConversationSection, shellCurrentSurfaceSummary.summary, shellProactiveLead?.summary, summary?.activeContext.focusSummary, workspaceDescriptor.summary]
+    [activeHostedAppDescriptor.label, currentWorkspaceResult?.data.summary, desktopModel?.panels?.display?.selectedTitle, desktopWindows, runtimeSummary, selectedBrowserDomainDescriptor.label, selectedBrowserDomainDescriptor.summary, selectedConfigurationSection, selectedConversationSection, selectedOperateSurfaceDescriptor.label, selectedOperateSurfaceDescriptor.summary, selectedProjectDetail?.summary, selectedProjectSummary?.summary, shellCurrentSurfaceSummary.summary, shellProactiveLead?.summary, summary?.activeContext.focusSummary, transcriptEntries, workspaceDescriptor.summary]
   );
+
+  const allShellPanelContentById: Partial<Record<ShellDockPanelId, ReactNode>> = {
+    "shell-navigation": (
+      <ShellNavigationPanel
+        activeHostedApp={activeHostedApp}
+        activeWorkspace={activeWorkspace}
+        browserDomains={browserDomains}
+        conversationSections={conversationSections}
+        evidenceSections={evidenceSections}
+        executionSections={executionSections}
+        expandedWorkspaceMenus={expandedWorkspaceMenus}
+        navigateToBrowserDomain={(domainId) => {
+          void navigateToBrowserDomain(domainId as BrowserDomain);
+        }}
+        navigateToConfigurationSurface={() => {
+          void navigateToConfigurationSurface();
+        }}
+        navigateToConversationSection={(sectionId) => {
+          void navigateToConversationSection(sectionId as ConversationSection);
+        }}
+        navigateToEditorSurface={() => {
+          void navigateToEditorSurface();
+        }}
+        navigateToEvidenceSection={(sectionId) => {
+          void navigateToEvidenceSection(sectionId as EvidenceSection);
+        }}
+        navigateToExecutionSection={(sectionId) => {
+          void navigateToExecutionSection(sectionId as ExecutionSection);
+        }}
+        navigateToOperateSection={(sectionId) => {
+          void navigateToOperateSection(sectionId as OperateSection);
+        }}
+        navigateToProjectsSurface={() => {
+          void navigateToProjectsSurface();
+        }}
+        navigateToRecoverySection={(sectionId) => {
+          void navigateToRecoverySection(sectionId as RecoverySection);
+        }}
+        navigateToTranscriptSurface={() => {
+          void navigateToTranscriptSurface();
+        }}
+        navigateToWorkspace={(workspaceId) => {
+          void navigateToWorkspace(workspaceId);
+        }}
+        navigateToWorkspaceSurface={() => {
+          void navigateToWorkspaceSurface();
+        }}
+        operateSections={operateSections}
+        recoverySections={recoverySections}
+        selectedBrowserDomain={selectedBrowserDomain}
+        selectedConversationSection={selectedConversationSection}
+        selectedEvidenceSection={selectedEvidenceSection}
+        selectedExecutionSection={selectedExecutionSection}
+        selectedOperateSection={selectedOperateSection}
+        selectedRecoverySection={selectedRecoverySection}
+        toggleWorkspaceMenu={toggleWorkspaceMenu}
+      />
+    ),
+    "shell-utilities": (
+      <ShellUtilitiesPanel onExitIntentOsShell={openEnvironmentExitDialog} />
+    ),
+    "workspace-inspector": (
+      <WorkspaceInspector
+        activeWorkspace={activeWorkspace}
+        artifacts={artifacts}
+        binding={binding}
+        onToggleInspector={() => void toggleInspectorPinned()}
+        panelRef={undefined}
+        renderChrome={false}
+        conversationSendError={conversationSendError}
+        selectedBrowserDomain={selectedBrowserDomain}
+        conversationDraft={conversationDraft}
+        conversationStream={conversationStream}
+        environmentEvents={environmentEvents}
+        isSendingConversation={isSendingConversation}
+        lispParenColors={lispParenColors}
+        sendConversationMessage={handleSendConversationMessage}
+        resolvedTheme={resolvedTheme}
+        runtimeForm={runtimeForm}
+        runtimeEntityDetail={runtimeEntityDetail}
+        runtimeInspection={runtimeInspection}
+        runtimeSummary={runtimeSummary}
+        runtimeTelemetry={runtimeTelemetry}
+        consoleLogStream={consoleLogStream}
+        diagnosticReports={diagnosticReports}
+        selectedConsolePlane={selectedConsolePlane}
+        selectedConsoleSourceFilter={selectedConsoleSourceFilter}
+        visibleConsoleEntryCount={
+          (consoleLogStream?.data.entries ?? []).filter(
+            (entry) => selectedConsoleSourceFilter === "All Sources" || entry.source === selectedConsoleSourceFilter
+          ).length
+        }
+        selectedDiagnosticSourceFilter={selectedDiagnosticSourceFilter}
+        visibleDiagnosticReportCount={
+          diagnosticReports.filter(
+            (report) =>
+              selectedDiagnosticSourceFilter === "All Sources" || report.source === selectedDiagnosticSourceFilter
+          ).length
+        }
+        transcriptEntries={transcriptEntries}
+        currentWorkspaceHistoryCount={currentWorkspaceHistory.length}
+        currentReplHistoryCount={currentProjectReplFocus?.history?.length ?? 0}
+        currentProject={currentProject}
+        selectedProjectDetail={selectedProjectDetail}
+        selectedProjectSummary={selectedProjectSummary}
+        workspaceDraft={currentWorkspaceDraft}
+        workspaceResult={currentWorkspaceResult}
+        workspaceTitle={currentProject?.title ?? "Workspace"}
+        selectedApproval={selectedApproval}
+        selectedArtifact={selectedArtifact}
+        selectedConfigurationSection={selectedConfigurationSection}
+        selectedConsoleEntry={
+          consoleLogStream?.data.entries.find((entry) => entry.entryId === selectedConsoleEntryId) ??
+          consoleLogStream?.data.entries[0] ??
+          null
+        }
+        selectedConversationMessage={selectedConversationMessage}
+        selectedConversationSection={selectedConversationSection}
+        selectedDiagnosticReport={selectedDiagnosticReport}
+        selectedDiagnosticReportSummary={
+          diagnosticReports.find((report) => report.reportId === selectedDiagnosticReportId) ??
+          diagnosticReports[0] ??
+          null
+        }
+        currentEditorChangedFormCount={currentEditorChangedFormCount}
+        currentEditorBufferDirty={currentEditorBufferDirty}
+        currentEditorBufferTitle={currentEditorBufferTitle}
+        currentEditorBuffers={currentEditorBuffers}
+        editorDraft={currentEditorDraft}
+        editorResult={currentEditorResult}
+        editorPackage={currentEditorPackage}
+        currentEditorCursorSymbol={currentEditorCursorSymbol}
+        currentEditorCursorSymbolPackage={currentEditorCursorSymbolPackage}
+        currentEditorCursorSymbolHelp={currentEditorCursorSymbolHelp}
+        selectedDocumentationPage={selectedDocumentationPage}
+        selectedEvidenceSection={selectedEvidenceSection}
+        selectedEvent={selectedEvent}
+        selectedIncident={selectedIncident}
+        selectedOperateSection={selectedOperateSection}
+        selectedTelemetryProcess={
+          runtimeTelemetry?.processes.find((process) => process.processId === selectedTelemetryProcessId) ??
+          runtimeTelemetry?.processes[0] ??
+          null
+        }
+        selectedThread={selectedThread}
+        selectedTurn={selectedTurn}
+        selectedWorkItem={selectedWorkItem}
+        selectedWorkItemPlan={selectedWorkItemPlan}
+        selectedWorkflowRecord={selectedWorkflowRecord}
+        navigateToLinkedEntity={navigateToLinkedEntity}
+        pendingConversationComposerFocusThreadId={pendingConversationComposerFocusThreadId}
+        clearPendingConversationComposerFocusThreadId={() => setPendingConversationComposerFocusThreadId(null)}
+        setConversationDraft={setConversationDraft}
+        setSelectedConversationMessageId={setSelectedConversationMessageId}
+        sourcePreview={sourcePreview}
+        status={status}
+        summary={summary}
+        systemTheme={systemTheme}
+        themePreference={themePreference}
+        tooltipScalePercent={tooltipScalePercent}
+        controlIconScalePercent={controlIconScalePercent}
+        dockIconScalePercent={dockIconScalePercent}
+        conversationTextScalePercent={conversationTextScalePercent}
+        sourceCodeTextScalePercent={sourceCodeTextScalePercent}
+        openPublishedDocumentation={() =>
+          window.sbclAgentDesktop.desktop.openExternalLink(PUBLISHED_DOCUMENTATION_URL)
+        }
+        updateLispParenColor={updateLispParenColor}
+        updateThemePreference={applyThemePreference}
+        updateDesktopSurfaceScalePreference={updateDesktopSurfaceScalePreference}
+        workItems={workItems}
+      />
+    ),
+    "editor-symbol": (
+      <EditorSymbolRailPanel
+        currentEditorCursorSymbol={currentEditorCursorSymbol}
+        currentEditorCursorSymbolHelp={currentEditorCursorSymbolHelp}
+        currentEditorCursorSymbolPackage={currentEditorCursorSymbolPackage}
+        currentEditorPackage={currentEditorPackage}
+        runtimeCurrentPackage={runtimeSummary?.currentPackage}
+      />
+    )
+  };
+
+  const leftRailPanelEntries = createShellRailPanelEntries(leftRailPanels, allShellPanelContentById);
+  const rightRailPanelEntries = createShellRailPanelEntries(rightRailPanels, allShellPanelContentById);
+  const undockedShellPanelEntries = createShellRailPanelEntries(
+    shellLayout.undockedPanelIds
+      .map((panelId) => SHELL_DOCK_PANEL_DEFINITIONS[panelId])
+      .filter((panel): panel is NonNullable<typeof panel> => Boolean(panel)),
+    allShellPanelContentById
+  );
+
+  const activeLeftRailPanelEntry = resolveActiveShellRailPanel(leftRailPanelEntries, shellLayout.leftRail.activePanelId);
+  const activeRightRailPanelEntry = resolveActiveShellRailPanel(rightRailPanelEntries, shellLayout.rightRail.activePanelId);
 
   return (
     <div
       className={`desktop-shell${sidebarPinned ? "" : " sidebar-collapsed"}${canvasPinned ? "" : " canvas-collapsed"}${inspectorPinned ? "" : " inspector-collapsed"}`}
+      data-shell-drag-origin={shellPanelDragState?.origin ?? ""}
+      data-shell-drag-panel-id={shellPanelDragState?.panelId ?? ""}
+      data-shell-drag-target={shellPanelDragState?.target ?? ""}
       ref={shellRef}
-      style={
-        desktopShellInlineColumns
+      style={{
+        ...(desktopShellInlineColumns
           ? {
-              gridTemplateColumns: desktopShellInlineColumns,
-              ["--shell-gap" as string]: `${shellGapForViewport(viewportWidth)}px`,
-              ["--shell-padding-x" as string]: `${shellHorizontalPaddingForViewport(viewportWidth)}px`,
-              ["--shell-sidebar-width" as string]: `${
-                sidebarPinned
-                  ? Math.max(sidebarWidth ?? shellSidebarDefaultWidthForViewport(viewportWidth), shellSidebarMinWidthForViewport(viewportWidth))
-                  : shellSidebarWidthForViewport(viewportWidth, false)
-              }px`,
-              ["--shell-inspector-width" as string]: `${
-                Math.min(
-                  Math.max(
-                    inspectorWidth ?? shellInspectorDefaultWidthForViewport(viewportWidth),
-                    shellInspectorMinWidthForViewport(viewportWidth)
-                  ),
-                  Math.max(
-                    shellInspectorMinWidthForViewport(viewportWidth),
-                    viewportWidth -
-                      shellHorizontalPaddingForViewport(viewportWidth) * 2 -
-                      (sidebarPinned
-                        ? Math.max(sidebarWidth ?? shellSidebarDefaultWidthForViewport(viewportWidth), shellSidebarMinWidthForViewport(viewportWidth))
-                        : shellSidebarWidthForViewport(viewportWidth, false)) -
-                      shellCanvasMinWidthForViewport(viewportWidth) -
-                      shellGapForViewport(viewportWidth) * 2
-                  )
-                )
-              }px`
+              gridTemplateColumns: desktopShellInlineColumns
             }
-          : undefined
-      }
+          : {}),
+        ["--shell-gap" as string]: `${shellGap}px`,
+        ["--shell-padding-x" as string]: `${shellHorizontalPadding}px`,
+        ["--shell-sidebar-width" as string]: `${effectiveSidebarColumnWidth}px`,
+        ["--shell-inspector-width" as string]: `${effectiveInspectorColumnWidth}px`,
+        ["--desktop-tooltip-scale" as string]: `${tooltipScalePercent / 100}`,
+        ["--desktop-control-icon-scale" as string]: `${controlIconScalePercent / 100}`,
+        ["--desktop-dock-icon-scale" as string]: `${dockIconScalePercent / 100}`,
+        ["--desktop-conversation-text-scale" as string]: `${conversationTextScalePercent / 100}`,
+        ["--desktop-source-code-text-scale" as string]: `${sourceCodeTextScalePercent / 100}`
+      }}
     >
+      {isSidebarResizing || isInspectorResizing ? (
+        <div
+          aria-hidden="true"
+          className="shell-resize-capture-layer"
+          onMouseMove={handleShellResizeCaptureMouseMove}
+          onMouseUp={handleShellResizeCaptureMouseUp}
+        />
+      ) : null}
       <div className="window-drag-strip" aria-hidden="true">
         <div className="window-drag-label">IntentOS Shell</div>
       </div>
 
       <div className="shell-glow shell-glow-left" />
       <div className="shell-glow shell-glow-right" />
+
+      {errorMessage ? (
+        <section className="shell-runtime-alert" role="alert">
+          <div className="shell-runtime-alert-copy">
+            <p className="shell-runtime-alert-eyebrow">Runtime Recovery</p>
+            <strong>IntentOS Shell encountered a host or startup fault.</strong>
+            <p>{errorMessage}</p>
+          </div>
+          <button
+            aria-label="Dismiss runtime alert"
+            className="shell-runtime-alert-dismiss"
+            onClick={() => setErrorMessage(null)}
+            type="button"
+          >
+            Dismiss
+          </button>
+        </section>
+      ) : null}
+
+      {isEnvironmentImageChooserOpen && environmentImageRegistry ? (
+        <EnvironmentImageChooserDialog
+          onClose={() => void handleContinueWithCurrentEnvironmentImage()}
+          onOpenImage={(imageIdOrName) => void handleOpenEnvironmentImage(imageIdOrName)}
+          registry={environmentImageRegistry}
+        />
+      ) : null}
+
+      {isEnvironmentExitDialogOpen ? (
+        <EnvironmentExitDialog
+          canOverwriteCurrentImage={Boolean(environmentImageRegistry?.currentImageName)}
+          currentImageName={environmentImageRegistry?.currentImageName ?? null}
+          onClose={() => setIsEnvironmentExitDialogOpen(false)}
+          onDiscard={() => void handleDiscardAndQuit()}
+          onSaveAsNew={() => void handleSaveAsNewImageAndQuit()}
+          onSaveCurrent={() => void handleSaveCurrentImageAndQuit()}
+          saveAsName={environmentSaveAsNameDraft}
+          setSaveAsName={setEnvironmentSaveAsNameDraft}
+        />
+      ) : null}
 
       {isProjectOpenDialogOpen ? (
         <ProjectOpenDialog
@@ -4872,6 +7614,333 @@ export function App() {
           onCreateProject={() => void handleCreateProjectFromEnvironment(newProjectTitleDraft)}
           setTitleDraft={setNewProjectTitleDraft}
           titleDraft={newProjectTitleDraft}
+        />
+      ) : null}
+
+      {isEditorSourceFileDialogOpen ? (
+        <EditorSourceFileLoadDialog
+          currentPathDraft={editorSourceDirectoryPathDraft}
+          directoryListing={editorSourceDirectoryListing}
+          onChangePathDraft={setEditorSourceDirectoryPathDraft}
+          onClose={() => setIsEditorSourceFileDialogOpen(false)}
+          onLoadDirectory={() => void loadEditorSourceDirectory(editorSourceDirectoryPathDraft)}
+          onLoadSelectedFile={() => void handleLoadEditorSourceFile()}
+          onNavigateDirectory={navigateEditorSourceDirectory}
+          onNavigateParent={navigateEditorSourceParentDirectory}
+          selectedFilePath={editorSourceFilePathDraft}
+          pathDraft={editorSourceFilePathDraft}
+          setPathDraft={setEditorSourceFilePathDraft}
+        />
+      ) : null}
+
+      {isEditorSourceFileSaveDialogOpen ? (
+        <EditorSourceFileSaveDialog
+          currentPathDraft={editorSourceSaveDirectoryPathDraft}
+          directoryListing={editorSourceSaveDirectoryListing}
+          fileNameDraft={editorSourceSaveFileNameDraft}
+          onChangeFileNameDraft={setEditorSourceSaveFileNameDraft}
+          onChangePathDraft={setEditorSourceSaveDirectoryPathDraft}
+          onClose={() => setIsEditorSourceFileSaveDialogOpen(false)}
+          onNavigateDirectory={navigateEditorSourceSaveDirectory}
+          onNavigateParent={navigateEditorSourceSaveParentDirectory}
+          onOpenDirectory={() => void loadEditorSourceSaveDirectory(editorSourceSaveDirectoryPathDraft)}
+          onSave={() => void handleSaveCurrentEditorBufferAs()}
+          selectedFilePath={joinDirectoryAndFileName(editorSourceSaveDirectoryPathDraft, editorSourceSaveFileNameDraft)}
+        />
+      ) : null}
+
+      {isProjectConstitutionDialogOpen && selectedProjectDetail ? (
+        <ProjectConstitutionEditDialog
+          constitutionDraft={projectConstitutionDraft}
+          onClose={() => setIsProjectConstitutionDialogOpen(false)}
+          onSave={() => void handleSaveProjectConstitution()}
+          projectTitle={selectedProjectDetail.title}
+          setConstitutionDraft={setProjectConstitutionDraft}
+        />
+      ) : null}
+
+      {isProjectRequirementDialogOpen && selectedProjectDetail ? (
+        <ProjectRequirementCreateDialog
+          onClose={() => setIsProjectRequirementDialogOpen(false)}
+          onCreateRequirement={() => void handleCreateProjectRequirement()}
+          projectTitle={selectedProjectDetail.title}
+          requirementPriority={projectRequirementPriorityDraft}
+          requirementStatus={projectRequirementStatusDraft}
+          requirementSummary={projectRequirementSummaryDraft}
+          requirementTitle={projectRequirementTitleDraft}
+          setRequirementPriority={setProjectRequirementPriorityDraft}
+          setRequirementStatus={setProjectRequirementStatusDraft}
+          setRequirementSummary={setProjectRequirementSummaryDraft}
+          setRequirementTitle={setProjectRequirementTitleDraft}
+        />
+      ) : null}
+
+      {isProjectFeatureSpecificationDialogOpen && selectedProjectDetail ? (
+        <ProjectFeatureSpecificationCreateDialog
+          acceptanceCriteriaDraft={projectFeatureSpecificationAcceptanceCriteriaDraft}
+          featureStatus={projectFeatureSpecificationStatusDraft}
+          featureSummary={projectFeatureSpecificationSummaryDraft}
+          featureTitle={projectFeatureSpecificationTitleDraft}
+          onClose={() => setIsProjectFeatureSpecificationDialogOpen(false)}
+          onCreateFeatureSpecification={() => void handleCreateProjectFeatureSpecification()}
+          projectTitle={selectedProjectDetail.title}
+          setAcceptanceCriteriaDraft={setProjectFeatureSpecificationAcceptanceCriteriaDraft}
+          setFeatureStatus={setProjectFeatureSpecificationStatusDraft}
+          setFeatureSummary={setProjectFeatureSpecificationSummaryDraft}
+          setFeatureTitle={setProjectFeatureSpecificationTitleDraft}
+        />
+      ) : null}
+
+      {isProjectUserJourneyDialogOpen && selectedProjectDetail ? (
+        <ProjectUserJourneyCreateDialog
+          actorsDraft={projectUserJourneyActorsDraft}
+          edgeCasesDraft={projectUserJourneyEdgeCasesDraft}
+          entrypointsDraft={projectUserJourneyEntrypointsDraft}
+          journeySummary={projectUserJourneySummaryDraft}
+          journeyTitle={projectUserJourneyTitleDraft}
+          onClose={() => setIsProjectUserJourneyDialogOpen(false)}
+          onCreateUserJourney={() => void handleCreateProjectUserJourney()}
+          outcomesDraft={projectUserJourneyOutcomesDraft}
+          projectTitle={selectedProjectDetail.title}
+          setActorsDraft={setProjectUserJourneyActorsDraft}
+          setEdgeCasesDraft={setProjectUserJourneyEdgeCasesDraft}
+          setEntrypointsDraft={setProjectUserJourneyEntrypointsDraft}
+          setJourneySummary={setProjectUserJourneySummaryDraft}
+          setJourneyTitle={setProjectUserJourneyTitleDraft}
+          setOutcomesDraft={setProjectUserJourneyOutcomesDraft}
+          setStepsDraft={setProjectUserJourneyStepsDraft}
+          stepsDraft={projectUserJourneyStepsDraft}
+        />
+      ) : null}
+
+      {isProjectArchitectureDecisionDialogOpen && selectedProjectDetail ? (
+        <ProjectArchitectureDecisionCreateDialog
+          consequencesDraft={projectArchitectureDecisionConsequencesDraft}
+          decisionStatus={projectArchitectureDecisionStatusDraft}
+          decisionSummary={projectArchitectureDecisionSummaryDraft}
+          decisionTitle={projectArchitectureDecisionTitleDraft}
+          driversDraft={projectArchitectureDecisionDriversDraft}
+          onClose={() => setIsProjectArchitectureDecisionDialogOpen(false)}
+          onCreateArchitectureDecision={() => void handleCreateProjectArchitectureDecision()}
+          projectTitle={selectedProjectDetail.title}
+          setConsequencesDraft={setProjectArchitectureDecisionConsequencesDraft}
+          setDecisionStatus={setProjectArchitectureDecisionStatusDraft}
+          setDecisionSummary={setProjectArchitectureDecisionSummaryDraft}
+          setDecisionTitle={setProjectArchitectureDecisionTitleDraft}
+          setDriversDraft={setProjectArchitectureDecisionDriversDraft}
+          setStackChoicesDraft={setProjectArchitectureDecisionStackChoicesDraft}
+          stackChoicesDraft={projectArchitectureDecisionStackChoicesDraft}
+        />
+      ) : null}
+
+      {isProjectDesignSystemDialogOpen && selectedProjectDetail ? (
+        <ProjectRecordEditDialog
+          draft={projectDesignSystemDraft}
+          fieldLabel="Design System JSON"
+          onClose={() => setIsProjectDesignSystemDialogOpen(false)}
+          onSave={() => void handleSaveProjectDesignSystem()}
+          projectTitle={selectedProjectDetail.title}
+          recordLabel="Design System"
+          setDraft={setProjectDesignSystemDraft}
+        />
+      ) : null}
+
+      {isProjectStyleGuideDialogOpen && selectedProjectDetail ? (
+        <ProjectRecordEditDialog
+          draft={projectStyleGuideDraft}
+          fieldLabel="Style Guide JSON"
+          onClose={() => setIsProjectStyleGuideDialogOpen(false)}
+          onSave={() => void handleSaveProjectStyleGuide()}
+          projectTitle={selectedProjectDetail.title}
+          recordLabel="Style Guide"
+          setDraft={setProjectStyleGuideDraft}
+        />
+      ) : null}
+
+      {isProjectReleaseReadinessDialogOpen && selectedProjectDetail ? (
+        <ProjectReleaseReadinessEditDialog
+          onClose={() => setIsProjectReleaseReadinessDialogOpen(false)}
+          onSave={() => void handleSaveProjectReleaseReadiness()}
+          openRisksDraft={projectReleaseReadinessOpenRisksDraft}
+          observationPlanDraft={projectReleaseReadinessObservationPlanDraft}
+          projectTitle={selectedProjectDetail.title}
+          requiredApproversDraft={projectReleaseReadinessRequiredApproversDraft}
+          setOpenRisksDraft={setProjectReleaseReadinessOpenRisksDraft}
+          setObservationPlanDraft={setProjectReleaseReadinessObservationPlanDraft}
+          setProjectReleaseReadinessSignoffStatusDraft={setProjectReleaseReadinessSignoffStatusDraft}
+          setProjectReleaseReadinessStageDraft={setProjectReleaseReadinessStageDraft}
+          setProjectReleaseReadinessTargetWindowDraft={setProjectReleaseReadinessTargetWindowDraft}
+          setRequiredApproversDraft={setProjectReleaseReadinessRequiredApproversDraft}
+          signoffStatusDraft={projectReleaseReadinessSignoffStatusDraft}
+          stageDraft={projectReleaseReadinessStageDraft}
+          targetWindowDraft={projectReleaseReadinessTargetWindowDraft}
+        />
+      ) : null}
+
+      {isProjectReadinessObligationsDialogOpen && selectedProjectDetail ? (
+        <ProjectReadinessObligationsEditDialog
+          obligationsDraft={projectReadinessObligationsDraft}
+          onAddObligation={addProjectReadinessObligationDraft}
+          onClose={() => setIsProjectReadinessObligationsDialogOpen(false)}
+          onRemoveObligation={removeProjectReadinessObligationDraft}
+          onSave={() => void handleSaveProjectReadinessObligations()}
+          onUpdateObligation={updateProjectReadinessObligationDraft}
+          projectTitle={selectedProjectDetail.title}
+        />
+      ) : null}
+
+      {isProjectTestingStrategyDialogOpen && selectedProjectDetail ? (
+        <ProjectTestingStrategyEditDialog
+          availableHarnesses={projectTestingHarnessInventory}
+          maximumEnvironmentSaveLoadSecondsDraft={projectTestingStrategyMaximumEnvironmentSaveLoadSecondsDraft}
+          maximumFailedTestsDraft={projectTestingStrategyMaximumFailedTestsDraft}
+          maximumSayTurnLatencySecondsDraft={projectTestingStrategyMaximumSayTurnLatencySecondsDraft}
+          onAddSuiteExpectation={addProjectTestingStrategySuiteExpectation}
+          onClose={() => setIsProjectTestingStrategyDialogOpen(false)}
+          onRemoveSuiteExpectation={removeProjectTestingStrategySuiteExpectation}
+          onSave={() => void handleSaveProjectTestingStrategy()}
+          projectTitle={selectedProjectDetail.title}
+          requiredEvidenceDraft={projectTestingStrategyRequiredEvidenceDraft}
+          requireCoverageDraft={projectTestingStrategyRequireCoverageDraft}
+          requireRecoveryReadyDraft={projectTestingStrategyRequireRecoveryReadyDraft}
+          setMaximumEnvironmentSaveLoadSecondsDraft={setProjectTestingStrategyMaximumEnvironmentSaveLoadSecondsDraft}
+          setMaximumFailedTestsDraft={setProjectTestingStrategyMaximumFailedTestsDraft}
+          setMaximumSayTurnLatencySecondsDraft={setProjectTestingStrategyMaximumSayTurnLatencySecondsDraft}
+          setRequiredEvidenceDraft={setProjectTestingStrategyRequiredEvidenceDraft}
+          setRequireCoverageDraft={setProjectTestingStrategyRequireCoverageDraft}
+          setRequireRecoveryReadyDraft={setProjectTestingStrategyRequireRecoveryReadyDraft}
+          suiteExpectationsDraft={projectTestingStrategySuiteExpectationsDraft}
+          updateSuiteExpectation={updateProjectTestingStrategySuiteExpectation}
+        />
+      ) : null}
+
+      {isProjectSourceRootDialogOpen && selectedProjectDetail ? (
+        <ProjectSourceRootCreateDialog
+          onClose={() => setIsProjectSourceRootDialogOpen(false)}
+          onCreateSourceRoot={() => void handleCreateProjectSourceRoot()}
+          projectTitle={selectedProjectDetail.title}
+          setSourceRootDraft={setProjectSourceRootDraft}
+          sourceRootDraft={projectSourceRootDraft}
+        />
+      ) : null}
+
+      {isProjectTestingHarnessDialogOpen && selectedProjectDetail ? (
+        <ProjectTestingHarnessBindDialog
+          availableHarnesses={projectTestingHarnessInventory}
+          harnessIdDraft={projectTestingHarnessIdDraft}
+          onBindTestingHarness={() => void handleBindProjectTestingHarness()}
+          onClose={() => setIsProjectTestingHarnessDialogOpen(false)}
+          projectTitle={selectedProjectDetail.title}
+          setHarnessIdDraft={setProjectTestingHarnessIdDraft}
+        />
+      ) : null}
+
+      {isProjectQualityGateDialogOpen && selectedProjectDetail ? (
+        <ProjectQualityGateCreateDialog
+          availableHarnesses={projectTestingHarnessInventory}
+          gateStatusDraft={projectQualityGateStatusDraft}
+          gateSummaryDraft={projectQualityGateSummaryDraft}
+          gateTitleDraft={projectQualityGateTitleDraft}
+          maximumEnvironmentSaveLoadSecondsDraft={projectQualityGateMaximumEnvironmentSaveLoadSecondsDraft}
+          maximumFailedTestsDraft={projectQualityGateMaximumFailedTestsDraft}
+          maximumSayTurnLatencySecondsDraft={projectQualityGateMaximumSayTurnLatencySecondsDraft}
+          minimumLinkedIncidentsDraft={projectQualityGateMinimumLinkedIncidentsDraft}
+          minimumLinkedWorkItemsDraft={projectQualityGateMinimumLinkedWorkItemsDraft}
+          onClose={() => setIsProjectQualityGateDialogOpen(false)}
+          onCreateQualityGate={() => void handleCreateProjectQualityGate()}
+          projectTitle={selectedProjectDetail.title}
+          requiredHarnessIdsDraft={projectQualityGateRequiredHarnessIdsDraft}
+          requireCoverageDraft={projectQualityGateRequireCoverageDraft}
+          requireRecoveryReadyDraft={projectQualityGateRequireRecoveryReadyDraft}
+          requireSourceRootsDraft={projectQualityGateRequireSourceRootsDraft}
+          setGateStatusDraft={setProjectQualityGateStatusDraft}
+          setGateSummaryDraft={setProjectQualityGateSummaryDraft}
+          setGateTitleDraft={setProjectQualityGateTitleDraft}
+          setMaximumEnvironmentSaveLoadSecondsDraft={setProjectQualityGateMaximumEnvironmentSaveLoadSecondsDraft}
+          setMaximumFailedTestsDraft={setProjectQualityGateMaximumFailedTestsDraft}
+          setMaximumSayTurnLatencySecondsDraft={setProjectQualityGateMaximumSayTurnLatencySecondsDraft}
+          setMinimumLinkedIncidentsDraft={setProjectQualityGateMinimumLinkedIncidentsDraft}
+          setMinimumLinkedWorkItemsDraft={setProjectQualityGateMinimumLinkedWorkItemsDraft}
+          setRequiredHarnessIdsDraft={setProjectQualityGateRequiredHarnessIdsDraft}
+          setRequireCoverageDraft={setProjectQualityGateRequireCoverageDraft}
+          setRequireRecoveryReadyDraft={setProjectQualityGateRequireRecoveryReadyDraft}
+          setRequireSourceRootsDraft={setProjectQualityGateRequireSourceRootsDraft}
+        />
+      ) : null}
+
+      {isWorkItemSteerDialogOpen && selectedWorkItem ? (
+        <WorkItemSteerDialog
+          nextStepDraft={workItemSteerNextStepDraft}
+          noteDraft={workItemSteerNoteDraft}
+          onClose={() => setIsWorkItemSteerDialogOpen(false)}
+          onSave={() => void handleSteerWorkItem()}
+          phaseDraft={workItemSteerPhaseDraft}
+          setNextStepDraft={setWorkItemSteerNextStepDraft}
+          setNoteDraft={setWorkItemSteerNoteDraft}
+          setPhaseDraft={setWorkItemSteerPhaseDraft}
+          workItemTitle={selectedWorkItem.title}
+        />
+      ) : null}
+
+      {isWorkItemResumeDialogOpen && selectedWorkItem ? (
+        <WorkItemResumeDialog
+          noteDraft={workItemResumeNoteDraft}
+          onClose={() => setIsWorkItemResumeDialogOpen(false)}
+          onSave={() => void handleResumeWorkItem()}
+          setNoteDraft={setWorkItemResumeNoteDraft}
+          workItemTitle={selectedWorkItem.title}
+        />
+      ) : null}
+
+      {isWorkItemQuarantineDialogOpen && selectedWorkItem ? (
+        <WorkItemQuarantineDialog
+          onClose={() => setIsWorkItemQuarantineDialogOpen(false)}
+          onSave={() => void handleQuarantineWorkItem()}
+          reasonDraft={workItemQuarantineReasonDraft}
+          setReasonDraft={setWorkItemQuarantineReasonDraft}
+          workItemTitle={selectedWorkItem.title}
+        />
+      ) : null}
+
+      {isWorkItemRollbackDialogOpen && selectedWorkItem ? (
+        <WorkItemRollbackDialog
+          noteDraft={workItemRollbackNoteDraft}
+          onClose={() => setIsWorkItemRollbackDialogOpen(false)}
+          onSave={() => void handleRollbackWorkItem()}
+          reasonDraft={workItemRollbackReasonDraft}
+          setNoteDraft={setWorkItemRollbackNoteDraft}
+          setReasonDraft={setWorkItemRollbackReasonDraft}
+          workItemTitle={selectedWorkItem.title}
+        />
+      ) : null}
+
+      {isWorkItemValidationDialogOpen && selectedWorkItem ? (
+        <WorkItemValidationDialog
+          onClose={() => setIsWorkItemValidationDialogOpen(false)}
+          onSave={() => void handleCompleteWorkItemValidations()}
+          setStatusDraft={setWorkItemValidationStatusDraft}
+          statusDraft={workItemValidationStatusDraft}
+          workItemTitle={selectedWorkItem.title}
+        />
+      ) : null}
+
+      {isIncidentRemediationPlanDialogOpen && selectedIncident ? (
+        <IncidentRemediationPlanDialog
+          actionDraft={incidentRemediationActionsDraft}
+          blockerDraft={incidentRemediationBlockersDraft}
+          incidentTitle={selectedIncident.title}
+          onClose={() => setIsIncidentRemediationPlanDialogOpen(false)}
+          onSave={() => void handleUpdateIncidentRemediationPlan()}
+          ownerDraft={incidentRemediationOwnerDraft}
+          setActionDraft={setIncidentRemediationActionsDraft}
+          setBlockerDraft={setIncidentRemediationBlockersDraft}
+          setOwnerDraft={setIncidentRemediationOwnerDraft}
+          setStatusDraft={setIncidentRemediationStatusDraft}
+          setSummaryDraft={setIncidentRemediationSummaryDraft}
+          setValidationDraft={setIncidentRemediationValidationDraft}
+          statusDraft={incidentRemediationStatusDraft}
+          summaryDraft={incidentRemediationSummaryDraft}
+          validationDraft={incidentRemediationValidationDraft}
         />
       ) : null}
 
@@ -4901,232 +7970,78 @@ export function App() {
       ) : null}
 
       {sidebarPinned && canvasPinned && viewportWidth > SHELL_STACK_BREAKPOINT ? (
-        <button
-          aria-label="Resize navigation"
-          className={`shell-column-splitter shell-column-splitter-left${isSidebarResizing ? " active" : ""}`}
-          onPointerDown={startSidebarResize}
-          style={
-            splitterLayout
-              ? {
-                  top: `${splitterLayout.top}px`,
-                  bottom: `${splitterLayout.bottom}px`,
-                  left: `${splitterLayout.left}px`
-                }
-              : undefined
-          }
-          type="button"
+        <ShellColumnSplitter
+          active={isSidebarResizing}
+          ariaLabel="Resize navigation"
+          layout={splitterLayout}
+          onMouseDown={startSidebarResize}
+          side="left"
         />
       ) : null}
 
       {sidebarPinned ? (
-        <aside className="sidebar" ref={sidebarPanelRef}>
-          <div className="panel-titlebar">
-            <button
-              aria-label="Hide Navigation"
-              className="panel-titlebar-toggle"
-              onClick={() => void toggleSidebarPinned()}
-              title="Hide Navigation"
-              type="button"
-            >
-              <span aria-hidden="true">−</span>
-            </button>
-            <span className="panel-titlebar-label">Shell</span>
-          </div>
-          <div className="sidebar-body">
-            <nav className="workspace-nav" aria-label="Control Panel workspace navigation">
-              <section className="workspace-group">
-                <p className="workspace-group-label">Control Panel</p>
-                <p className="workspace-group-summary">
-                  The current environment-first operating experience now lives as the first hosted application.
-                </p>
-              </section>
-              {groupWorkspaces().map(([group, items]) => (
-                <section className="workspace-group" key={group}>
-                  <p className="workspace-group-label">{group}</p>
-                  {items.map((workspace) => (
-                    <div className="workspace-tree-node" key={workspace.id}>
-                      <div
-                        className={
-                          activeHostedApp === "control-panel" && workspace.id === topLevelJourneyWorkspace(activeWorkspace)
-                            ? "workspace-link active"
-                            : "workspace-link"
-                        }
-                      >
-                        <button
-                          className="workspace-link-main"
-                          aria-keyshortcuts={workspace.primary ? String(keyboardWorkspaceOrder.indexOf(workspace.id) + 1) : undefined}
-                          onClick={() => {
-                            if (workspace.id === "environment") {
-                              void navigateToOperateSection(selectedOperateSection);
-                              return;
-                            }
-                            if (workspace.id === "conversations") {
-                              void navigateToConversationSection(selectedConversationSection);
-                              return;
-                            }
-                            if (workspace.id === "runtime") {
-                              void navigateToExecutionSection(selectedExecutionSection);
-                              return;
-                            }
-                            if (workspace.id === "incidents") {
-                              void navigateToRecoverySection(selectedRecoverySection);
-                              return;
-                            }
-                            if (workspace.id === "artifacts") {
-                              void navigateToEvidenceSection(selectedEvidenceSection);
-                              return;
-                            }
-                            if (workspace.id === "browser") {
-                              void navigateToBrowserDomain(selectedBrowserDomain);
-                              return;
-                            }
-                            if (workspace.id === "configuration") {
-                              void navigateToConfigurationSurface();
-                              return;
-                            }
-                            void navigateToWorkspace(workspace.id);
-                          }}
-                          type="button"
-                        >
-                          <span>{workspace.label}</span>
-                        </button>
-                        <div className="workspace-link-meta">
-                          {workspace.id === "environment" ||
-                          workspace.id === "browser" ? (
-                            <button
-                              aria-label={`${expandedWorkspaceMenus[workspace.id] ? "Collapse" : "Expand"} ${workspace.label}`}
-                              className="workspace-disclosure"
-                              onClick={() => toggleWorkspaceMenu(workspace.id)}
-                              type="button"
-                            >
-                              {expandedWorkspaceMenus[workspace.id] ? "▾" : "▸"}
-                            </button>
-                          ) : null}
-                        </div>
-                      </div>
-                      {workspace.id === "environment" && expandedWorkspaceMenus.environment ? (
-                        <div className="workspace-child-list">
-                          {operateSections.map((section) => (
-                            <button
-                              className={
-                                activeHostedApp === "control-panel" &&
-                                activeWorkspace === "environment" &&
-                                selectedOperateSection === section.id
-                                  ? "workspace-child-link active"
-                                  : "workspace-child-link"
-                              }
-                              key={section.id}
-                              onClick={() => {
-                                void navigateToOperateSection(section.id);
-                              }}
-                              type="button"
-                            >
-                              <span title={section.summary}>{section.label}</span>
-                            </button>
-                          ))}
-                          <div className="workspace-child-section-label">Execution</div>
-                          {executionSections.map((section) => (
-                            <button
-                              className={
-                                activeHostedApp === "control-panel" &&
-                                activeWorkspace === "runtime" &&
-                                selectedExecutionSection === section.id
-                                  ? "workspace-child-link active"
-                                  : "workspace-child-link"
-                              }
-                              key={section.id}
-                              onClick={() => {
-                                void navigateToExecutionSection(section.id);
-                              }}
-                              type="button"
-                            >
-                              <span title={section.summary}>{section.label}</span>
-                            </button>
-                          ))}
-                          <div className="workspace-child-section-label">Recovery</div>
-                          {recoverySections.map((section) => (
-                            <button
-                              className={
-                                activeHostedApp === "control-panel" &&
-                                activeWorkspace === "incidents" &&
-                                selectedRecoverySection === section.id
-                                  ? "workspace-child-link active"
-                                  : "workspace-child-link"
-                              }
-                              key={section.id}
-                              onClick={() => {
-                                void navigateToRecoverySection(section.id);
-                              }}
-                              type="button"
-                            >
-                              <span title={section.summary}>{section.label}</span>
-                            </button>
-                          ))}
-                          <div className="workspace-child-section-label">Evidence</div>
-                          {evidenceSections.map((section) => (
-                            <button
-                              className={
-                                activeHostedApp === "control-panel" &&
-                                activeWorkspace === "artifacts" &&
-                                selectedEvidenceSection === section.id
-                                  ? "workspace-child-link active"
-                                  : "workspace-child-link"
-                              }
-                              key={section.id}
-                              onClick={() => {
-                                void navigateToEvidenceSection(section.id);
-                              }}
-                              type="button"
-                            >
-                              <span title={section.summary}>{section.label}</span>
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
-                      {workspace.id === "browser" && expandedWorkspaceMenus.browser ? (
-                        <div className="workspace-child-list">
-                          {browserDomains.map((domain) => (
-                            <button
-                              className={
-                                activeHostedApp === "control-panel" &&
-                                activeWorkspace === "browser" &&
-                                selectedBrowserDomain === domain.id
-                                  ? "workspace-child-link active"
-                                  : "workspace-child-link"
-                              }
-                              key={domain.id}
-                              onClick={() => {
-                                void navigateToBrowserDomain(domain.id);
-                              }}
-                              type="button"
-                            >
-                              <span title={domain.summary}>{domain.label}</span>
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  ))}
-                </section>
-              ))}
-            </nav>
-          </div>
-        </aside>
+        <ShellRailHost
+          activePanelId={shellLayout.leftRail.activePanelId}
+          ariaLabel="Application navigation"
+          dockPanels={leftRailPanels}
+          dragTargetActive={shellPanelDragState?.target === "left"}
+          listRef={leftRailListRef}
+          onDropDockedPanel={(panelId) => {
+            void dockShellPanel(panelId, "left");
+            endNativeShellPanelDrag();
+          }}
+          onNativeDragEnd={endNativeShellPanelDrag}
+          onNativeDragStart={(panelId, panelLabel, origin) => {
+            beginNativeShellPanelDrag(panelId, panelLabel, origin);
+          }}
+          onPanelPointerDown={(panelId, panelLabel, event) => {
+            beginShellPanelPointerDrag(panelId, panelLabel, "left", event.clientX, event.clientY);
+          }}
+          onToggle={() => {
+            void toggleSidebarPinned();
+          }}
+          onSelectPanel={(panelId) => activateShellRailPanel("left", panelId)}
+          onUndockPanel={(panelId) => {
+            void undockShellPanel(panelId);
+          }}
+          onMovePanel={(panelId, direction) => {
+            void reorderShellRailPanel("left", panelId, direction);
+          }}
+          panelRef={sidebarPanelRef}
+          title="Shell"
+          toggleAriaLabel="Hide Navigation"
+          toggleTitle="Hide Navigation"
+        >
+          {activeLeftRailPanelEntry?.content ?? null}
+        </ShellRailHost>
       ) : (
-        <aside className="sidebar sidebar-collapsed-rail" aria-label="Collapsed application navigation">
-          <div className="collapsed-panel-titlebar">
-            <button
-              aria-label="Show Navigation"
-              className="panel-titlebar-toggle collapsed-panel-toggle"
-              onClick={() => void toggleSidebarPinned()}
-              title="Show Navigation"
-              type="button"
-            >
-              <span aria-hidden="true">+</span>
-            </button>
-            <span className="collapsed-panel-title">Shell</span>
+        <ShellCollapsedRail
+          ariaLabel="Collapsed application navigation"
+          className="sidebar sidebar-collapsed-rail"
+          onToggle={() => {
+            void toggleSidebarPinned();
+          }}
+          title="Shell"
+          toggleAriaLabel="Show Navigation"
+          toggleTitle="Show Navigation"
+        >
+          <div className="shell-sidebar-dock shell-sidebar-dock-collapsed">
+            <div className="desktop-window-dock-rail shell-sidebar-dock-rail" role="toolbar" aria-label="Shell actions">
+              <button
+                aria-label="Exit IntentOS Shell"
+                className="desktop-window-dock-item shell-sidebar-dock-item-collapsed"
+                data-tooltip="Exit IntentOS Shell"
+                onClick={openEnvironmentExitDialog}
+                type="button"
+              >
+                <span className="desktop-window-dock-icon shell-sidebar-dock-icon-collapsed" aria-hidden="true">
+                  <span className="desktop-window-dock-glyph desktop-window-dock-glyph-exit" />
+                </span>
+                <span className="desktop-window-dock-indicator" aria-hidden="true" />
+              </button>
+            </div>
           </div>
-        </aside>
+        </ShellCollapsedRail>
       )}
       {canvasPinned ? (
         <main className="canvas" ref={canvasPanelRef}>
@@ -5170,11 +8085,14 @@ export function App() {
                 conversationDraft,
                 incidents,
                 inspectRuntimeSymbol,
+                isDecidingApproval,
                 isEditingSource,
                 isInspectingRuntime,
                 isReloadingSource,
                 isStagingSource,
                 loadSourcePreview,
+                consoleLogStream,
+                diagnosticReports,
                 navigateToWorkspace: (workspaceId) => {
                   void navigateToWorkspace(workspaceId);
                 },
@@ -5188,7 +8106,9 @@ export function App() {
                 runtimeInspectorPackage,
                 runtimeInspectorSymbol,
                 runtimeSummary,
+                runtimeTelemetry,
                 selectedDomain: selectedBrowserDomain,
+                selectedTelemetryProcessId,
                 selectedPackageName,
                 selectedThread,
                 selectedThreadId,
@@ -5198,7 +8118,13 @@ export function App() {
                 setRuntimeInspectionMode: updateRuntimeInspectionMode,
                 setRuntimeInspectorPackage: updateRuntimeInspectorPackage,
                 setRuntimeInspectorSymbol: updateRuntimeInspectorSymbol,
+                setSelectedConsolePlane,
+                setSelectedConsoleSourceFilter,
+                setSelectedConsoleEntryId,
+                setSelectedDiagnosticSourceFilter,
+                setSelectedDiagnosticReportId,
                 setSelectedPackageName,
+                setSelectedTelemetryProcessId,
                 setSelectedThreadId,
                 setSourceDraft,
                 sourceDraft,
@@ -5206,11 +8132,178 @@ export function App() {
                 sourcePreview,
                 sourceReloadResult,
                 stageSourceChange,
+                selectedConsolePlane,
+                selectedConsoleSourceFilter,
+                selectedDocumentationSlug,
+                selectedConsoleEntryId,
+                selectedDiagnosticSourceFilter,
+                selectedDiagnosticReport,
+                selectedDiagnosticReportId,
+                onOpenApprovalRequest: openApprovalRequest,
+                onSubmitApprovalDecision: (requestId, decision) => {
+                  void submitApprovalDecisionForRequest(requestId, decision);
+                },
+                openInspectorSurface: () => navigateToDesktopPanel("inspector"),
+                loadDocumentationPage,
                 threads,
                 workItems
               }}
+              projectsWorkspaceProps={{
+                approvalRequests,
+                currentProjectId,
+                isDecidingApproval,
+                onAddArchitectureDecision: openProjectArchitectureDecisionDialog,
+                onAddFeatureSpecification: openProjectFeatureSpecificationDialog,
+                onAddQualityGate: openProjectQualityGateDialog,
+                onAddRequirement: openProjectRequirementDialog,
+                onAddSourceRoot: openProjectSourceRootDialog,
+                onAddUserJourney: openProjectUserJourneyDialog,
+                onBindTestingHarness: () => void openProjectTestingHarnessDialog(),
+                onEditDesignSystem: openProjectDesignSystemDialog,
+                onEditStyleGuide: openProjectStyleGuideDialog,
+                onEditTestingStrategy: () => void openProjectTestingStrategyDialog(),
+                onEditReleaseReadiness: openProjectReleaseReadinessDialog,
+                onEditReadinessObligations: openProjectReadinessObligationsDialog,
+                onCreateProjectDialog: () => setIsProjectCreateDialogOpen(true),
+                onEditConstitution: openProjectConstitutionDialog,
+                onOpenProjectDialog: () => setIsProjectOpenDialogOpen(true),
+                onOpenApprovalRequest: openApprovalRequest,
+                onSelectProject: setSelectedGovernedProjectId,
+                onSubmitApprovalDecision: (requestId, decision) => {
+                  void submitApprovalDecisionForRequest(requestId, decision);
+                },
+                openInspectorSurface: () => navigateToDesktopPanel("inspector"),
+                projectSummaries: projectListResult?.data.projects ?? [],
+                selectedProjectDetail,
+                selectedProjectId: selectedGovernedProjectId,
+                workItems
+              }}
+              operateWorkspaceProps={{
+                actionQueue: dashboardActionQueue,
+                approvalRequests,
+                artifacts,
+                incidents,
+                isDecidingApproval,
+                leadAttention: shellProactiveLead,
+                monitorItems: shellMonitorItems,
+                navigateToActionQueueItem,
+                navigateToBrowserDomain,
+                navigateToConversationSection,
+                navigateToEvidenceSection,
+                navigateToExecutionSection,
+                navigateToRecoverySection,
+                openApprovalRequest,
+                recommendedTarget: recommendedDockJumpTarget,
+                recommendedTargets: shellRecommendedTargets,
+                selectedApproval,
+                selectedSection: selectedOperateSection,
+                status,
+                summary,
+                submitApprovalDecisionForRequest: (requestId, decision) => {
+                  void submitApprovalDecisionForRequest(requestId, decision);
+                },
+                workItems
+              }}
+              executionWorkspaceProps={{
+                approvalRequests,
+                createReplSession: handleCreateReplSession,
+                currentReplSessionId,
+                evaluateRuntimeForm,
+                isEvaluating,
+                inspectRuntimeSymbol,
+                isInspectingRuntime,
+                replSessionTitleDraft,
+                replSessions: currentProjectReplSessions,
+                runtimeForm,
+                runtimeInspection,
+                runtimeInspectionMode,
+                runtimeInspectorPackage,
+                runtimeInspectorSymbol,
+                runtimeResult,
+                runtimeSummary,
+                selectedWorkflowRecord,
+                selectedWorkItem,
+                selectedWorkItemId,
+                setReplSessionTitleDraft,
+                setRuntimeForm,
+                setRuntimeInspectionMode: updateRuntimeInspectionMode,
+                setRuntimeInspectorPackage: updateRuntimeInspectorPackage,
+                setRuntimeInspectorSymbol: updateRuntimeInspectorSymbol,
+                switchReplSession: handleSwitchReplSession,
+                openInspectorSurface: () => navigateToDesktopPanel("inspector"),
+                workItems
+              }}
+              approvalsWorkspaceProps={{
+                approvalDecision,
+                approvalRequests,
+                isDecidingApproval,
+                navigateToLinkedEntity,
+                reconciliationDecision: status?.reconciliationDecision ?? summary?.reconciliationDecision ?? null,
+                selectedApproval,
+                selectedApprovalId,
+                setSelectedApprovalId,
+                submitApprovalDecisionForRequest,
+                openInspectorSurface: () => navigateToDesktopPanel("inspector"),
+                workItems
+              }}
+              incidentsWorkspaceProps={{
+                clearPendingIncidentFocusId: () => setPendingIncidentFocusId(null),
+                incidents,
+                navigateToLinkedEntity,
+                openIncidentRemediationPlanDialog,
+                openInspectorSurface: () => navigateToDesktopPanel("inspector"),
+                pendingIncidentFocusId,
+                selectedIncident,
+                selectedIncidentId,
+                setSelectedIncidentId
+              }}
+              workWorkspaceProps={{
+                approvalRequests,
+                clearPendingWorkItemFocusId: () => setPendingWorkItemFocusId(null),
+                isDecidingApproval,
+                navigateToLinkedEntity,
+                openApprovalRequest,
+                openCompleteWorkItemValidationsDialog: openWorkItemValidationDialog,
+                openInspectorSurface: () => navigateToDesktopPanel("inspector"),
+                openQuarantineWorkItemDialog: openWorkItemQuarantineDialog,
+                openResumeWorkItemDialog: openWorkItemResumeDialog,
+                openRollbackWorkItemDialog: openWorkItemRollbackDialog,
+                openSteerWorkItemDialog: openWorkItemSteerDialog,
+                pendingWorkItemFocusId,
+                selectedWorkflowRecord,
+                selectedWorkItem,
+                selectedWorkItemPlan,
+                selectedWorkItemId,
+                setSelectedWorkItemId,
+                submitApprovalDecisionForRequest,
+                workItems
+              }}
+              evidenceWorkspaceProps={{
+                artifacts,
+                eventFamilyFilter,
+                eventVisibilityFilter,
+                events: environmentEvents,
+                navigateToLinkedEntity,
+                openInspectorSurface: () => navigateToDesktopPanel("inspector"),
+                selectedArtifact,
+                selectedArtifactId,
+                selectedEvent,
+                selectedEventCursor,
+                setEventFamilyFilter,
+                setEventVisibilityFilter,
+                setSelectedArtifactId,
+                setSelectedEventCursor
+              }}
               conversationsWorkspaceProps={{
+                activateConversationInspectorSection,
                 conversationDraft,
+                conversationSections,
+                currentReplSessionId,
+                createReplSession: handleCreateReplSession,
+                evaluateRuntimeForm,
+                inspectRuntimeSymbol,
+                isEvaluating,
+                isInspectingRuntime,
                 navigateToLinkedEntity,
                 onOpenCreateConversationSession: () => {
                   setIsConversationSessionCreateDialogOpen(true);
@@ -5221,27 +8314,170 @@ export function App() {
                   setIsConversationThreadRenameDialogOpen(true);
                 },
                 pageSignalCounts,
+                replSessionTitleDraft,
+                replSessions: currentProjectReplSessions,
+                runtimeForm,
+                runtimeInspection,
+                runtimeInspectionMode,
+                runtimeInspectorPackage,
+                runtimeInspectorSymbol,
+                runtimeResult,
+                runtimeSummary,
+                switchReplSession: handleSwitchReplSession,
+                selectedSection: selectedConversationSection,
                 selectedConversationMessageId,
                 selectedThread,
                 selectedThreadId,
                 selectedTurn,
                 selectedTurnId,
+                setReplSessionTitleDraft,
                 setConversationDraft,
                 setSelectedConversationMessageId,
+                setRuntimeForm,
+                setRuntimeInspectionMode: updateRuntimeInspectionMode,
+                setRuntimeInspectorPackage: updateRuntimeInspectorPackage,
+                setRuntimeInspectorSymbol: updateRuntimeInspectorSymbol,
                 setSelectedThreadId,
                 setSelectedTurnId,
+                openInspectorSurface: () => navigateToDesktopPanel("inspector"),
                 threads
               }}
               configurationWorkspaceProps={{
+                configurationSections,
                 lispParenColors: lispParenColors,
+                normalizeParenDepthColors,
                 resolvedTheme,
                 selectedSection: selectedConfigurationSection,
                 setSelectedSection: setSelectedConfigurationSection,
                 systemTheme,
                 themePreference,
-                updateLispParenColor,
-                updateThemePreference: applyThemePreference
+                tooltipScalePercent,
+                controlIconScalePercent,
+                dockIconScalePercent,
+                conversationTextScalePercent,
+                sourceCodeTextScalePercent
               }}
+              editorSurfaceProps={{
+                acceptCurrentBufferBaseline: acceptCurrentEditorBufferBaseline,
+                cloneEditorBuffer: cloneCurrentEditorBuffer,
+                createEditorBuffer,
+                currentBufferDirty: currentEditorBufferDirty,
+                currentBufferTitle: currentEditorBufferTitle,
+                deleteEditorBuffers: deleteCurrentEditorBuffers,
+                editorBuffers: currentEditorBuffers,
+                editorPackage: currentEditorPackage,
+                editorDraft: currentEditorDraft,
+                setEditorDraft: setCurrentEditorDraft,
+                editorResult: currentEditorResult,
+                packageBrowser,
+                runtimeEntityDetail,
+                runtimeInspection,
+                selectedBufferId: currentEditorBufferId,
+                setSelectedBufferId: setCurrentEditorBufferId,
+                sourcePreview,
+                runtimeSummary,
+                isEvaluating,
+                parenDepthColors: lispParenColors,
+                sourceCodeTextScalePercent,
+                inspectDefinitionSymbol: async (symbol, packageName, mode) => {
+                  await browseRuntimeEntity(symbol, packageName, mode ?? "definitions");
+                },
+                fetchRuntimeSymbolHelp: async (symbol, packageName) => {
+                  if (!effectiveEnvironmentId || symbol.trim().length === 0) {
+                    return null;
+                  }
+                  try {
+                    const result = await window.sbclAgentDesktop.query.runtimeEntityDetail({
+                      environmentId: effectiveEnvironmentId,
+                      symbol: symbol.trim(),
+                      packageName
+                    });
+                    return {
+                      detail: result.data.signature
+                        ? `${result.data.entityKind} • ${result.data.signature}`
+                        : result.data.entityKind,
+                      info: result.data.summary,
+                      signature: result.data.signature ?? null,
+                      type:
+                        result.data.entityKind === "macro"
+                          ? "keyword"
+                          : result.data.entityKind === "function" || result.data.entityKind === "generic-function"
+                            ? "function"
+                            : result.data.entityKind === "variable"
+                              ? "variable"
+                              : result.data.entityKind === "class"
+                                ? "class"
+                                : "text",
+                      packageName: result.data.packageName
+                    };
+                  } catch (_error) {
+                    return null;
+                  }
+                },
+                reportEditorCursorContext: ({ symbol, packageName, help }) => {
+                  setCurrentEditorCursorSymbol(symbol);
+                  setCurrentEditorCursorSymbolPackage(packageName);
+                  setCurrentEditorCursorSymbolHelp(help);
+                },
+                evaluateEditorBuffer,
+                openEditorSourceFileDialog,
+                openEditorSourceFileSaveDialog,
+                saveCurrentEditorBuffer: handleSaveCurrentEditorBuffer,
+                revertCurrentBufferToBaseline: revertCurrentEditorBufferToBaseline,
+                openSourcePreview: loadSourcePreview,
+                openConversationRepl: async (form) => {
+                  setRuntimeForm(form);
+                  updateRuntimeInspectorPackage(currentEditorPackage);
+                  await navigateToConversationSection("repl");
+                },
+                setRuntimeForm,
+                openInspectorSurface: () => navigateToDesktopPanel("inspector")
+              }}
+              workspaceSurfaceProps={{
+                evaluateWorkspaceForm,
+                evaluateWorkspaceSource,
+                isEvaluating,
+                openConversationRepl: async (form) => {
+                  setRuntimeForm(form);
+                  updateRuntimeInspectorPackage(currentWorkspacePackage);
+                  await navigateToConversationSection("repl");
+                },
+                openInspectorSurface: () => navigateToDesktopPanel("inspector"),
+                runtimeSummary,
+                setWorkspacePackage: setCurrentWorkspacePackage,
+                workspacePackage: currentWorkspacePackage,
+                setRuntimeForm,
+                setWorkspaceDraft: setCurrentWorkspaceDraft,
+                workspaceDraft: currentWorkspaceDraft,
+                workspaceHistory: currentWorkspaceHistory,
+                workspaceResult: currentWorkspaceResult
+              }}
+              transcriptSurfaceProps={{
+                openConversationRepl: async (form) => {
+                  setRuntimeForm(form);
+                  updateRuntimeInspectorPackage(currentWorkspacePackage);
+                  await navigateToConversationSection("repl");
+                },
+                openConversationContext: async (threadId, turnId) => {
+                  setSelectedThreadId(threadId);
+                  if (turnId) {
+                    setSelectedTurnId(turnId);
+                    await navigateToConversationSection("turns");
+                    return;
+                  }
+                  await navigateToConversationSection("threads");
+                },
+                openEvidenceObservation: () => navigateToEvidenceSection("observation"),
+                openInspectorSurface: () => navigateToDesktopPanel("inspector"),
+                openListener: async (form) => {
+                  setRuntimeForm(form);
+                  await navigateToExecutionSection("listener");
+                },
+                setWorkspaceDraft: setCurrentWorkspaceDraft,
+                transcriptEntries
+              }}
+              activeWorkspace={activeWorkspace}
+              selectedExecutionSection={selectedExecutionSection}
               currentProjectTitle={currentProject?.title ?? "implicit"}
               bindingId={binding?.environmentId ?? "unbound"}
               centerAttentionSignals={centerAttentionSignals}
@@ -5250,12 +8486,7 @@ export function App() {
               workflowState={status?.workflowState ?? "unknown"}
               shellCurrentSurfaceSummary={shellCurrentSurfaceSummary}
               leadAttention={shellProactiveLead}
-              selectedLane={selectedProactiveLane}
-              setSelectedLane={setSelectedProactiveLane}
-              monitorItems={shellMonitorItems}
-              recommendedTargets={shellRecommendedTargets}
-              recommendedTarget={recommendedDockJumpTarget}
-              stagedActions={shellStagedActions}
+              governedAttentionSignalCount={governedAttentionSignalCount}
               currentReplSessionId={currentReplSessionId}
               evaluateRuntimeForm={evaluateRuntimeForm}
               incidents={incidents}
@@ -5275,8 +8506,13 @@ export function App() {
                   void openListenerWorkbench();
                 } else if (window.hostedAppId === "control-panel") {
                   void navigateToHostedApp("control-panel");
-                } else if (window.panelId) {
-                  void navigateToDesktopPanel(window.panelId);
+                } else {
+                  const windowWorkspace = workspaceForDesktopWindow(window);
+                  if (windowWorkspace) {
+                    void navigateToWorkspace(windowWorkspace);
+                  } else if (window.panelId) {
+                    void navigateToDesktopPanel(window.panelId);
+                  }
                 }
               }}
               onMinimizeWindow={(windowId) => {
@@ -5331,7 +8567,7 @@ export function App() {
                 openDesktopWindow("window:shell-context");
               }}
               onOpenProactivityWindow={() => {
-                openDesktopWindow("window:proactivity");
+                void navigateToOperateSection("journeys");
               }}
               onOpenDetailedSurfaceWindow={() => {
                 openDesktopWindow("window:detailed-surface");
@@ -5343,17 +8579,13 @@ export function App() {
                 void openListenerWorkbench();
               }}
               onOpenWorkflowWindow={() => {
-                if ((approvalRequests.length > 0 || incidents.length > 0 || dashboardActionQueue.length > 0)) {
-                  openDesktopWindow("window:governance");
-                  return;
-                }
-                openDesktopWindow("window:proactivity");
+                void navigateToOperateSection("journeys");
               }}
               onOpenIncident={(incidentId) => {
-                void continueRecoveryFromDashboard(incidentId);
+                void continueRecovery(incidentId);
               }}
               onSubmitApprovalDecision={(requestId, decision) => {
-                void submitDashboardApprovalDecisionForRequest(requestId, decision);
+                void submitApprovalDecisionForRequest(requestId, decision);
               }}
               onSwitchDesktop={switchDesktopSpace}
               onZoomIn={() => {
@@ -5365,24 +8597,25 @@ export function App() {
               onZoomReset={() => {
                 updateActiveDesktopZoom(1);
               }}
-              onOpenRecommended={() => {
-                recommendedDockJumpTarget?.onJump();
-              }}
-              onOpenRecommendedTarget={(target) => {
-                target.onJump();
-              }}
-              onOpenMonitor={(item) => {
-                void navigateToWorkspace(item.workspace);
-              }}
-              onOpenStagedAction={(item) => {
-                void navigateToActionQueueItem(item);
-              }}
               onOpenDetailedWorkspace={() => {
                 if (activeHostedApp === "listener-workbench") {
                   void openListenerWorkbench();
                   return;
                 }
                 void navigateToWorkspace(activeWorkspace);
+              }}
+              undockedPanelContentById={allShellPanelContentById}
+              undockDropTargetActive={shellPanelDragState?.target === "undocked"}
+              undockDropTargetRef={desktopWindowStageDropTargetRef}
+              onDropUndockedPanel={(panelId) => {
+                void undockShellPanel(panelId);
+                endNativeShellPanelDrag();
+              }}
+              onDockUndockedPanelLeft={(panelId) => {
+                void dockShellPanel(panelId, "left");
+              }}
+              onDockUndockedPanelRight={(panelId) => {
+                void dockShellPanel(panelId, "right");
               }}
               replSessionTitleDraft={replSessionTitleDraft}
               replSessions={currentProjectReplSessions}
@@ -5423,89 +8656,61 @@ export function App() {
       )}
 
       {canvasPinned && inspectorPinned && viewportWidth > SHELL_STACK_BREAKPOINT ? (
-        <button
-          aria-label="Resize inspector"
-          className={`shell-column-splitter${isInspectorResizing ? " active" : ""}`}
-          onPointerDown={startInspectorResize}
-          style={
-            splitterLayout
-              ? {
-                  top: `${splitterLayout.top}px`,
-                  bottom: `${splitterLayout.bottom}px`,
-                  right: `${splitterLayout.right}px`
-                }
-              : undefined
-          }
-          type="button"
+        <ShellColumnSplitter
+          active={isInspectorResizing}
+          ariaLabel="Resize inspector"
+          layout={splitterLayout}
+          onMouseDown={startInspectorResize}
+          side="right"
         />
       ) : null}
 
       {inspectorPinned ? (
-        <WorkspaceInspector
-          activeWorkspace={activeWorkspace}
-          artifacts={artifacts}
-          binding={binding}
-          onToggleInspector={() => void toggleInspectorPinned()}
+        <ShellRailHost
+          activePanelId={shellLayout.rightRail.activePanelId}
+          ariaLabel="Workspace inspector"
+          dockPanels={rightRailPanels}
+          dragTargetActive={shellPanelDragState?.target === "right"}
+          listRef={rightRailListRef}
+          onDropDockedPanel={(panelId) => {
+            void dockShellPanel(panelId, "right");
+            endNativeShellPanelDrag();
+          }}
+          onNativeDragEnd={endNativeShellPanelDrag}
+          onNativeDragStart={(panelId, panelLabel, origin) => {
+            beginNativeShellPanelDrag(panelId, panelLabel, origin);
+          }}
+          onPanelPointerDown={(panelId, panelLabel, event) => {
+            beginShellPanelPointerDrag(panelId, panelLabel, "right", event.clientX, event.clientY);
+          }}
+          onToggle={() => {
+            void toggleInspectorPinned();
+          }}
+          onSelectPanel={(panelId) => activateShellRailPanel("right", panelId)}
+          onUndockPanel={(panelId) => {
+            void undockShellPanel(panelId);
+          }}
+          onMovePanel={(panelId, direction) => {
+            void reorderShellRailPanel("right", panelId, direction);
+          }}
           panelRef={inspectorPanelRef}
-          conversationSendError={conversationSendError}
-          selectedBrowserDomain={selectedBrowserDomain}
-          conversationDraft={conversationDraft}
-          conversationStream={conversationStream}
-          environmentEvents={environmentEvents}
-          isSendingConversation={isSendingConversation}
-          lispParenColors={lispParenColors}
-          sendConversationMessage={handleSendConversationMessage}
-          resolvedTheme={resolvedTheme}
-          runtimeForm={runtimeForm}
-          runtimeEntityDetail={runtimeEntityDetail}
-          runtimeInspection={runtimeInspection}
-          runtimeSummary={runtimeSummary}
-          selectedApproval={selectedApproval}
-          selectedArtifact={selectedArtifact}
-          selectedConfigurationSection={selectedConfigurationSection}
-          selectedConversationMessage={selectedConversationMessage}
-          selectedConversationSection={selectedConversationSection}
-          selectedDocumentationPage={selectedDocumentationPage}
-          selectedEvidenceSection={selectedEvidenceSection}
-          selectedEvent={selectedEvent}
-          selectedIncident={selectedIncident}
-          selectedOperateSection={selectedOperateSection}
-          selectedThread={selectedThread}
-          selectedTurn={selectedTurn}
-          selectedWorkItem={selectedWorkItem}
-          selectedWorkflowRecord={selectedWorkflowRecord}
-          navigateToLinkedEntity={navigateToLinkedEntity}
-          pendingConversationComposerFocusThreadId={pendingConversationComposerFocusThreadId}
-          clearPendingConversationComposerFocusThreadId={() => setPendingConversationComposerFocusThreadId(null)}
-          setConversationDraft={setConversationDraft}
-          setSelectedConversationMessageId={setSelectedConversationMessageId}
-          sourcePreview={sourcePreview}
-          status={status}
-          summary={summary}
-          systemTheme={systemTheme}
-          themePreference={themePreference}
-          openPublishedDocumentation={() =>
-            window.sbclAgentDesktop.desktop.openExternalLink(PUBLISHED_DOCUMENTATION_URL)
-          }
-          updateLispParenColor={updateLispParenColor}
-          updateThemePreference={applyThemePreference}
-          workItems={workItems}
-        />
+          title="Inspector"
+          toggleAriaLabel="Collapse workspace panel"
+          toggleTitle="Collapse workspace panel"
+        >
+          {activeRightRailPanelEntry?.content ?? null}
+        </ShellRailHost>
       ) : (
-        <aside className="inspector inspector-collapsed-rail" aria-label="Collapsed inspector utility window">
-          <div className="collapsed-panel-titlebar">
-            <button
-              aria-label="Open Inspector"
-              className="panel-titlebar-toggle collapsed-panel-toggle"
-              onClick={() => void toggleInspectorPinned()}
-              title="Open Inspector"
-              type="button"
-            >
-              <span aria-hidden="true">+</span>
-            </button>
-            <span className="collapsed-panel-title">Inspector</span>
-          </div>
-        </aside>
+        <ShellCollapsedRail
+          ariaLabel="Collapsed inspector utility window"
+          className="inspector inspector-collapsed-rail"
+          onToggle={() => {
+            void toggleInspectorPinned();
+          }}
+          title="Inspector"
+          toggleAriaLabel="Open Inspector"
+          toggleTitle="Open Inspector"
+        />
       )}
       {shellTooltip ? (
         <div
@@ -5516,268 +8721,14 @@ export function App() {
           {shellTooltip.label}
         </div>
       ) : null}
-    </div>
-  );
-}
-
-function WorkspaceTransitionBanner({
-  activeWorkspace,
-  isTransitioning,
-  resolution
-}: {
-  activeWorkspace: WorkspaceId;
-  isTransitioning: boolean;
-  resolution: WorkspaceResolutionState | null;
-}) {
-  if (!isTransitioning && !resolution) {
-    return null;
-  }
-
-  const tone = resolution?.tone ?? "active";
-  const label = resolution?.label ?? `Opening ${labelForWorkspace(activeWorkspace)}`;
-  const summary =
-    resolution?.summary ??
-    "The shell is carrying the current continuation into the selected journey.";
-
-  return (
-    <section className={`workspace-transition-banner tone-${tone}`}>
-      <div className="workspace-transition-copy">
-        <p className="eyebrow">Journey Transition</p>
-        <strong>{label}</strong>
-        <p>{summary}</p>
-      </div>
-      <div className="workspace-transition-meta">
-        <Badge tone={tone}>{labelForWorkspace(activeWorkspace)}</Badge>
-        {isTransitioning ? <span className="workspace-transition-pulse" aria-hidden="true" /> : null}
-      </div>
-    </section>
-  );
-}
-
-function ProjectOpenDialog({
-  currentProjectId,
-  onClose,
-  onOpenProject,
-  projects
-}: {
-  currentProjectId: string | null;
-  onClose: () => void;
-  onOpenProject: (projectId: string) => void;
-  projects: ProjectProfileDto[];
-}) {
-  return (
-    <div className="project-dialog-overlay" role="presentation" onClick={onClose}>
-      <section
-        aria-label="Open Project"
-        aria-modal="true"
-        className="project-dialog"
-        role="dialog"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="project-dialog-header">
-          <div>
-            <p className="eyebrow">Open Project</p>
-            <h3>Choose a saved project</h3>
-            <p className="project-dialog-copy">
-              Projects remain the user-facing object. The bound environment image is restored underneath the project.
-            </p>
-          </div>
-          <button className="project-dialog-close" onClick={onClose} type="button">
-            Close
-          </button>
+      {shellPanelDragState ? (
+        <div
+          className="shell-panel-drag-ghost"
+          style={{ left: `${shellPanelDragState.x + 14}px`, top: `${shellPanelDragState.y + 14}px` }}
+        >
+          {shellPanelDragState.panelLabel}
         </div>
-        {projects.length > 0 ? (
-          <div className="project-dialog-list">
-            {projects.map((project) => (
-              <button
-                className={project.projectId === currentProjectId ? "project-dialog-item active" : "project-dialog-item"}
-                key={project.projectId}
-                onClick={() => onOpenProject(project.projectId)}
-                type="button"
-              >
-                <div className="project-dialog-item-copy">
-                  <strong>{project.title}</strong>
-                  <p>{project.summary}</p>
-                </div>
-                <div className="project-dialog-item-meta">
-                  <span className="context-label">Environment</span>
-                  <span>{project.environmentId}</span>
-                </div>
-              </button>
-            ))}
-          </div>
-        ) : (
-          <div className="empty-state project-dialog-empty">
-            <p className="eyebrow">No Projects</p>
-            <h3>No saved projects are available yet.</h3>
-          </div>
-        )}
-      </section>
-    </div>
-  );
-}
-
-function ProjectCreateDialog({
-  environmentId,
-  onClose,
-  onCreateProject,
-  setTitleDraft,
-  titleDraft
-}: {
-  environmentId: string | null;
-  onClose: () => void;
-  onCreateProject: () => void;
-  setTitleDraft: (value: string) => void;
-  titleDraft: string;
-}) {
-  const canCreate = Boolean(environmentId && titleDraft.trim().length > 0);
-
-  return (
-    <div className="project-dialog-overlay" role="presentation" onClick={onClose}>
-      <section
-        aria-label="New Project"
-        aria-modal="true"
-        className="project-dialog"
-        role="dialog"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="project-dialog-header">
-          <div>
-            <p className="eyebrow">New Project</p>
-            <h3>Create a project from the current environment</h3>
-            <p className="project-dialog-copy">
-              Projects are the user-facing container. The currently bound environment image remains the runtime state behind it.
-            </p>
-          </div>
-          <button className="project-dialog-close" onClick={onClose} type="button">
-            Close
-          </button>
-        </div>
-        <label className="project-dialog-field">
-          <span className="context-label">Project Name</span>
-          <input
-            autoFocus
-            onChange={(event) => setTitleDraft(event.target.value)}
-            placeholder="Enter project name"
-            value={titleDraft}
-          />
-        </label>
-        <div className="project-dialog-binding">
-          <span className="context-label">Bound Environment</span>
-          <strong>{environmentId ?? "No environment bound"}</strong>
-        </div>
-        <div className="project-dialog-actions">
-          <button className="project-dialog-close" onClick={onClose} type="button">
-            Cancel
-          </button>
-          <button className="project-dialog-primary" disabled={!canCreate} onClick={onCreateProject} type="button">
-            Create Project
-          </button>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function ConversationSessionCreateDialog({
-  onClose,
-  onCreateSession,
-  setTitleDraft,
-  titleDraft
-}: {
-  onClose: () => void;
-  onCreateSession: () => void;
-  setTitleDraft: (value: string) => void;
-  titleDraft: string;
-}) {
-  const canCreate = titleDraft.trim().length > 0;
-
-  return (
-    <div className="project-dialog-overlay" role="presentation" onClick={onClose}>
-      <section
-        aria-label="New Conversation Session"
-        aria-modal="true"
-        className="project-dialog"
-        role="dialog"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="project-dialog-header">
-          <div>
-            <p className="eyebrow">New Conversation Session</p>
-            <h3>Name the new conversation thread</h3>
-            <p className="project-dialog-copy">
-              Conversation sessions are durable work objects. Name the thread before creating it.
-            </p>
-          </div>
-          <button className="project-dialog-close" onClick={onClose} type="button">
-            Close
-          </button>
-        </div>
-        <label className="project-dialog-field">
-          <span className="context-label">Session Name</span>
-          <input
-            autoFocus
-            onChange={(event) => setTitleDraft(event.target.value)}
-            value={titleDraft}
-          />
-        </label>
-        <div className="project-dialog-actions">
-          <button className="project-dialog-close" onClick={onClose} type="button">
-            Cancel
-          </button>
-          <button className="project-dialog-primary" disabled={!canCreate} onClick={onCreateSession} type="button">
-            Create Session
-          </button>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function ConversationThreadRenameDialog({
-  onClose,
-  onRenameThread,
-  setTitleDraft,
-  titleDraft
-}: {
-  onClose: () => void;
-  onRenameThread: () => void;
-  setTitleDraft: (value: string) => void;
-  titleDraft: string;
-}) {
-  const canRename = titleDraft.trim().length > 0;
-
-  return (
-    <div className="project-dialog-overlay" role="presentation" onClick={onClose}>
-      <section
-        aria-label="Rename Conversation Session"
-        aria-modal="true"
-        className="project-dialog"
-        role="dialog"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="project-dialog-header">
-          <div>
-            <p className="eyebrow">Rename Conversation Session</p>
-            <h3>Edit the conversation thread name</h3>
-          </div>
-          <button className="project-dialog-close" onClick={onClose} type="button">
-            Close
-          </button>
-        </div>
-        <label className="project-dialog-field">
-          <span className="context-label">Session Name</span>
-          <input autoFocus onChange={(event) => setTitleDraft(event.target.value)} value={titleDraft} />
-        </label>
-        <div className="project-dialog-actions">
-          <button className="project-dialog-close" onClick={onClose} type="button">
-            Cancel
-          </button>
-          <button className="project-dialog-primary" disabled={!canRename} onClick={onRenameThread} type="button">
-            Rename Session
-          </button>
-        </div>
-      </section>
+      ) : null}
     </div>
   );
 }
@@ -5801,34 +8752,73 @@ function WorkspaceInspector({
   runtimeEntityDetail,
   runtimeSummary,
   runtimeInspection,
+  runtimeTelemetry,
+  consoleLogStream,
+  diagnosticReports,
+  selectedConsolePlane,
+  selectedConsoleSourceFilter,
+  visibleConsoleEntryCount,
+  selectedDiagnosticSourceFilter,
+  visibleDiagnosticReportCount,
+  transcriptEntries,
+  currentWorkspaceHistoryCount,
+  currentReplHistoryCount,
+  currentProject,
+  selectedProjectDetail,
+  selectedProjectSummary,
   runtimeForm,
   lispParenColors,
   resolvedTheme,
   sourcePreview,
+  workspaceDraft,
+  workspaceResult,
+  workspaceTitle,
   selectedApproval,
   selectedWorkItem,
+  selectedWorkItemPlan,
   selectedWorkflowRecord,
   selectedIncident,
   selectedArtifact,
+  selectedConsoleEntry,
   selectedConversationMessage,
   selectedEvent,
   selectedBrowserDomain,
   selectedOperateSection,
+  selectedTelemetryProcess,
+  selectedDiagnosticReport,
+  selectedDiagnosticReportSummary,
+  currentEditorChangedFormCount,
+  currentEditorBufferDirty,
+  currentEditorBufferTitle,
+  currentEditorBuffers,
+  editorDraft,
+  editorResult,
+  editorPackage,
+  currentEditorCursorSymbol,
+  currentEditorCursorSymbolPackage,
+  currentEditorCursorSymbolHelp,
   selectedDocumentationPage,
   selectedEvidenceSection,
   pendingConversationComposerFocusThreadId,
   systemTheme,
   themePreference,
+  tooltipScalePercent,
+  controlIconScalePercent,
+  dockIconScalePercent,
+  conversationTextScalePercent,
+  sourceCodeTextScalePercent,
   openPublishedDocumentation,
   clearPendingConversationComposerFocusThreadId,
   setConversationDraft,
   setSelectedConversationMessageId,
   updateLispParenColor,
   updateThemePreference,
+  updateDesktopSurfaceScalePreference,
   artifacts,
   environmentEvents,
   workItems,
-  navigateToLinkedEntity
+  navigateToLinkedEntity,
+  renderChrome = true
 }: {
   activeWorkspace: WorkspaceId;
   binding: BindingDto | null;
@@ -5852,37 +8842,99 @@ function WorkspaceInspector({
   runtimeEntityDetail: QueryResultDto<RuntimeEntityDetailDto> | null;
   runtimeSummary: RuntimeSummaryDto | null;
   runtimeInspection: QueryResultDto<RuntimeInspectionResultDto> | null;
+  runtimeTelemetry: RuntimeTelemetrySnapshotDto | null;
+  consoleLogStream: QueryResultDto<ConsoleLogStreamDto> | null;
+  diagnosticReports: DiagnosticReportSummaryDto[];
+  selectedConsolePlane: "environment" | "host";
+  selectedConsoleSourceFilter: string;
+  visibleConsoleEntryCount: number;
+  selectedDiagnosticSourceFilter: string;
+  visibleDiagnosticReportCount: number;
+  transcriptEntries: TranscriptSurfaceEntry[];
+  currentWorkspaceHistoryCount: number;
+  currentReplHistoryCount: number;
+  currentProject: ProjectProfileDto | null;
+  selectedProjectDetail: ProjectDetailDto | null;
+  selectedProjectSummary: ProjectSummaryDto | null;
   runtimeForm: string;
   lispParenColors: string[];
   resolvedTheme: ResolvedTheme;
   sourcePreview: QueryResultDto<SourcePreviewDto> | null;
+  workspaceDraft: string;
+  workspaceResult: CommandResultDto<RuntimeEvalResultDto> | null;
+  workspaceTitle: string;
   selectedApproval: ApprovalRequestDto | null;
   selectedWorkItem: WorkItemDetailDto | null;
+  selectedWorkItemPlan: WorkItemPlanDto | null;
   selectedWorkflowRecord: WorkflowRecordDto | null;
   selectedIncident: IncidentDetailDto | null;
   selectedArtifact: ArtifactDetailDto | null;
+  selectedConsoleEntry: ConsoleLogEntryDto | null;
   selectedConversationMessage: MessageDto | null;
   selectedEvent: EnvironmentEventDto | null;
   selectedBrowserDomain: BrowserDomain;
   selectedOperateSection: OperateSection;
+  selectedTelemetryProcess: RuntimeTelemetryProcessDto | null;
+  selectedDiagnosticReport: DiagnosticReportDetailDto | null;
+  selectedDiagnosticReportSummary: DiagnosticReportSummaryDto | null;
+  currentEditorChangedFormCount: number;
+  currentEditorBufferDirty: boolean;
+  currentEditorBufferTitle: string;
+  currentEditorBuffers: EditorBufferStateDto[];
+  editorDraft: string;
+  editorResult: CommandResultDto<RuntimeEvalResultDto> | null;
+  editorPackage: string;
+  currentEditorCursorSymbol: string | null;
+  currentEditorCursorSymbolPackage: string;
+  currentEditorCursorSymbolHelp: {
+    detail: string;
+    info: string;
+    type?: string;
+    packageName?: string;
+    signature?: string | null;
+  } | null;
   selectedDocumentationPage: DocumentationPageDto | null;
   selectedEvidenceSection: EvidenceSection;
   pendingConversationComposerFocusThreadId: string | null;
   systemTheme: ResolvedTheme;
   themePreference: ThemePreference;
+  tooltipScalePercent: number;
+  controlIconScalePercent: number;
+  dockIconScalePercent: number;
+  conversationTextScalePercent: number;
+  sourceCodeTextScalePercent: number;
   openPublishedDocumentation: () => Promise<void>;
   clearPendingConversationComposerFocusThreadId: () => void;
   setConversationDraft: (value: string) => void;
   setSelectedConversationMessageId: (messageId: string | null) => void;
   updateLispParenColor: (index: number, color: string) => Promise<void>;
   updateThemePreference: (value: ThemePreference) => Promise<void>;
+  updateDesktopSurfaceScalePreference: (
+    key: "tooltipScalePercent" | "controlIconScalePercent" | "dockIconScalePercent" | "conversationTextScalePercent" | "sourceCodeTextScalePercent",
+    value: number
+  ) => Promise<void>;
   artifacts: ArtifactSummaryDto[];
   environmentEvents: EnvironmentEventDto[];
   workItems: WorkItemSummaryDto[];
   navigateToLinkedEntity: (entity: LinkedEntityRefDto) => Promise<void>;
+  renderChrome?: boolean;
 }) {
   const selectedConfigurationDescriptor =
     configurationSections.find((section) => section.id === selectedConfigurationSection) ?? configurationSections[0];
+  const selectedConfigurationCurrentValue =
+    selectedConfigurationSection === "theme"
+      ? themePreference === "system"
+        ? "System"
+        : themePreference
+      : selectedConfigurationSection === "lisp-code-view"
+        ? `${normalizeParenDepthColors(lispParenColors).length} depth colors`
+        : `Tooltip ${tooltipScalePercent}% / Controls ${controlIconScalePercent}% / Dock ${dockIconScalePercent}% / Conversation ${conversationTextScalePercent}% / Source ${sourceCodeTextScalePercent}%`;
+  const selectedConfigurationResolvedValue =
+    selectedConfigurationSection === "theme"
+      ? resolvedTheme
+      : selectedConfigurationSection === "lisp-code-view"
+        ? "Structured Lisp renderer"
+        : "Independent shell surface scaling, including workspace conversation text.";
   const messageStackRef = useRef<HTMLDivElement | null>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const displayedConversationMessages =
@@ -5969,9 +9021,31 @@ function WorkspaceInspector({
   const currentFocusTitle =
     activeWorkspace === "conversations"
       ? selectedTurn?.title ?? selectedThread?.title ?? "No conversation focus"
+      : activeWorkspace === "projects"
+        ? selectedProjectDetail?.title ?? selectedProjectSummary?.title ?? currentProject?.title ?? "No project selected"
+      : activeWorkspace === "transcript"
+        ? transcriptEntries[0]?.title ?? "Transcript"
+      : activeWorkspace === "workspace"
+        ? `${workspaceTitle} Workspace`
+      : activeWorkspace === "editor"
+        ? `${currentEditorBufferTitle} Editor`
       : activeWorkspace === "browser"
-        ? runtimeInspection?.data.symbol ?? sourcePreview?.data.path ?? runtimeSummary?.currentPackage ?? "No browser focus"
-      : activeWorkspace === "runtime"
+        ? selectedBrowserDomain === "console"
+          ? `${selectedConsolePlane === "host" ? "Host" : "Environment"} Console${
+              selectedConsoleSourceFilter !== "All Sources" ? ` / ${selectedConsoleSourceFilter}` : ""
+            }`
+          : selectedBrowserDomain === "diagnostics"
+            ? selectedDiagnosticReport?.title ??
+              selectedDiagnosticReportSummary?.title ??
+              `Diagnostics${selectedDiagnosticSourceFilter !== "All Sources" ? ` / ${selectedDiagnosticSourceFilter}` : ""}`
+            : selectedBrowserDomain === "processes"
+              ? selectedTelemetryProcess?.label ?? "Runtime Processes"
+              : selectedBrowserDomain === "performance"
+                ? "Runtime Performance"
+                : selectedBrowserDomain === "host-io"
+                  ? "Host I/O"
+                  : runtimeInspection?.data.symbol ?? sourcePreview?.data.path ?? runtimeSummary?.currentPackage ?? "No browser focus"
+        : activeWorkspace === "runtime"
           ? selectedWorkItem?.title ?? selectedApproval?.title ?? runtimeSummary?.currentPackage ?? "Listener"
           : activeWorkspace === "documentation"
             ? selectedDocumentationPage?.title ?? "User Documentation"
@@ -5988,10 +9062,45 @@ function WorkspaceInspector({
   const currentFocusSummary =
     activeWorkspace === "conversations"
       ? selectedTurn?.summary ?? selectedThread?.summary ?? "Select a thread or turn to inspect structured conversation state."
+      : activeWorkspace === "projects"
+        ? selectedProjectDetail?.summary ??
+          selectedProjectSummary?.summary ??
+          "Select a governed project to inspect its constitution, requirements, journeys, architecture, and linked evidence."
+      : activeWorkspace === "transcript"
+        ? transcriptEntries[0]?.summary ?? "Transcript keeps durable evaluation and environment feedback visible across the environment."
+      : activeWorkspace === "workspace"
+        ? workspaceResult?.data.summary ??
+          "Draft Lisp forms here, evaluate them deliberately, and keep the retained scratch history separate from both conversation turns and listener execution posture."
+      : activeWorkspace === "editor"
+        ? editorResult?.data.summary ??
+          `${currentEditorBuffers.length} retained editor buffer${currentEditorBuffers.length === 1 ? "" : "s"} support sustained source and form editing without collapsing the work into scratch posture or forcing it into the Browser. ${currentEditorChangedFormCount} changed form${currentEditorChangedFormCount === 1 ? "" : "s"} currently differ from the retained baseline.`
       : activeWorkspace === "browser"
-        ? runtimeInspection?.data.summary ??
-          sourcePreview?.data.summary ??
-          "Inspect packages, symbols, source, and governed attachments from one live system view."
+        ? selectedBrowserDomain === "console"
+          ? selectedConsoleEntry?.message ??
+            `${consoleLogStream?.data.summary ?? "Inspect governed environment log entries with severity, source, and operational correlation."} ${
+              visibleConsoleEntryCount
+            } visible of ${consoleLogStream?.data.entries.length ?? 0} total.`
+          : selectedBrowserDomain === "diagnostics"
+            ? selectedDiagnosticReport?.summary ??
+              selectedDiagnosticReportSummary?.summary ??
+              `Inspect retained host diagnostic reports, crash artifacts, and analytics outputs. ${
+                visibleDiagnosticReportCount
+              } visible of ${diagnosticReports.length} total.`
+            : selectedBrowserDomain === "processes"
+              ? selectedTelemetryProcess?.summary ??
+                runtimeTelemetry?.activitySummary ??
+                "Inspect governed runtime-linked processes and their operational attachments."
+              : selectedBrowserDomain === "performance"
+                ? runtimeTelemetry?.cpu.summary ??
+                  runtimeTelemetry?.memory.summary ??
+                  "Inspect CPU and memory posture for the live runtime and its host."
+                : selectedBrowserDomain === "host-io"
+                  ? runtimeTelemetry?.network.summary ??
+                    runtimeTelemetry?.disk.summary ??
+                    "Inspect host network and disk posture attached to the running environment."
+                  : runtimeInspection?.data.summary ??
+                    sourcePreview?.data.summary ??
+                    "Inspect packages, symbols, source, and governed attachments from one live system view."
         : activeWorkspace === "runtime"
           ? selectedWorkItem?.waitingReason ??
             selectedApproval?.consequenceSummary ??
@@ -6009,6 +9118,27 @@ function WorkspaceInspector({
               : activeWorkspace === "configuration"
                 ? selectedConfigurationDescriptor.summary
               : summary?.activeContext.focusSummary ?? "Environment posture is not yet available.";
+
+  const selectedApprovalLinkedWorkItemId =
+    selectedApproval?.linkedEntities.find((entity) => entity.entityType === "work-item")?.entityId ?? null;
+  const selectedApprovalInspectorWorkItem =
+    (selectedApprovalLinkedWorkItemId
+      ? workItems.find((item) => item.workItemId === selectedApprovalLinkedWorkItemId && item.correctiveContext) ?? null
+      : null)
+    ?? workItems.find((item) => item.approvalCount > 0 && item.correctiveContext) ?? null;
+  const selectedApprovalInspectorCorrectiveContext =
+    selectedApprovalInspectorWorkItem?.correctiveContext
+    ?? ((status?.reconciliationDecision ?? summary?.reconciliationDecision)
+      ? {
+          kind: "alignment-reconciliation",
+          decision: (status?.reconciliationDecision ?? summary?.reconciliationDecision)?.decision ?? null,
+          approvalPosture: (status?.reconciliationDecision ?? summary?.reconciliationDecision)?.approvalPosture ?? null,
+          alignmentStatus: (status?.reconciliationDecision ?? summary?.reconciliationDecision)?.alignmentStatus ?? null,
+          alignmentScore: null,
+          proposedActions: (status?.reconciliationDecision ?? summary?.reconciliationDecision)?.proposedActions ?? [],
+          triggerEvents: (status?.reconciliationDecision ?? summary?.reconciliationDecision)?.triggerEvents ?? []
+        }
+      : null);
 
   const inspectorTabs: Array<{ id: string; label: string; content: React.ReactNode }> =
     activeWorkspace === "environment"
@@ -6046,6 +9176,79 @@ function WorkspaceInspector({
             )
           }
         ]
+      : activeWorkspace === "projects"
+        ? [
+            {
+              id: "context",
+              label: "Context",
+              content: (
+                <dl className="detail-list">
+                  <DetailRow label="Project" value={selectedProjectDetail?.title ?? selectedProjectSummary?.title ?? "No project selected"} />
+                  <DetailRow label="Status" value={selectedProjectDetail?.status ?? selectedProjectSummary?.status ?? "empty"} />
+                  <DetailRow label="Requirements" value={String(selectedProjectDetail?.requirements.length ?? selectedProjectSummary?.requirementCount ?? 0)} />
+                  <DetailRow label="Features" value={String(selectedProjectDetail?.featureSpecifications.length ?? selectedProjectSummary?.featureSpecCount ?? 0)} />
+                  <DetailRow label="Journeys" value={String(selectedProjectDetail?.userJourneys.length ?? selectedProjectSummary?.journeyCount ?? 0)} />
+                  <DetailRow
+                    label="Decisions"
+                    value={String(
+                      selectedProjectDetail?.architectureDecisions.length ??
+                        selectedProjectSummary?.architectureDecisionCount ??
+                        0
+                    )}
+                  />
+                </dl>
+              )
+            },
+            {
+              id: "governance",
+              label: "Governance",
+              content: selectedProjectDetail ? (
+                <div className="configuration-inspector-stack">
+                  <p className="inspector-copy">{selectedProjectDetail.summary}</p>
+                  <pre className="runtime-preview">
+                    {JSON.stringify(
+                      {
+                        constitution: selectedProjectDetail.constitution,
+                        designSystem: selectedProjectDetail.designSystem,
+                        styleGuide: selectedProjectDetail.styleGuide,
+                        metadata: selectedProjectDetail.metadata
+                      },
+                      null,
+                      2
+                    )}
+                  </pre>
+                </div>
+              ) : (
+                <p className="inspector-copy">
+                  Select a governed project to inspect its constitutional and design-governance context.
+                </p>
+              )
+            },
+            {
+              id: "evidence",
+              label: "Evidence",
+              content: selectedProjectDetail ? (
+                <dl className="detail-list">
+                  <DetailRow label="Work Items" value={String(selectedProjectDetail.linkedWorkItems.length)} />
+                  <DetailRow label="Incidents" value={String(selectedProjectDetail.linkedIncidents.length)} />
+                  <DetailRow label="Testing" value={String(selectedProjectDetail.linkedTestingHarnesses.length)} />
+                  <DetailRow label="Source Roots" value={String(selectedProjectDetail.sourceRoots.length)} />
+                  <DetailRow
+                    label="Coverage"
+                    value={selectedProjectDetail.testingEvidence?.coverage.present ? "present" : "absent"}
+                  />
+                  <DetailRow
+                    label="Latest Report"
+                    value={selectedProjectDetail.testingEvidence?.latestReport?.generatedAt ?? "n/a"}
+                  />
+                </dl>
+              ) : (
+                <p className="inspector-copy">
+                  Select a governed project to inspect its linked work, testing, incident, and source evidence.
+                </p>
+              )
+            }
+          ]
       : activeWorkspace === "conversations"
         ? [
             {
@@ -6053,10 +9256,21 @@ function WorkspaceInspector({
               label: "Context",
               content: (
                 <dl className="detail-list">
-                  <DetailRow label="Thread" value={selectedThread?.title ?? "No thread selected"} />
-                  <DetailRow label="State" value={selectedThread?.state ?? "idle"} />
-                  <DetailRow label="Turns" value={String(selectedThread?.turns.length ?? 0)} />
-                  <DetailRow label="Linked Entities" value={String(selectedThread?.linkedEntities.length ?? 0)} />
+                  {selectedConversationSection === "repl" ? (
+                    <>
+                      <DetailRow label="Mode" value="Direct Eval" />
+                      <DetailRow label="Package" value={runtimeSummary?.currentPackage ?? "listener"} />
+                      <DetailRow label="Runtime" value={runtimeSummary?.runtimeId ?? "unbound"} />
+                      <DetailRow label="Authority" value="Governed REPL" />
+                    </>
+                  ) : (
+                    <>
+                      <DetailRow label="Thread" value={selectedThread?.title ?? "No thread selected"} />
+                      <DetailRow label="State" value={selectedThread?.state ?? "idle"} />
+                      <DetailRow label="Turns" value={String(selectedThread?.turns.length ?? 0)} />
+                      <DetailRow label="Linked Entities" value={String(selectedThread?.linkedEntities.length ?? 0)} />
+                    </>
+                  )}
                 </dl>
               )
             },
@@ -6066,6 +9280,13 @@ function WorkspaceInspector({
               content:
                 selectedConversationSection === "draft" ? (
                   <pre className="runtime-preview">{conversationDraft || "No draft continuation prepared."}</pre>
+                ) : selectedConversationSection === "repl" ? (
+                  <div className="configuration-inspector-stack">
+                    <pre className="runtime-preview">{runtimeForm || "No direct evaluation form prepared."}</pre>
+                    <p className="inspector-copy">
+                      Direct evaluation is explicit here. This surface is using conversation as a governed REPL rather than as a supervised thread.
+                    </p>
+                  </div>
                 ) : (
                   <dl className="detail-list">
                     <DetailRow label="Turn" value={selectedTurn?.title ?? "No turn selected"} />
@@ -6102,28 +9323,400 @@ function WorkspaceInspector({
               )
             }
           ]
-        : activeWorkspace === "browser"
+        : activeWorkspace === "editor"
           ? [
               {
                 id: "context",
                 label: "Context",
                 content: (
                   <dl className="detail-list">
-                    <DetailRow
-                      label="Domain"
-                      value={browserDomains.find((domain) => domain.id === selectedBrowserDomain)?.label ?? selectedBrowserDomain}
-                    />
-                    <DetailRow label="Package" value={runtimeInspection?.data.packageName ?? runtimeSummary?.currentPackage ?? "unknown"} />
-                    <DetailRow label="Mode" value={runtimeInspection?.data.mode ?? "browse"} />
-                    <DetailRow label="Systems" value={String(runtimeSummary?.loadedSystemCount ?? 0)} />
-                    <DetailRow label="Scopes" value={String(runtimeSummary?.scopes.length ?? 0)} />
+                    <DetailRow label="Mode" value="Editor Surface" />
+                    <DetailRow label="Buffer" value={currentEditorBufferTitle} />
+                    <DetailRow label="State" value={currentEditorBufferDirty ? "Dirty" : "Clean"} />
+                    <DetailRow label="Buffers" value={`${currentEditorBuffers.length}`} />
+                    <DetailRow label="Changed Forms" value={`${currentEditorChangedFormCount}`} />
+                    <DetailRow label="Baseline" value={currentEditorBufferDirty ? "Diverged" : "Aligned"} />
+                    <DetailRow label="Package" value={editorPackage || (runtimeSummary?.currentPackage ?? "cl-user")} />
+                    <DetailRow label="Runtime" value={runtimeSummary?.runtimeId ?? "unbound"} />
+                    <DetailRow label="Authority" value="Governed Editing" />
                   </dl>
+                )
+              },
+              {
+                id: "symbol",
+                label: "Symbol",
+                content: currentEditorCursorSymbol ? (
+                  <div className="configuration-inspector-stack">
+                    <dl className="detail-list">
+                      <DetailRow label="Symbol" value={currentEditorCursorSymbol} />
+                      <DetailRow
+                        label="Package"
+                        value={
+                          currentEditorCursorSymbolHelp?.packageName ??
+                          currentEditorCursorSymbolPackage ??
+                          editorPackage ??
+                          runtimeSummary?.currentPackage ??
+                          "cl-user"
+                        }
+                      />
+                      <DetailRow label="Kind" value={currentEditorCursorSymbolHelp?.type ?? "unknown"} />
+                      {currentEditorCursorSymbolHelp?.signature ? (
+                        <DetailRow label="Signature" value={currentEditorCursorSymbolHelp.signature} />
+                      ) : currentEditorCursorSymbolHelp?.detail ? (
+                        <DetailRow label="Detail" value={currentEditorCursorSymbolHelp.detail} />
+                      ) : null}
+                    </dl>
+                    {currentEditorCursorSymbolHelp?.info ? (
+                      <p className="inspector-copy">{currentEditorCursorSymbolHelp.info}</p>
+                    ) : (
+                      <p className="inspector-copy">
+                        Symbol detail will appear here when runtime-backed help is available for the current editor focus.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="inspector-copy">
+                    Move the caret onto a symbol in the editor to inspect its current package and runtime-backed detail here.
+                  </p>
+                )
+              },
+              {
+                id: "buffer",
+                label: "Buffer",
+                content: <pre className="runtime-preview">{editorDraft || "No editor buffer drafted yet."}</pre>
+              },
+              {
+                id: "output",
+                label: "Output",
+                content: editorResult ? (
+                  <div className="configuration-inspector-stack">
+                    <dl className="detail-list">
+                      <DetailRow label="Status" value={editorResult.status} />
+                      <DetailRow label="Operation" value={editorResult.operation} />
+                    </dl>
+                    <p className="inspector-copy">{editorResult.data.summary}</p>
+                    {editorResult.data.valuePreview ? <pre className="runtime-preview">{editorResult.data.valuePreview}</pre> : null}
+                  </div>
+                ) : (
+                  <p className="inspector-copy">
+                    Evaluate the current editor buffer to inspect sustained editing output here.
+                  </p>
+                )
+              }
+            ]
+        : activeWorkspace === "workspace"
+          ? [
+              {
+                id: "context",
+                label: "Context",
+                content: (
+                  <dl className="detail-list">
+                    <DetailRow label="Mode" value="Scratch Workspace" />
+                    <DetailRow label="Package" value={runtimeSummary?.currentPackage ?? "cl-user"} />
+                    <DetailRow label="Runtime" value={runtimeSummary?.runtimeId ?? "unbound"} />
+                    <DetailRow label="Authority" value="Governed Evaluation" />
+                  </dl>
+                )
+              },
+              {
+                id: "buffer",
+                label: "Buffer",
+                content: <pre className="runtime-preview">{workspaceDraft || "No workspace forms drafted yet."}</pre>
+              },
+              {
+                id: "result",
+                label: "Result",
+                content: workspaceResult ? (
+                  <div className="configuration-inspector-stack">
+                    <dl className="detail-list">
+                      <DetailRow label="Status" value={workspaceResult.status} />
+                      <DetailRow label="Operation" value={workspaceResult.operation} />
+                    </dl>
+                    <p className="inspector-copy">{workspaceResult.data.summary}</p>
+                    {workspaceResult.data.valuePreview ? (
+                      <pre className="runtime-preview">{workspaceResult.data.valuePreview}</pre>
+                    ) : null}
+                  </div>
+                ) : (
+                  <p className="inspector-copy">
+                    Evaluate the current workspace buffer to inspect the governed result here.
+                  </p>
+                )
+              }
+            ]
+        : activeWorkspace === "transcript"
+          ? [
+              {
+                id: "context",
+                label: "Context",
+                content: (
+                    <dl className="detail-list">
+                      <DetailRow label="Entries" value={String(transcriptEntries.length)} />
+                      <DetailRow label="Workspace Results" value={String(currentWorkspaceHistoryCount)} />
+                      <DetailRow label="Listener Results" value={String(currentReplHistoryCount)} />
+                      <DetailRow label="Events" value={String(environmentEvents.length)} />
+                    </dl>
+                )
+              },
+              {
+                id: "latest",
+                label: "Latest",
+                content: transcriptEntries[0] ? (
+                  <div className="configuration-inspector-stack">
+                    <dl className="detail-list">
+                      <DetailRow label="Source" value={transcriptEntries[0].source} />
+                      <DetailRow label="Timestamp" value={transcriptEntries[0].timestamp} />
+                      <DetailRow label="Family" value={transcriptEntries[0].family ?? "transcript"} />
+                    </dl>
+                    <p className="inspector-copy">{transcriptEntries[0].summary}</p>
+                    {transcriptEntries[0].preview ? <pre className="runtime-preview">{transcriptEntries[0].preview}</pre> : null}
+                  </div>
+                ) : (
+                  <p className="inspector-copy">
+                    Transcript entries will appear here once workspace, listener, or environment activity is retained.
+                  </p>
+                )
+              }
+            ]
+        : activeWorkspace === "browser"
+          ? [
+              {
+                id: "context",
+                label: "Context",
+                content: (
+                  selectedBrowserDomain === "governance" ? (
+                    <dl className="detail-list">
+                      <DetailRow label="Domain" value="Governance" />
+                      <DetailRow
+                        label="Selected"
+                        value={
+                          selectedApproval?.title
+                          ?? selectedIncident?.title
+                          ?? selectedWorkItem?.title
+                          ?? "No governance object selected"
+                        }
+                      />
+                      <DetailRow
+                        label="State"
+                        value={
+                          selectedApproval?.state
+                          ?? selectedIncident?.state
+                          ?? selectedWorkItem?.state
+                          ?? "unknown"
+                        }
+                      />
+                      <DetailRow
+                        label="Corrective Kind"
+                        value={(selectedWorkItem?.correctiveContext ?? selectedApprovalInspectorCorrectiveContext)?.kind ?? "none"}
+                      />
+                      <DetailRow
+                        label="Approval Posture"
+                        value={
+                          (selectedWorkItem?.correctiveContext ?? selectedApprovalInspectorCorrectiveContext)?.approvalPosture
+                          ?? "unknown"
+                        }
+                      />
+                      <DetailRow
+                        label="Trigger Events"
+                        value={String((selectedWorkItem?.correctiveContext ?? selectedApprovalInspectorCorrectiveContext)?.triggerEvents.length ?? 0)}
+                      />
+                    </dl>
+                  ) : selectedBrowserDomain === "documentation" ? (
+                    <dl className="detail-list">
+                      <DetailRow label="Domain" value="Documentation" />
+                      <DetailRow label="Title" value={selectedDocumentationPage?.title ?? "No page selected"} />
+                      <DetailRow label="Category" value={selectedDocumentationPage?.category ?? "unknown"} />
+                      <DetailRow label="Slug" value={selectedDocumentationPage?.slug ?? "unknown"} />
+                    </dl>
+                  ) : selectedBrowserDomain === "console" ? (
+                    <dl className="detail-list">
+                      <DetailRow label="Domain" value="Console" />
+                      <DetailRow label="Plane" value={consoleLogStream?.data.plane ?? "environment"} />
+                      <DetailRow label="Source Filter" value={selectedConsoleSourceFilter} />
+                      <DetailRow label="Visible Entries" value={String(visibleConsoleEntryCount)} />
+                      <DetailRow label="Total Entries" value={String(consoleLogStream?.data.entries.length ?? 0)} />
+                      <DetailRow label="Summary" value={consoleLogStream?.data.summary ?? "No console stream loaded."} />
+                    </dl>
+                  ) : selectedBrowserDomain === "diagnostics" ? (
+                    <dl className="detail-list">
+                      <DetailRow label="Domain" value="Diagnostics" />
+                      <DetailRow label="Source Filter" value={selectedDiagnosticSourceFilter} />
+                      <DetailRow label="Visible Reports" value={String(visibleDiagnosticReportCount)} />
+                      <DetailRow label="Total Reports" value={String(diagnosticReports.length)} />
+                      <DetailRow label="Selected" value={selectedDiagnosticReport?.title ?? selectedDiagnosticReportSummary?.title ?? "No report selected"} />
+                      <DetailRow label="Kind" value={selectedDiagnosticReport?.kind ?? selectedDiagnosticReportSummary?.kind ?? "n/a"} />
+                    </dl>
+                  ) : selectedBrowserDomain === "processes" ? (
+                    <dl className="detail-list">
+                      <DetailRow label="Domain" value="Processes" />
+                      <DetailRow label="Visible Processes" value={String(runtimeTelemetry?.processes.length ?? 0)} />
+                      <DetailRow label="Runtime PID" value={String(runtimeTelemetry?.runtimePid ?? "n/a")} />
+                      <DetailRow label="Activity" value={runtimeTelemetry?.activitySummary ?? "Runtime telemetry is not yet available."} />
+                    </dl>
+                  ) : selectedBrowserDomain === "performance" ? (
+                    <dl className="detail-list">
+                      <DetailRow label="Domain" value="Performance" />
+                      <DetailRow label="Sampled At" value={runtimeTelemetry?.sampledAt ?? "n/a"} />
+                      <DetailRow label="CPU" value={runtimeTelemetry?.cpu.utilizationPercent != null ? `${runtimeTelemetry.cpu.utilizationPercent.toFixed(1)}%` : "n/a"} />
+                      <DetailRow label="Host Memory" value={runtimeTelemetry?.memory.systemUsedPercent != null ? `${runtimeTelemetry.memory.systemUsedPercent.toFixed(1)}%` : "n/a"} />
+                    </dl>
+                  ) : selectedBrowserDomain === "host-io" ? (
+                    <dl className="detail-list">
+                      <DetailRow label="Domain" value="Host I/O" />
+                      <DetailRow label="Connections" value={String(runtimeTelemetry?.network.openConnectionCount ?? "n/a")} />
+                      <DetailRow label="Interfaces" value={String(runtimeTelemetry?.network.interfaceCount ?? "n/a")} />
+                      <DetailRow label="Runtime PID" value={String(runtimeTelemetry?.runtimePid ?? "n/a")} />
+                    </dl>
+                  ) : (
+                    <dl className="detail-list">
+                      <DetailRow
+                        label="Domain"
+                        value={browserDomains.find((domain) => domain.id === selectedBrowserDomain)?.label ?? selectedBrowserDomain}
+                      />
+                      <DetailRow label="Package" value={runtimeInspection?.data.packageName ?? runtimeSummary?.currentPackage ?? "unknown"} />
+                      <DetailRow label="Mode" value={runtimeInspection?.data.mode ?? "browse"} />
+                      <DetailRow label="Systems" value={String(runtimeSummary?.loadedSystemCount ?? 0)} />
+                      <DetailRow label="Scopes" value={String(runtimeSummary?.scopes.length ?? 0)} />
+                    </dl>
+                  )
                 )
               },
               {
                 id: "detail",
                 label: "Detail",
-                content: runtimeEntityDetail ? (
+                content: selectedBrowserDomain === "documentation" ? (
+                  selectedDocumentationPage ? (
+                    <div className="configuration-inspector-stack">
+                      <p className="inspector-copy">{selectedDocumentationPage.summary}</p>
+                      <article
+                        className="documentation-markdown inspector-documentation-markdown"
+                        dangerouslySetInnerHTML={{ __html: renderedDocumentationHtml }}
+                      />
+                    </div>
+                  ) : (
+                    <p className="inspector-copy">
+                      Select a documentation reference from the browser table to read it in the inspector.
+                    </p>
+                  )
+                ) : selectedBrowserDomain === "governance" ? (
+                  selectedApproval || selectedIncident || selectedWorkItem ? (
+                    <div className="configuration-inspector-stack">
+                      <p className="inspector-copy">
+                        {(selectedWorkItem?.correctiveContext ?? selectedApprovalInspectorCorrectiveContext)?.proposedActions[0]?.reason
+                          ?? selectedApproval?.summary
+                          ?? "No explicit corrective rationale is attached to the selected governance object."}
+                      </p>
+                      {(selectedWorkItem?.correctiveContext ?? selectedApprovalInspectorCorrectiveContext)?.triggerEvents.length ? (
+                        <div className="ref-list">
+                          {((selectedWorkItem?.correctiveContext ?? selectedApprovalInspectorCorrectiveContext)?.triggerEvents ?? []).map((event, index) => (
+                            <span className="thread-flag" key={`inspector-governance-trigger:${index}`}>
+                              {event.kind ?? event.family ?? "event"}
+                              {event.eventId ? ` · ${event.eventId}` : ""}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <p className="inspector-copy">
+                      Select a governance object from the browser table to inspect its corrective posture here.
+                    </p>
+                  )
+                ) : selectedBrowserDomain === "console" ? (
+                  selectedConsoleEntry ? (
+                    <div className="configuration-inspector-stack">
+	                    <dl className="detail-list">
+	                      <DetailRow label="Plane" value={selectedConsoleEntry.plane} />
+	                      <DetailRow label="Type" value={selectedConsoleEntry.type} />
+	                      <DetailRow label="Process" value={selectedConsoleEntry.processName ?? "n/a"} />
+	                      <DetailRow label="PID" value={selectedConsoleEntry.pid ? String(selectedConsoleEntry.pid) : "n/a"} />
+	                      <DetailRow label="Category" value={selectedConsoleEntry.category} />
+	                      <DetailRow label="Source" value={selectedConsoleEntry.source} />
+	                      <DetailRow label="Activity" value={selectedConsoleEntry.activityId ?? "n/a"} />
+	                      <DetailRow label="Timestamp" value={selectedConsoleEntry.timestamp} />
+	                    </dl>
+                      <p className="inspector-copy">{selectedConsoleEntry.message}</p>
+                      {selectedConsoleEntry.detail ? <pre className="runtime-preview">{selectedConsoleEntry.detail}</pre> : null}
+                    </div>
+                  ) : (
+                    <p className="inspector-copy">Select a console entry to inspect its full detail and operational correlation.</p>
+                  )
+                ) : selectedBrowserDomain === "diagnostics" ? (
+                  selectedDiagnosticReport ? (
+                    <div className="configuration-inspector-stack">
+	                    <dl className="detail-list">
+	                      <DetailRow label="Title" value={selectedDiagnosticReport.title} />
+	                      <DetailRow label="Kind" value={selectedDiagnosticReport.kind} />
+	                      <DetailRow label="Source" value={selectedDiagnosticReport.source} />
+	                      <DetailRow label="Path" value={selectedDiagnosticReport.path ?? "n/a"} />
+	                      <DetailRow label="Created" value={selectedDiagnosticReport.createdAt} />
+	                      <DetailRow
+	                        label="Bytes"
+	                        value={
+	                          typeof selectedDiagnosticReport.metadata?.byteSize === "number"
+	                            ? String(selectedDiagnosticReport.metadata.byteSize)
+	                            : "n/a"
+	                        }
+	                      />
+	                      <DetailRow label="Extension" value={String(selectedDiagnosticReport.metadata?.extension ?? "n/a")} />
+	                      <DetailRow label="Incident" value={String(selectedDiagnosticReport.metadata?.incidentId ?? "n/a")} />
+	                      <DetailRow label="Bug Type" value={String(selectedDiagnosticReport.metadata?.bugType ?? "n/a")} />
+	                      <DetailRow label="Parent" value={String(selectedDiagnosticReport.metadata?.parentProc ?? "n/a")} />
+	                      <DetailRow label="Responsible" value={String(selectedDiagnosticReport.metadata?.responsibleProc ?? "n/a")} />
+	                    </dl>
+                      <p className="inspector-copy">{selectedDiagnosticReport.summary}</p>
+                      {selectedDiagnosticReport.contentPreview ? (
+                        <pre className="runtime-preview">{selectedDiagnosticReport.contentPreview}</pre>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <p className="inspector-copy">Select a retained diagnostic report to inspect its preview and source metadata.</p>
+                  )
+                ) : selectedBrowserDomain === "processes" ? (
+                  selectedTelemetryProcess ? (
+                    <>
+                      <dl className="detail-list">
+                        <DetailRow label="Process" value={selectedTelemetryProcess.label} />
+                        <DetailRow label="Kind" value={selectedTelemetryProcess.kind} />
+                        <DetailRow label="State" value={selectedTelemetryProcess.state} />
+                        <DetailRow label="PID" value={String(selectedTelemetryProcess.pid ?? "n/a")} />
+                        <DetailRow label="CPU" value={selectedTelemetryProcess.cpuPercent != null ? `${selectedTelemetryProcess.cpuPercent.toFixed(1)}%` : "n/a"} />
+                        <DetailRow label="Memory" value={selectedTelemetryProcess.memoryMb != null ? `${selectedTelemetryProcess.memoryMb.toFixed(1)} MB` : "n/a"} />
+                        <DetailRow label="Elapsed" value={selectedTelemetryProcess.elapsed ?? "n/a"} />
+                      </dl>
+                      <p className="inspector-copy">{selectedTelemetryProcess.summary}</p>
+                    </>
+                  ) : (
+                    <p className="inspector-copy">
+                      Select a runtime-linked process to inspect its governed execution posture here.
+                    </p>
+                  )
+                ) : selectedBrowserDomain === "performance" ? (
+                  <div className="configuration-inspector-stack">
+                    <dl className="detail-list">
+                      <DetailRow label="CPU Summary" value={runtimeTelemetry?.cpu.summary ?? "n/a"} />
+                      <DetailRow label="Memory Summary" value={runtimeTelemetry?.memory.summary ?? "n/a"} />
+                      <DetailRow label="Load 1m" value={runtimeTelemetry?.cpu.loadAverage1m != null ? runtimeTelemetry.cpu.loadAverage1m.toFixed(2) : "n/a"} />
+                      <DetailRow label="Heap Used" value={runtimeTelemetry?.memory.heapUsedMb != null ? `${runtimeTelemetry.memory.heapUsedMb.toFixed(1)} MB` : "n/a"} />
+                    </dl>
+                    <p className="inspector-copy">
+                      {runtimeTelemetry?.activitySummary ??
+                        "CPU and memory posture will appear here once the runtime telemetry snapshot is available."}
+                    </p>
+                  </div>
+                ) : selectedBrowserDomain === "host-io" ? (
+                  <div className="configuration-inspector-stack">
+                    <dl className="detail-list">
+                      <DetailRow label="Network Summary" value={runtimeTelemetry?.network.summary ?? "n/a"} />
+                      <DetailRow label="Disk Summary" value={runtimeTelemetry?.disk.summary ?? "n/a"} />
+                      <DetailRow label="Disk Read" value={runtimeTelemetry?.disk.readKbps != null ? `${runtimeTelemetry.disk.readKbps.toFixed(0)} KB/s` : "n/a"} />
+                      <DetailRow label="Disk Write" value={runtimeTelemetry?.disk.writeKbps != null ? `${runtimeTelemetry.disk.writeKbps.toFixed(0)} KB/s` : "n/a"} />
+                    </dl>
+                    <p className="inspector-copy">
+                      Host I/O posture is attached to the running environment here rather than split into a separate monitor.
+                    </p>
+                  </div>
+                ) : runtimeEntityDetail ? (
                   <>
                     <dl className="detail-list">
                       <DetailRow label="Kind" value={runtimeEntityDetail.data.entityKind} />
@@ -6149,14 +9742,65 @@ function WorkspaceInspector({
               {
                 id: "source",
                 label: "Source",
-                content: (
-                  <dl className="detail-list">
-                    <DetailRow label="Source" value={sourcePreview?.data.path ?? "No source artifact selected"} />
-                    <DetailRow label="Focus Line" value={String(sourcePreview?.data.focusLine ?? 0)} />
-                    <DetailRow label="Work Items" value={String(workItems.length)} />
-                    <DetailRow label="Artifacts" value={String(artifacts.length)} />
-                  </dl>
-                )
+                content:
+                  selectedBrowserDomain === "documentation" ? (
+                    <dl className="detail-list">
+                      <DetailRow label="Source" value={selectedDocumentationPage?.sourcePath ?? "No documentation source selected"} />
+                      <DetailRow label="Category" value={selectedDocumentationPage?.category ?? "unknown"} />
+                      <DetailRow label="Artifacts" value={String(artifacts.length)} />
+                      <DetailRow label="Work Items" value={String(workItems.length)} />
+                    </dl>
+                  ) : selectedBrowserDomain === "console" ? (
+                    <dl className="detail-list">
+                      <DetailRow label="Work Item" value={selectedConsoleEntry?.workItemId ?? "n/a"} />
+                      <DetailRow label="Workflow" value={selectedConsoleEntry?.workflowRecordId ?? "n/a"} />
+                      <DetailRow label="Incident" value={selectedConsoleEntry?.incidentId ?? "n/a"} />
+                      <DetailRow label="Conversation" value={selectedConsoleEntry?.threadRefId ?? selectedConsoleEntry?.turnRefId ?? "n/a"} />
+                    </dl>
+                  ) : selectedBrowserDomain === "diagnostics" ? (
+                    <dl className="detail-list">
+                      <DetailRow label="Process" value={selectedDiagnosticReport?.processName ?? "n/a"} />
+                      <DetailRow label="PID" value={String(selectedDiagnosticReport?.pid ?? "n/a")} />
+                      <DetailRow label="Source" value={selectedDiagnosticReport?.source ?? "n/a"} />
+                      <DetailRow label="Incident" value={String(selectedDiagnosticReport?.metadata?.incidentId ?? "n/a")} />
+                      <DetailRow label="Bug Type" value={String(selectedDiagnosticReport?.metadata?.bugType ?? "n/a")} />
+                      <DetailRow label="Parent" value={String(selectedDiagnosticReport?.metadata?.parentProc ?? "n/a")} />
+                      <DetailRow label="Responsible" value={String(selectedDiagnosticReport?.metadata?.responsibleProc ?? "n/a")} />
+                      <DetailRow label="Report Id" value={selectedDiagnosticReport?.reportId ?? selectedDiagnosticReportSummary?.reportId ?? "n/a"} />
+                    </dl>
+                  ) : (
+                    <dl className="detail-list">
+                      {selectedBrowserDomain === "processes" ? (
+                        <>
+                          <DetailRow label="Work Item" value={selectedTelemetryProcess?.workItemId ?? "n/a"} />
+                          <DetailRow label="Workflow" value={selectedTelemetryProcess?.workflowRecordId ?? "n/a"} />
+                          <DetailRow label="Incident" value={selectedTelemetryProcess?.incidentId ?? "n/a"} />
+                          <DetailRow label="Conversation" value={selectedTelemetryProcess?.threadId ?? selectedTelemetryProcess?.turnId ?? "n/a"} />
+                        </>
+                      ) : selectedBrowserDomain === "performance" ? (
+                        <>
+                          <DetailRow label="Runtime" value={runtimeSummary?.runtimeId ?? "n/a"} />
+                          <DetailRow label="Systems" value={String(runtimeSummary?.loadedSystemCount ?? 0)} />
+                          <DetailRow label="Scopes" value={String(runtimeSummary?.scopes.length ?? 0)} />
+                          <DetailRow label="Work Items" value={String(workItems.length)} />
+                        </>
+                      ) : selectedBrowserDomain === "host-io" ? (
+                        <>
+                          <DetailRow label="Runtime" value={runtimeSummary?.runtimeId ?? "n/a"} />
+                          <DetailRow label="Open Connections" value={String(runtimeTelemetry?.network.openConnectionCount ?? "n/a")} />
+                          <DetailRow label="Artifacts" value={String(artifacts.length)} />
+                          <DetailRow label="Work Items" value={String(workItems.length)} />
+                        </>
+                      ) : (
+                        <>
+                          <DetailRow label="Source" value={sourcePreview?.data.path ?? "No source artifact selected"} />
+                          <DetailRow label="Focus Line" value={String(sourcePreview?.data.focusLine ?? 0)} />
+                          <DetailRow label="Work Items" value={String(workItems.length)} />
+                          <DetailRow label="Artifacts" value={String(artifacts.length)} />
+                        </>
+                      )}
+                    </dl>
+                  )
               },
               {
                 id: "handoff",
@@ -6193,6 +9837,81 @@ function WorkspaceInspector({
                   id: "input",
                   label: "Input",
                   content: <pre className="runtime-preview">{runtimeForm || "No listener form prepared."}</pre>
+                },
+                {
+                  id: "selection",
+                  label: "Selection",
+                  content: selectedApproval ? (
+                    <>
+                      <dl className="detail-list">
+                        <DetailRow label="Approval" value={selectedApproval.title} />
+                        <DetailRow label="State" value={selectedApproval.state} />
+                        <DetailRow label="Requested Action" value={selectedApproval.requestedAction} />
+                        <DetailRow label="Scope" value={selectedApproval.scopeSummary} />
+                        {selectedApprovalInspectorCorrectiveContext ? (
+                          <DetailRow label="Corrective Kind" value={selectedApprovalInspectorCorrectiveContext.kind} />
+                        ) : null}
+                        {selectedApprovalInspectorCorrectiveContext ? (
+                          <DetailRow
+                            label="Approval Posture"
+                            value={selectedApprovalInspectorCorrectiveContext.approvalPosture ?? "unknown"}
+                          />
+                        ) : null}
+                        {selectedApprovalInspectorCorrectiveContext ? (
+                          <DetailRow
+                            label="Alignment"
+                            value={
+                              selectedApprovalInspectorCorrectiveContext.alignmentStatus
+                                ? `${selectedApprovalInspectorCorrectiveContext.alignmentStatus}${
+                                    selectedApprovalInspectorCorrectiveContext.alignmentScore != null
+                                      ? ` (${selectedApprovalInspectorCorrectiveContext.alignmentScore.toFixed(2)})`
+                                      : ""
+                                  }`
+                                : "unknown"
+                            }
+                          />
+                        ) : null}
+                        {selectedApprovalInspectorCorrectiveContext ? (
+                          <DetailRow
+                            label="Trigger Events"
+                            value={String(selectedApprovalInspectorCorrectiveContext.triggerEvents.length)}
+                          />
+                        ) : null}
+                      </dl>
+                      <p className="inspector-copy">{selectedApproval.consequenceSummary}</p>
+                      {selectedApprovalInspectorCorrectiveContext?.proposedActions[0]?.reason ? (
+                        <p className="inspector-copy">
+                          {selectedApprovalInspectorCorrectiveContext.proposedActions[0].reason}
+                        </p>
+                      ) : null}
+                    </>
+                  ) : selectedWorkItem ? (
+                    <>
+                      <dl className="detail-list">
+                        <DetailRow label="Work Item" value={selectedWorkItem.title} />
+                        <DetailRow label="State" value={selectedWorkItem.state} />
+                        <DetailRow label="Workflow Record" value={selectedWorkItem.workflowRecordId} />
+                        <DetailRow label="Runtime" value={selectedWorkItem.runtimeSummary} />
+                      </dl>
+                      <p className="inspector-copy">
+                        {selectedWorkItem.waitingReason ?? "This work item currently has no explicit waiting reason."}
+                      </p>
+                    </>
+                  ) : selectedWorkflowRecord ? (
+                    <>
+                      <dl className="detail-list">
+                        <DetailRow label="Phase" value={selectedWorkflowRecord.phase} />
+                        <DetailRow label="Validation" value={selectedWorkflowRecord.validationState} />
+                        <DetailRow label="Reconciliation" value={selectedWorkflowRecord.reconciliationState} />
+                        <DetailRow label="Closure" value={selectedWorkflowRecord.closureReadiness} />
+                      </dl>
+                      <p className="inspector-copy">{selectedWorkflowRecord.closureSummary}</p>
+                    </>
+                  ) : (
+                    <p className="inspector-copy">
+                      Select a work item or approval to inspect the current runtime-governed object here.
+                    </p>
+                  )
                 }
               ]
             : activeWorkspace === "incidents"
@@ -6259,30 +9978,6 @@ function WorkspaceInspector({
                 : activeWorkspace === "configuration"
                   ? [
                       {
-                        id: "context",
-                        label: "Context",
-                        content: (
-                          <dl className="detail-list">
-                            <DetailRow label="Category" value={selectedConfigurationDescriptor.label} />
-                            <DetailRow label="Family" value={selectedConfigurationDescriptor.family} />
-                            <DetailRow
-                              label="Current"
-                              value={
-                                selectedConfigurationSection === "theme"
-                                  ? themePreference === "system"
-                                    ? "System"
-                                    : themePreference
-                                  : `${normalizeParenDepthColors(lispParenColors).length} depth colors`
-                              }
-                            />
-                            <DetailRow
-                              label="Resolved"
-                              value={selectedConfigurationSection === "theme" ? resolvedTheme : "Structured Lisp renderer"}
-                            />
-                          </dl>
-                        )
-                      },
-                      {
                         id: "edit",
                         label: "Edit",
                         content:
@@ -6315,7 +10010,7 @@ function WorkspaceInspector({
                                 </button>
                               </div>
                             </div>
-                          ) : (
+                          ) : selectedConfigurationSection === "lisp-code-view" ? (
                             <div className="configuration-inspector-stack">
                               <p className="inspector-copy">
                                 Adjust the delimiter palette used by the structured Lisp renderer across browser and execution surfaces.
@@ -6334,30 +10029,112 @@ function WorkspaceInspector({
                                 ))}
                               </div>
                             </div>
-                          )
-                      },
-                      {
-                        id: "effect",
-                        label: "Effect",
-                        content:
-                          selectedConfigurationSection === "theme" ? (
-                            <div className="configuration-inspector-stack">
-                              <dl className="detail-list">
-                                <DetailRow label="Preference" value={themePreference} />
-                                <DetailRow label="Resolved Theme" value={resolvedTheme} />
-                                <DetailRow label="System Signal" value={systemTheme} />
-                              </dl>
-                              <p className="inspector-copy">
-                                Theme selection changes panel chrome, editors, tables, and the wider desktop palette without changing governed runtime state.
-                              </p>
-                            </div>
                           ) : (
                             <div className="configuration-inspector-stack">
                               <p className="inspector-copy">
-                                The active palette is previewed below and persists across relaunch so Lisp-aware browsing keeps the same depth model.
+                                Tune the shell surface density directly. Each percentage slider changes only its own target and persists with desktop preferences.
                               </p>
-                              <div className="configuration-code-preview">
-                                <LispCodeBlock code={LISP_CONFIGURATION_SAMPLE} parenDepthColors={lispParenColors} />
+                              <div className="configuration-slider-stack" role="group" aria-label="Desktop surface scale controls">
+                                <label className="configuration-slider-control">
+                                  <span>Mouseover Text</span>
+                                  <div className="configuration-slider-row">
+                                    <input
+                                      className="configuration-range-input"
+                                      max={160}
+                                      min={70}
+                                      onChange={(event) =>
+                                        void updateDesktopSurfaceScalePreference(
+                                          "tooltipScalePercent",
+                                          Number(event.target.value)
+                                        )
+                                      }
+                                      step={1}
+                                      type="range"
+                                      value={tooltipScalePercent}
+                                    />
+                                    <strong>{`${tooltipScalePercent}%`}</strong>
+                                  </div>
+                                </label>
+                                <label className="configuration-slider-control">
+                                  <span>Control Iconography</span>
+                                  <div className="configuration-slider-row">
+                                    <input
+                                      className="configuration-range-input"
+                                      max={160}
+                                      min={70}
+                                      onChange={(event) =>
+                                        void updateDesktopSurfaceScalePreference(
+                                          "controlIconScalePercent",
+                                          Number(event.target.value)
+                                        )
+                                      }
+                                      step={1}
+                                      type="range"
+                                      value={controlIconScalePercent}
+                                    />
+                                    <strong>{`${controlIconScalePercent}%`}</strong>
+                                  </div>
+                                </label>
+                                <label className="configuration-slider-control">
+                                  <span>Iconified Applications</span>
+                                  <div className="configuration-slider-row">
+                                    <input
+                                      className="configuration-range-input"
+                                      max={160}
+                                      min={70}
+                                      onChange={(event) =>
+                                        void updateDesktopSurfaceScalePreference(
+                                          "dockIconScalePercent",
+                                          Number(event.target.value)
+                                        )
+                                      }
+                                      step={1}
+                                      type="range"
+                                      value={dockIconScalePercent}
+                                    />
+                                    <strong>{`${dockIconScalePercent}%`}</strong>
+                                  </div>
+                                </label>
+                                <label className="configuration-slider-control">
+                                  <span>Conversation Text</span>
+                                  <div className="configuration-slider-row">
+                                    <input
+                                      className="configuration-range-input"
+                                      max={160}
+                                      min={70}
+                                      onChange={(event) =>
+                                        void updateDesktopSurfaceScalePreference(
+                                          "conversationTextScalePercent",
+                                          Number(event.target.value)
+                                        )
+                                      }
+                                      step={1}
+                                      type="range"
+                                      value={conversationTextScalePercent}
+                                    />
+                                    <strong>{`${conversationTextScalePercent}%`}</strong>
+                                  </div>
+                                </label>
+                                <label className="configuration-slider-control">
+                                  <span>Source Code Text</span>
+                                  <div className="configuration-slider-row">
+                                    <input
+                                      className="configuration-range-input"
+                                      max={160}
+                                      min={70}
+                                      onChange={(event) =>
+                                        void updateDesktopSurfaceScalePreference(
+                                          "sourceCodeTextScalePercent",
+                                          Number(event.target.value)
+                                        )
+                                      }
+                                      step={1}
+                                      type="range"
+                                      value={sourceCodeTextScalePercent}
+                                    />
+                                    <strong>{`${sourceCodeTextScalePercent}%`}</strong>
+                                  </div>
+                                </label>
                               </div>
                             </div>
                           )
@@ -6408,28 +10185,34 @@ function WorkspaceInspector({
   const [activeInspectorTab, setActiveInspectorTab] = useState<string>(inspectorTabs[0]?.id ?? "context");
 
   useEffect(() => {
-    if (!inspectorTabs.some((tab) => tab.id === activeInspectorTab)) {
-      setActiveInspectorTab(inspectorTabs[0]?.id ?? "context");
+    const nextInspectorTab = inspectorTabs[0]?.id ?? "context";
+    if (!inspectorTabs.some((tab) => tab.id === activeInspectorTab) && activeInspectorTab !== nextInspectorTab) {
+      setActiveInspectorTab(nextInspectorTab);
     }
   }, [activeInspectorTab, inspectorTabs]);
 
   const selectedInspectorTab = inspectorTabs.find((tab) => tab.id === activeInspectorTab) ?? inspectorTabs[0] ?? null;
+  const inspectorClassName = renderChrome ? "inspector" : "inspector inspector-embedded";
+  const renderInspectorChrome = (title: string) =>
+    renderChrome ? (
+      <div className="panel-titlebar">
+        <button
+          aria-label={title === "Workspace" ? "Collapse Inspector" : "Collapse workspace panel"}
+          className="panel-titlebar-toggle"
+          onClick={onToggleInspector}
+          title={title === "Workspace" ? "Collapse Inspector" : "Collapse workspace panel"}
+          type="button"
+        >
+          <span aria-hidden="true">−</span>
+        </button>
+        <span className="panel-titlebar-label">{title}</span>
+      </div>
+    ) : null;
 
   if (activeWorkspace === "conversations") {
     return (
-      <aside className="inspector" ref={panelRef}>
-        <div className="panel-titlebar">
-          <button
-            aria-label="Collapse Inspector"
-            className="panel-titlebar-toggle"
-            onClick={onToggleInspector}
-            title="Collapse Inspector"
-            type="button"
-          >
-            <span aria-hidden="true">−</span>
-          </button>
-          <span className="panel-titlebar-label">Workspace</span>
-        </div>
+      <aside className={inspectorClassName} ref={panelRef}>
+        {renderInspectorChrome("Workspace")}
         <div className="inspector-body conversation-workspace-body">
           {selectedThread ? (
             <>
@@ -6494,47 +10277,40 @@ function WorkspaceInspector({
   }
 
   return (
-    <aside className="inspector" ref={panelRef}>
-      <div className="panel-titlebar">
-        <button
-          aria-label="Collapse workspace panel"
-          className="panel-titlebar-toggle"
-          onClick={onToggleInspector}
-          title="Collapse workspace panel"
-          type="button"
-        >
-          <span aria-hidden="true">−</span>
-        </button>
-        <span className="panel-titlebar-label">Inspector</span>
-      </div>
+    <aside className={inspectorClassName} ref={panelRef}>
+      {renderInspectorChrome("Inspector")}
       <div className="inspector-body">
-        <section className="inspector-card">
-          <p className="eyebrow">Current Focus</p>
-          <h3>{currentFocusTitle}</h3>
-          <p className="inspector-copy">{currentFocusSummary}</p>
-          <dl className="detail-list">
-            <DetailRow label="Surface" value={labelForWorkspace(activeWorkspace)} />
-            <DetailRow label="Binding" value={binding?.environmentId ?? "unbound"} />
-            <DetailRow label="Runtime" value={summary?.activeContext.runtimePackage ?? status?.runtimeState ?? "unknown"} />
-            <DetailRow label="Workflow" value={status?.workflowState ?? "unknown"} />
-          </dl>
-        </section>
+        {activeWorkspace === "configuration" ? null : (
+          <section className="inspector-card">
+            <p className="eyebrow">Current Focus</p>
+            <h3>{currentFocusTitle}</h3>
+            <p className="inspector-copy">{currentFocusSummary}</p>
+            <dl className="detail-list">
+              <DetailRow label="Surface" value={labelForWorkspace(activeWorkspace)} />
+              <DetailRow label="Binding" value={binding?.environmentId ?? "unbound"} />
+              <DetailRow label="Runtime" value={summary?.activeContext.runtimePackage ?? status?.runtimeState ?? "unknown"} />
+              <DetailRow label="Workflow" value={status?.workflowState ?? "unknown"} />
+            </dl>
+          </section>
+        )}
         {selectedInspectorTab ? (
           <section className="inspector-card inspector-tabs-card">
-            <div className="inspector-tabs" role="tablist" aria-label="Inspector panels">
-              {inspectorTabs.map((tab) => (
-                <button
-                  aria-selected={tab.id === selectedInspectorTab.id}
-                  className={tab.id === selectedInspectorTab.id ? "inspector-tab active" : "inspector-tab"}
-                  key={tab.id}
-                  onClick={() => setActiveInspectorTab(tab.id)}
-                  role="tab"
-                  type="button"
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
+            {inspectorTabs.length > 1 ? (
+              <div className="inspector-tabs" role="tablist" aria-label="Inspector panels">
+                {inspectorTabs.map((tab) => (
+                  <button
+                    aria-selected={tab.id === selectedInspectorTab.id}
+                    className={tab.id === selectedInspectorTab.id ? "inspector-tab active" : "inspector-tab"}
+                    key={tab.id}
+                    onClick={() => setActiveInspectorTab(tab.id)}
+                    role="tab"
+                    type="button"
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
             <div className="inspector-tab-panel" role="tabpanel">
               {selectedInspectorTab.content}
             </div>
@@ -6542,96 +10318,6 @@ function WorkspaceInspector({
         ) : null}
       </div>
     </aside>
-  );
-}
-
-function ConfigurationWorkspace({
-  selectedSection,
-  setSelectedSection,
-  themePreference,
-  lispParenColors,
-  resolvedTheme,
-  systemTheme,
-  updateLispParenColor: _updateLispParenColor,
-  updateThemePreference: _updateThemePreference
-}: {
-  selectedSection: ConfigurationSection;
-  setSelectedSection: (value: ConfigurationSection) => void;
-  themePreference: ThemePreference;
-  lispParenColors: string[];
-  resolvedTheme: ResolvedTheme;
-  systemTheme: ResolvedTheme;
-  updateLispParenColor: (index: number, color: string) => Promise<void>;
-  updateThemePreference: (value: ThemePreference) => Promise<void>;
-}) {
-  const selectedDescriptor =
-    configurationSections.find((section) => section.id === selectedSection) ?? configurationSections[0];
-  const configurationRows = configurationSections.map((section) => ({
-    key: section.id,
-    category: section.label,
-    family: section.family,
-    currentValue:
-      section.id === "theme"
-        ? themePreference === "system"
-          ? `System (${resolvedTheme})`
-          : `${themePreference} (${resolvedTheme})`
-        : `${normalizeParenDepthColors(lispParenColors).length} configured depths`,
-    summary: section.summary
-  }));
-
-  return (
-    <div className="configuration-journey">
-      <div className="configuration-layout">
-        <section className="configuration-pane panel">
-          <PanelHeader
-            title="Configuration Categories"
-            subtitle="Browse configurable domains in the workspace, then edit the selected category in the inspector."
-            helpText="This keeps the left rail shallow while allowing the configuration system to scale to many categories over time."
-          />
-          <BrowserDataTable
-            key="configuration-categories"
-            columnTemplate="minmax(0, 1fr) minmax(0, 0.82fr) minmax(0, 1fr) minmax(0, 1.45fr)"
-            columns={[
-              {
-                id: "category",
-                label: "Category",
-                render: (row) => <strong>{row.category}</strong>,
-                sortValue: (row) => row.category,
-                searchValue: (row) => `${row.category} ${row.summary} ${row.family}`
-              },
-              {
-                id: "family",
-                label: "Family",
-                render: (row) => <Badge tone="steady">{row.family}</Badge>,
-                sortValue: (row) => row.family
-              },
-              {
-                id: "current",
-                label: "Current",
-                render: (row) => row.currentValue,
-                sortValue: (row) => row.currentValue
-              },
-              {
-                id: "summary",
-                label: "Summary",
-                render: (row) => row.summary,
-                sortValue: (row) => row.summary,
-                searchValue: (row) => row.summary
-              }
-            ]}
-            emptyMessage="No configuration categories are available."
-            filterLabel="Family"
-            filterOptions={Array.from(new Set(configurationRows.map((row) => row.family))).map((value) => ({ label: value, value }))}
-            getFilterValue={(row) => row.family}
-            getRowKey={(row) => row.key}
-            onSelect={(row) => setSelectedSection(row.key as ConfigurationSection)}
-            rows={configurationRows}
-            searchPlaceholder="Search configuration categories"
-            selectedKey={selectedDescriptor.id}
-          />
-        </section>
-      </div>
-    </div>
   );
 }
 
@@ -6657,8 +10343,20 @@ function DesktopWindowStage({
   activeHostedAppLabel,
   activeHostedAppSummary,
   browserWorkspaceProps,
+  projectsWorkspaceProps,
+  operateWorkspaceProps,
+  executionWorkspaceProps,
+  approvalsWorkspaceProps,
+  incidentsWorkspaceProps,
+  workWorkspaceProps,
+  evidenceWorkspaceProps,
   conversationsWorkspaceProps,
   configurationWorkspaceProps,
+  editorSurfaceProps,
+  workspaceSurfaceProps,
+  transcriptSurfaceProps,
+  activeWorkspace,
+  selectedExecutionSection,
   browserSurfaceTitle,
   browserSurfaceSummary,
   browserSurfaceEntries,
@@ -6670,12 +10368,7 @@ function DesktopWindowStage({
   workflowState,
   shellCurrentSurfaceSummary,
   leadAttention,
-  selectedLane,
-  setSelectedLane,
-  monitorItems,
-  recommendedTargets,
-  recommendedTarget,
-  stagedActions,
+  governedAttentionSignalCount,
   replSessions,
   currentReplSessionId,
   switchReplSession,
@@ -6726,11 +10419,13 @@ function DesktopWindowStage({
   onZoomIn,
   onZoomOut,
   onZoomReset,
-  onOpenRecommended,
-  onOpenRecommendedTarget,
-  onOpenMonitor,
-  onOpenStagedAction,
   onOpenDetailedWorkspace,
+  undockedPanelContentById,
+  undockDropTargetActive,
+  undockDropTargetRef,
+  onDropUndockedPanel,
+  onDockUndockedPanelLeft,
+  onDockUndockedPanelRight,
   replSessionTitleDraft,
   setReplSessionTitleDraft,
   runtimeInspectorPackage,
@@ -6757,8 +10452,20 @@ function DesktopWindowStage({
   activeHostedAppLabel: string;
   activeHostedAppSummary: string;
   browserWorkspaceProps: React.ComponentProps<typeof BrowserWorkspace>;
+  projectsWorkspaceProps: React.ComponentProps<typeof ProjectsWorkspace>;
+  operateWorkspaceProps: React.ComponentProps<typeof OperateWorkspace>;
+  executionWorkspaceProps: React.ComponentProps<typeof ExecutionWorkspace>;
+  approvalsWorkspaceProps: React.ComponentProps<typeof ApprovalsWorkspace>;
+  incidentsWorkspaceProps: React.ComponentProps<typeof IncidentsWorkspace>;
+  workWorkspaceProps: React.ComponentProps<typeof WorkWorkspace>;
+  evidenceWorkspaceProps: React.ComponentProps<typeof EvidenceWorkspace>;
   conversationsWorkspaceProps: React.ComponentProps<typeof ConversationsWorkspace>;
   configurationWorkspaceProps: React.ComponentProps<typeof ConfigurationWorkspace>;
+  editorSurfaceProps: React.ComponentProps<typeof EditorSurface>;
+  workspaceSurfaceProps: React.ComponentProps<typeof WorkspaceSurface>;
+  transcriptSurfaceProps: React.ComponentProps<typeof TranscriptSurface>;
+  activeWorkspace: WorkspaceId;
+  selectedExecutionSection: ExecutionSection;
   browserSurfaceTitle: string;
   browserSurfaceSummary: string;
   browserSurfaceEntries: BrowserSurfaceEntry[];
@@ -6770,16 +10477,10 @@ function DesktopWindowStage({
   workflowState: string;
   shellCurrentSurfaceSummary: {
     panelLabel: string;
-    proactiveLaneLabel: string;
     summary: string;
   };
   leadAttention: GlobalAttentionItem | null;
-  selectedLane: ShellProactiveLane;
-  setSelectedLane: (lane: ShellProactiveLane) => void;
-  monitorItems: GlobalAttentionItem[];
-  recommendedTargets: DockJumpTarget[];
-  recommendedTarget: DockJumpTarget | null;
-  stagedActions: ActionQueueItem[];
+  governedAttentionSignalCount: number;
   replSessions: ReplSessionProfileDto[];
   currentReplSessionId: string | null;
   switchReplSession: (sessionId: string) => Promise<void>;
@@ -6830,11 +10531,13 @@ function DesktopWindowStage({
   onZoomIn: () => void;
   onZoomOut: () => void;
   onZoomReset: () => void;
-  onOpenRecommended: () => void;
-  onOpenRecommendedTarget: (target: DockJumpTarget) => void;
-  onOpenMonitor: (item: GlobalAttentionItem) => void;
-  onOpenStagedAction: (item: ActionQueueItem) => void;
   onOpenDetailedWorkspace: () => void;
+  undockedPanelContentById: Partial<Record<ShellDockPanelId, ReactNode>>;
+  undockDropTargetActive: boolean;
+  undockDropTargetRef: Ref<HTMLDivElement>;
+  onDropUndockedPanel: (panelId: ShellDockPanelId) => void;
+  onDockUndockedPanelLeft: (panelId: ShellDockPanelId) => void;
+  onDockUndockedPanelRight: (panelId: ShellDockPanelId) => void;
   replSessionTitleDraft: string;
   setReplSessionTitleDraft: (value: string) => void;
   runtimeInspectorPackage: string;
@@ -6882,7 +10585,6 @@ function DesktopWindowStage({
   const residentQueueItems = actionQueue.slice(0, 4);
   const residentApprovals = approvalRequests.filter((item) => item.state === "awaiting").slice(0, 2);
   const residentIncidents = incidents.filter((item) => item.state !== "resolved").slice(0, 2);
-  const proactivitySignalCount = recommendedTargets.length + monitorItems.length + stagedActions.length;
   const hostNeedsAttention = hostState !== "ready";
   const runtimeNeedsAttention = runtimeState === "recovering";
   const workflowNeedsAttention = workflowState === "attention_required";
@@ -6902,12 +10604,36 @@ function DesktopWindowStage({
     runtimeEntityDetail?.data.signature ??
     runtimeInspection?.data.summary ??
     "Evaluate a form or inspect a symbol to keep live runtime output visible in the resident window.";
+  const handleUndockStageDragOver = (event: ReactDragEvent<HTMLDivElement>): void => {
+    if (!readDraggedShellPanelId(event.dataTransfer)) {
+      return;
+    }
+    event.preventDefault();
+  };
+  const handleUndockStageDrop = (event: ReactDragEvent<HTMLDivElement>): void => {
+    const panelId = readDraggedShellPanelId(event.dataTransfer);
+    if (!panelId) {
+      return;
+    }
+    event.preventDefault();
+    onDropUndockedPanel(panelId);
+  };
 
   function desktopChipGlyph(index: number): string {
     return String(index + 1);
   }
 
   function dockGlyphClassForWindow(window: DesktopWindowRecord): string {
+    const undockedPanelId = shellDockPanelIdFromUndockedWindowId(window.id);
+    if (undockedPanelId === "shell-navigation" || undockedPanelId === "shell-utilities") {
+      return "desktop-window-dock-glyph-shell";
+    }
+    if (undockedPanelId === "workspace-inspector") {
+      return "desktop-window-dock-glyph-inspector";
+    }
+    if (undockedPanelId === "editor-symbol") {
+      return "desktop-window-dock-glyph-editor";
+    }
     if (window.id === "window:control-panel") {
       return "desktop-window-dock-glyph-control-panel";
     }
@@ -6917,23 +10643,32 @@ function DesktopWindowStage({
     if (window.id === "window:inspector") {
       return "desktop-window-dock-glyph-inspector";
     }
-    if (window.id === "window:governance") {
-      return "desktop-window-dock-glyph-governance";
-    }
     if (window.id === "window:display") {
       return "desktop-window-dock-glyph-display";
     }
     if (window.id === "window:shell-context") {
       return "desktop-window-dock-glyph-shell";
     }
-    if (window.id === "window:proactivity") {
-      return "desktop-window-dock-glyph-proactivity";
-    }
     if (window.id === "window:detailed-surface") {
       return "desktop-window-dock-glyph-detail";
     }
     if (window.id === "window:browser-surface") {
       return "desktop-window-dock-glyph-browser";
+    }
+    if (window.id === "window:projects-surface") {
+      return "desktop-window-dock-glyph-workspace";
+    }
+    if (window.id === "window:editor-surface") {
+      return "desktop-window-dock-glyph-editor";
+    }
+    if (window.id === "window:workspace-surface") {
+      return "desktop-window-dock-glyph-workspace";
+    }
+    if (window.id === "window:transcript-surface") {
+      return "desktop-window-dock-glyph-transcript";
+    }
+    if (window.id === "window:operate-surface") {
+      return "desktop-window-dock-glyph-operate";
     }
     if (window.id === "window:conversations-surface") {
       return "desktop-window-dock-glyph-conversations";
@@ -6942,6 +10677,50 @@ function DesktopWindowStage({
       return "desktop-window-dock-glyph-configuration";
     }
     return "desktop-window-dock-glyph-generic";
+  }
+
+  function shouldShowWindowFacts(window: DesktopWindowRecord): boolean {
+    if (shellDockPanelIdFromUndockedWindowId(window.id)) {
+      return false;
+    }
+    return ![
+      "window:browser-surface",
+      "window:editor-surface",
+      "window:projects-surface",
+      "window:conversations-surface"
+    ].includes(window.id);
+  }
+
+  function shouldShowWindowSummary(window: DesktopWindowRecord): boolean {
+    if (shellDockPanelIdFromUndockedWindowId(window.id)) {
+      return false;
+    }
+    if (window.id === "window:conversations-surface" || window.id === "window:editor-surface") {
+      return false;
+    }
+    return window.summary.trim().length > 0;
+  }
+
+  function renderOperateSurfaceContent(): React.ReactNode {
+    if (activeWorkspace === "runtime") {
+      if (selectedExecutionSection === "approvals") {
+        return <ApprovalsWorkspace {...approvalsWorkspaceProps} />;
+      }
+      if (selectedExecutionSection === "work") {
+        return <WorkWorkspace {...workWorkspaceProps} />;
+      }
+      return <ExecutionWorkspace {...executionWorkspaceProps} />;
+    }
+
+    if (activeWorkspace === "incidents") {
+      return <IncidentsWorkspace {...incidentsWorkspaceProps} />;
+    }
+
+    if (activeWorkspace === "artifacts") {
+      return <EvidenceWorkspace {...evidenceWorkspaceProps} />;
+    }
+
+    return <OperateWorkspace {...operateWorkspaceProps} />;
   }
 
   useEffect(() => {
@@ -7149,26 +10928,26 @@ function DesktopWindowStage({
             <span aria-hidden="true" className="desktop-window-notification-glyph desktop-window-notification-glyph-shell" />
           </button>
           <button
-            className={proactivitySignalCount > 0 || leadAttention ? "desktop-window-notification active" : "desktop-window-notification"}
+            className={governedAttentionSignalCount > 0 || leadAttention ? "desktop-window-notification active" : "desktop-window-notification"}
             data-tooltip={
               leadAttention
-                ? `Open proactivity: ${leadAttention.label}${proactivitySignalCount > 0 ? ` (${proactivitySignalCount} active)` : ""}`
-                : proactivitySignalCount > 0
-                  ? `Open proactivity (${proactivitySignalCount} active)`
-                  : "Open proactivity"
+                ? `Open governed attention: ${leadAttention.label}${governedAttentionSignalCount > 0 ? ` (${governedAttentionSignalCount} active)` : ""}`
+                : governedAttentionSignalCount > 0
+                  ? `Open governed attention (${governedAttentionSignalCount} active)`
+                  : "Open governed attention in Operate"
             }
             onClick={onOpenProactivityWindow}
             title={
               leadAttention
-                ? `Open proactivity: ${leadAttention.label}${proactivitySignalCount > 0 ? ` (${proactivitySignalCount} active)` : ""}`
-                : proactivitySignalCount > 0
-                  ? `Open proactivity (${proactivitySignalCount} active)`
-                  : "Open proactivity"
+                ? `Open governed attention: ${leadAttention.label}${governedAttentionSignalCount > 0 ? ` (${governedAttentionSignalCount} active)` : ""}`
+                : governedAttentionSignalCount > 0
+                  ? `Open governed attention (${governedAttentionSignalCount} active)`
+                  : "Open governed attention in Operate"
             }
             type="button"
           >
             <span aria-hidden="true" className="desktop-window-notification-glyph desktop-window-notification-glyph-proactivity" />
-            {proactivitySignalCount > 0 ? (
+            {governedAttentionSignalCount > 0 ? (
               <span className="desktop-window-notification-dot" aria-hidden="true" />
             ) : null}
           </button>
@@ -7266,7 +11045,13 @@ function DesktopWindowStage({
           </button>
         </div>
       </div>
-      <div className="desktop-window-canvas-scroll" aria-label="Desktop window registry">
+      <div
+        aria-label="Desktop window registry"
+        className={`desktop-window-canvas-scroll${undockDropTargetActive ? " desktop-window-canvas-scroll-drop-target" : ""}`}
+        onDragOver={handleUndockStageDragOver}
+        onDrop={handleUndockStageDrop}
+        ref={undockDropTargetRef}
+      >
       <div
         className="desktop-window-canvas"
         ref={canvasRef}
@@ -7297,6 +11082,42 @@ function DesktopWindowStage({
                 <strong>{window.title}</strong>
               </div>
               <div className="desktop-window-actions" onPointerDown={(event) => event.stopPropagation()}>
+                {shellDockPanelIdFromUndockedWindowId(window.id) ? (
+                  <>
+                    <button
+                      className="desktop-window-action desktop-window-action-icon"
+                      aria-label={`Dock ${window.title} to left rail`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        const panelId = shellDockPanelIdFromUndockedWindowId(window.id);
+                        if (!panelId) {
+                          return;
+                        }
+                        onDockUndockedPanelLeft(panelId);
+                      }}
+                      title="Dock Left"
+                      type="button"
+                    >
+                      ⇤
+                    </button>
+                    <button
+                      className="desktop-window-action desktop-window-action-icon"
+                      aria-label={`Dock ${window.title} to right rail`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        const panelId = shellDockPanelIdFromUndockedWindowId(window.id);
+                        if (!panelId) {
+                          return;
+                        }
+                        onDockUndockedPanelRight(panelId);
+                      }}
+                      title="Dock Right"
+                      type="button"
+                    >
+                      ⇥
+                    </button>
+                  </>
+                ) : null}
                 <button
                   className="desktop-window-action desktop-window-action-icon"
                   aria-label={`Move ${window.title} left`}
@@ -7434,7 +11255,7 @@ function DesktopWindowStage({
               </div>
             </div>
             <div
-              className="desktop-window-body"
+              className={window.id === "window:editor-surface" ? "desktop-window-body desktop-window-body-editor" : "desktop-window-body"}
               ref={(node) => {
                 if (node) {
                   windowBodyRefs.current.set(window.id, node);
@@ -7443,12 +11264,25 @@ function DesktopWindowStage({
                 }
               }}
             >
-              <p>{window.summary}</p>
-              <div className="desktop-window-facts">
-                <ContextBlock label="Focus" value={window.id === focusedWindowId ? "foreground" : "resident"} />
-                <ContextBlock label="State" value={window.state} />
-                <ContextBlock label="Layer" value={String(window.zIndex)} />
-              </div>
+              {shouldShowWindowSummary(window) ? <p>{window.summary}</p> : null}
+              {shouldShowWindowFacts(window) ? (
+                <div className="desktop-window-facts">
+                  <ContextBlock label="Focus" value={window.id === focusedWindowId ? "foreground" : "resident"} />
+                  <ContextBlock label="State" value={window.state} />
+                  <ContextBlock label="Layer" value={String(window.zIndex)} />
+                </div>
+              ) : null}
+              {(() => {
+                const undockedPanelId = shellDockPanelIdFromUndockedWindowId(window.id);
+                if (!undockedPanelId) {
+                  return null;
+                }
+                return (
+                  <div className="desktop-window-browser-surface" onClick={(event) => event.stopPropagation()}>
+                    {undockedPanelContentById[undockedPanelId] ?? null}
+                  </div>
+                );
+              })()}
               {window.id === "window:control-panel" ? (
                 <div className="desktop-window-control-panel" onClick={(event) => event.stopPropagation()}>
                   <div className="desktop-window-control-grid">
@@ -7570,65 +11404,6 @@ function DesktopWindowStage({
                   </div>
                 </div>
               ) : null}
-              {window.id === "window:governance" ? (
-                <div className="desktop-window-control-panel" onClick={(event) => event.stopPropagation()}>
-                  <div className="desktop-window-control-grid">
-                    <div className="desktop-window-control-column">
-                      <p className="context-label">Awaiting Approvals</p>
-                      {residentApprovals.length > 0 ? (
-                        residentApprovals.map((approval) => (
-                          <div className="desktop-window-control-decision" key={approval.requestId}>
-                            <div className="desktop-window-control-queue-top">
-                              <strong>{approval.title}</strong>
-                              <span>{approval.state}</span>
-                            </div>
-                            <p>{approval.summary}</p>
-                            <div className="desktop-window-control-decision-actions">
-                              <button
-                                className="desktop-window-action"
-                                disabled={isDecidingApproval}
-                                onClick={() => onSubmitApprovalDecision(approval.requestId, "approve")}
-                                type="button"
-                              >
-                                Approve
-                              </button>
-                              <button
-                                className="desktop-window-action"
-                                disabled={isDecidingApproval}
-                                onClick={() => onSubmitApprovalDecision(approval.requestId, "deny")}
-                                type="button"
-                              >
-                                Deny
-                              </button>
-                            </div>
-                          </div>
-                        ))
-                      ) : (
-                        <p className="desktop-window-workbench-summary">No awaiting approvals are currently blocking governed work.</p>
-                      )}
-                    </div>
-                    <div className="desktop-window-control-column">
-                      <p className="context-label">Active Recovery</p>
-                      {residentIncidents.length > 0 ? (
-                        residentIncidents.map((incident) => (
-                          <button
-                            className="desktop-window-control-item"
-                            key={incident.incidentId}
-                            onClick={() => onOpenIncident(incident.incidentId)}
-                            type="button"
-                          >
-                            <strong>{incident.title}</strong>
-                            <span>{`Severity ${incident.severity}`}</span>
-                            <em>{incident.state === "open" ? "Open Recovery" : "Continue Recovery"}</em>
-                          </button>
-                        ))
-                      ) : (
-                        <p className="desktop-window-workbench-summary">No active incident currently dominates governed recovery.</p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ) : null}
               {window.id === "window:display" ? (
                 <div className="desktop-window-control-panel" onClick={(event) => event.stopPropagation()}>
                   <div className="desktop-window-control-grid">
@@ -7684,7 +11459,7 @@ function DesktopWindowStage({
                           <span>{activeHostedAppLabel}</span>
                         </div>
                         <p>{shellCurrentSurfaceSummary.summary}</p>
-                        <em>{shellCurrentSurfaceSummary.proactiveLaneLabel}</em>
+                          <em>Governed attention routes through the desktop shell.</em>
                       </div>
                     </div>
                     <div className="desktop-window-control-column">
@@ -7696,67 +11471,6 @@ function DesktopWindowStage({
                         </div>
                         <p>{activeHostedAppSummary}</p>
                         <em>Shell resident</em>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-              {window.id === "window:proactivity" ? (
-                <div className="desktop-window-control-panel" onClick={(event) => event.stopPropagation()}>
-                  <div className="desktop-window-control-grid">
-                    <div className="desktop-window-control-column">
-                      <p className="context-label">Lead Attention</p>
-                      <div className="desktop-window-control-queue-item">
-                        <div className="desktop-window-control-queue-top">
-                          <strong>{leadAttention?.label ?? "No active pressure"}</strong>
-                          <span>{selectedLane}</span>
-                        </div>
-                        <p>{leadAttention?.summary ?? "The environment is currently calm and no dominant proactive attention object is active."}</p>
-                        <em>{proactivitySignalCount} visible signals</em>
-                      </div>
-                    </div>
-                    <div className="desktop-window-control-column">
-                      <p className="context-label">Lane</p>
-                      <div className="desktop-window-workbench-inspector">
-                        <label className="desktop-window-workbench-input">
-                          <span className="context-label">Selected Lane</span>
-                          <select
-                            className="desktop-window-workbench-select"
-                            onChange={(event) => setSelectedLane(event.target.value as ShellProactiveLane)}
-                            value={selectedLane}
-                          >
-                            <option value="recommendations">recommendations</option>
-                            <option value="monitors">monitors</option>
-                            <option value="staged">staged continuations</option>
-                          </select>
-                        </label>
-                        {selectedLane === "recommendations" && recommendedTargets.length > 0 ? (
-                          recommendedTargets.slice(0, 3).map((target) => (
-                            <button className="desktop-window-control-item" key={target.id} onClick={() => onOpenRecommendedTarget(target)} type="button">
-                              <strong>{target.title}</strong>
-                              <span>{target.recommendationReason}</span>
-                              <em>Open Recommended Surface</em>
-                            </button>
-                          ))
-                        ) : null}
-                        {selectedLane === "monitors" && monitorItems.length > 0 ? (
-                          monitorItems.slice(0, 3).map((item) => (
-                            <button className="desktop-window-control-item" key={item.id} onClick={() => onOpenMonitor(item)} type="button">
-                              <strong>{item.label}</strong>
-                              <span>{item.summary}</span>
-                              <em>Open Monitor</em>
-                            </button>
-                          ))
-                        ) : null}
-                        {selectedLane === "staged" && stagedActions.length > 0 ? (
-                          stagedActions.slice(0, 3).map((item) => (
-                            <button className="desktop-window-control-item" key={item.key} onClick={() => onOpenStagedAction(item)} type="button">
-                              <strong>{item.title}</strong>
-                              <span>{item.effectSummary}</span>
-                              <em>{item.actionLabel}</em>
-                            </button>
-                          ))
-                        ) : null}
                       </div>
                     </div>
                   </div>
@@ -7864,13 +11578,6 @@ function DesktopWindowStage({
                         <span>{activeHostedAppId === "listener-workbench" ? "Route into the live listener resident and its governed runtime work." : "Route into the current control-panel workspace for deeper single-surface work."}</span>
                         <em>{shellCurrentSurfaceSummary.panelLabel}</em>
                       </button>
-                      {recommendedTarget ? (
-                        <button className="desktop-window-control-item" onClick={onOpenRecommended} type="button">
-                          <strong>{recommendedTarget.title}</strong>
-                          <span>{recommendedTarget.recommendationReason}</span>
-                          <em>Open Recommended Surface</em>
-                        </button>
-                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -7878,6 +11585,31 @@ function DesktopWindowStage({
               {window.id === "window:browser-surface" ? (
                 <div className="desktop-window-browser-surface" onClick={(event) => event.stopPropagation()}>
                   <BrowserWorkspace {...browserWorkspaceProps} />
+                </div>
+              ) : null}
+              {window.id === "window:projects-surface" ? (
+                <div className="desktop-window-browser-surface" onClick={(event) => event.stopPropagation()}>
+                  <ProjectsWorkspace {...projectsWorkspaceProps} />
+                </div>
+              ) : null}
+              {window.id === "window:editor-surface" ? (
+                <div className="desktop-window-browser-surface" onClick={(event) => event.stopPropagation()}>
+                  <EditorSurface {...editorSurfaceProps} />
+                </div>
+              ) : null}
+              {window.id === "window:workspace-surface" ? (
+                <div className="desktop-window-browser-surface" onClick={(event) => event.stopPropagation()}>
+                  <WorkspaceSurface {...workspaceSurfaceProps} />
+                </div>
+              ) : null}
+              {window.id === "window:transcript-surface" ? (
+                <div className="desktop-window-browser-surface" onClick={(event) => event.stopPropagation()}>
+                  <TranscriptSurface {...transcriptSurfaceProps} />
+                </div>
+              ) : null}
+              {window.id === "window:operate-surface" ? (
+                <div className="desktop-window-browser-surface" onClick={(event) => event.stopPropagation()}>
+                  {renderOperateSurfaceContent()}
                 </div>
               ) : null}
               {window.id === "window:conversations-surface" ? (
@@ -8092,2383 +11824,21 @@ function DesktopWindowStage({
   );
 }
 
-function HostedApplicationWorkspace({
-  app,
-  activeWorkspace,
-  onReturnToControlPanel
-}: {
-  app: HostedAppDescriptor;
-  activeWorkspace: WorkspaceId;
-  onReturnToControlPanel: () => void;
-}) {
-  return (
-    <div className="hosted-app-workspace">
-      <section className="panel hosted-app-hero">
-        <p className="eyebrow">Desktop Shell</p>
-        <h2>{app.label}</h2>
-        <p className="canvas-subtitle">{app.summary}</p>
-        <div className="hosted-app-callouts">
-          <div className="signal-digest-card">
-            <span className="context-label">Shell Posture</span>
-            <strong>Hosted Application</strong>
-            <p>The shell now reserves top-level identity for applications and system surfaces, not only workspace taxonomy.</p>
-          </div>
-          <div className="signal-digest-card">
-            <span className="context-label">Current Desktop Surface</span>
-            <strong>{labelForWorkspace(canonicalWorkspace(activeWorkspace))}</strong>
-            <p>The current environment-first workflows remain available inside the Control Panel application.</p>
-          </div>
-          <div className="signal-digest-card">
-            <span className="context-label">Availability</span>
-            <strong>{app.availability === "available" ? "Live" : "Planned"}</strong>
-            <p>
-              {app.availability === "available"
-                ? "This hosted application is currently available in the shell."
-                : "This application slot is now explicit in the shell so additional governed desktop residents have a real home."}
-            </p>
-          </div>
-        </div>
-        <div className="hosted-app-actions">
-          <button className="action-button" onClick={onReturnToControlPanel} type="button">
-            Open Control Panel
-          </button>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function ListenerWorkbenchApp({
-  replSessions,
-  currentReplSessionId,
-  switchReplSession,
-  createReplSession,
-  replSessionTitleDraft,
-  setReplSessionTitleDraft,
-  runtimeSummary,
-  runtimeForm,
-  setRuntimeForm,
-  evaluateRuntimeForm,
-  runtimeInspection,
-  runtimeInspectionMode,
-  runtimeInspectorSymbol,
-  runtimeInspectorPackage,
-  setRuntimeInspectionMode,
-  setRuntimeInspectorSymbol,
-  setRuntimeInspectorPackage,
-  inspectRuntimeSymbol,
-  runtimeResult,
-  isEvaluating,
-  isInspectingRuntime,
-  onReturnToControlPanel
-}: {
-  replSessions: ReplSessionProfileDto[];
-  currentReplSessionId: string | null;
-  switchReplSession: (sessionId: string) => Promise<void>;
-  createReplSession: () => Promise<void>;
-  replSessionTitleDraft: string;
-  setReplSessionTitleDraft: (value: string) => void;
-  runtimeSummary: RuntimeSummaryDto | null;
-  runtimeForm: string;
-  setRuntimeForm: (value: string) => void;
-  evaluateRuntimeForm: () => Promise<void>;
-  runtimeInspection: QueryResultDto<RuntimeInspectionResultDto> | null;
-  runtimeInspectionMode: RuntimeInspectionMode;
-  runtimeInspectorSymbol: string;
-  runtimeInspectorPackage: string;
-  setRuntimeInspectionMode: (value: RuntimeInspectionMode) => void;
-  setRuntimeInspectorSymbol: (value: string) => void;
-  setRuntimeInspectorPackage: (value: string) => void;
-  inspectRuntimeSymbol: () => Promise<void>;
-  runtimeResult: CommandResultDto<RuntimeEvalResultDto> | null;
-  isEvaluating: boolean;
-  isInspectingRuntime: boolean;
-  onReturnToControlPanel: () => void;
-}) {
-  return (
-    <div className="hosted-app-workspace">
-      <section className="panel hosted-app-hero">
-        <p className="eyebrow">Hosted Application</p>
-        <h2>Listener Workbench</h2>
-        <p className="canvas-subtitle">
-          This is the first hosted runtime-native application outside the control panel. It keeps live image work
-          direct, inspectable, and governed at the shell level.
-        </p>
-        <div className="hosted-app-callouts">
-          <div className="signal-digest-card">
-            <span className="context-label">Native Surface</span>
-            <strong>SBCL Image Listener</strong>
-            <p>The workbench is where runtime execution becomes a first-class desktop resident instead of a nested control-panel view.</p>
-          </div>
-          <div className="signal-digest-card">
-            <span className="context-label">Retained Sessions</span>
-            <strong>{replSessions.length}</strong>
-            <p>{replSessions[0]?.title ?? "No retained REPL session is currently available."}</p>
-          </div>
-          <div className="signal-digest-card">
-            <span className="context-label">Return Path</span>
-            <strong>Control Panel</strong>
-            <p>The control panel remains available for broader workflow, evidence, and recovery coordination.</p>
-          </div>
-        </div>
-        <div className="hosted-app-actions">
-          <button className="action-button" onClick={onReturnToControlPanel} type="button">
-            Open Control Panel
-          </button>
-        </div>
-      </section>
-      <RuntimeWorkspace
-        createReplSession={createReplSession}
-        currentReplSessionId={currentReplSessionId}
-        evaluateRuntimeForm={evaluateRuntimeForm}
-        inspectRuntimeSymbol={inspectRuntimeSymbol}
-        isEvaluating={isEvaluating}
-        isInspectingRuntime={isInspectingRuntime}
-        replSessionTitleDraft={replSessionTitleDraft}
-        replSessions={replSessions}
-        runtimeForm={runtimeForm}
-        runtimeInspection={runtimeInspection}
-        runtimeInspectionMode={runtimeInspectionMode}
-        runtimeInspectorPackage={runtimeInspectorPackage}
-        runtimeInspectorSymbol={runtimeInspectorSymbol}
-        runtimeResult={runtimeResult}
-        runtimeSummary={runtimeSummary}
-        setReplSessionTitleDraft={setReplSessionTitleDraft}
-        setRuntimeForm={setRuntimeForm}
-        setRuntimeInspectionMode={setRuntimeInspectionMode}
-        setRuntimeInspectorPackage={setRuntimeInspectorPackage}
-        setRuntimeInspectorSymbol={setRuntimeInspectorSymbol}
-        switchReplSession={switchReplSession}
-      />
-    </div>
-  );
-}
-
-function ShellProactiveSurface({
-  className,
-  leadAttention,
-  selectedLane,
-  setSelectedLane,
-  monitorItems,
-  recommendedTargets,
-  recommendedTarget,
-  stagedActions,
-  onOpenRecommended,
-  onOpenRecommendedTarget,
-  onOpenMonitor,
-  onOpenStagedAction
-}: {
-  className?: string;
-  leadAttention: GlobalAttentionItem | null;
-  selectedLane: ShellProactiveLane;
-  setSelectedLane: (lane: ShellProactiveLane) => void;
-  monitorItems: GlobalAttentionItem[];
-  recommendedTargets: DockJumpTarget[];
-  recommendedTarget: DockJumpTarget | null;
-  stagedActions: ActionQueueItem[];
-  onOpenRecommended: () => void;
-  onOpenRecommendedTarget: (target: DockJumpTarget) => void;
-  onOpenMonitor: (item: GlobalAttentionItem) => void;
-  onOpenStagedAction: (item: ActionQueueItem) => void;
-}) {
-  return (
-    <section className={className ?? "panel shell-proactive-surface"}>
-      <div className="shell-proactive-header">
-        <div>
-          <p className="eyebrow">Desktop Proactivity</p>
-          <h2>Governed Attention And Staged Continuation</h2>
-          <p className="canvas-subtitle">
-            IntentOS is not only reactive. The shell surfaces governed pressure, recommended next work, and staged
-            continuation before the user reconstructs them manually.
-          </p>
-        </div>
-      </div>
-      <div className="shell-proactive-lanes" role="tablist" aria-label="Desktop proactive lanes">
-        {[
-          { id: "recommendations", label: "Recommendations" },
-          { id: "monitors", label: "Monitors" },
-          { id: "staged", label: "Staged Continuations" }
-        ].map((lane) => (
-          <button
-            aria-selected={selectedLane === lane.id}
-            className={selectedLane === lane.id ? "shell-proactive-lane active" : "shell-proactive-lane"}
-            key={lane.id}
-            onClick={() => setSelectedLane(lane.id as ShellProactiveLane)}
-            role="tab"
-            type="button"
-          >
-            {lane.label}
-          </button>
-        ))}
-      </div>
-      <div className="shell-proactive-grid">
-        <div className="signal-digest-card shell-proactive-card">
-          <span className="context-label">Lead Attention</span>
-          <strong>{leadAttention?.label ?? "No active pressure"}</strong>
-          <p>{leadAttention?.summary ?? "The environment is currently calm and no dominant proactive attention object is active."}</p>
-        </div>
-        <div className="signal-digest-card shell-proactive-card">
-          <span className="context-label">Recommended Next Surface</span>
-          <strong>{recommendedTarget?.title ?? "No recommended jump target"}</strong>
-          <p>{recommendedTarget?.recommendationReason ?? "No dominant next surface is currently outranking the rest of the environment."}</p>
-          {recommendedTarget ? (
-            <div className="hosted-app-actions">
-              <button className="action-button" onClick={onOpenRecommended} type="button">
-                Open Recommended Surface
-              </button>
-            </div>
-          ) : null}
-        </div>
-        <div className="signal-digest-card shell-proactive-card">
-          <span className="context-label">
-            {selectedLane === "recommendations"
-              ? "Recommendation Lane"
-              : selectedLane === "monitors"
-                ? "Monitor Lane"
-                : "Staged Continuation Lane"}
-          </span>
-          <strong>
-            {selectedLane === "recommendations"
-              ? `${recommendedTargets.length} recommendations`
-              : selectedLane === "monitors"
-                ? `${monitorItems.length} active monitors`
-                : `${stagedActions.length} staged actions`}
-          </strong>
-          <p>
-            {selectedLane === "recommendations"
-              ? "The shell can suggest the strongest next governed surface without collapsing everything into the control panel."
-              : selectedLane === "monitors"
-                ? "The shell can monitor live pressure directly and route into the owning governed surface."
-                : "The shell can surface governed continuations directly instead of hiding them inside a chat-first control flow."}
-          </p>
-          {selectedLane === "recommendations" && recommendedTargets.length > 0 ? (
-            <div className="shell-proactive-action-list">
-              {recommendedTargets.map((target) => (
-                <button
-                  className="shell-proactive-action"
-                  key={target.id}
-                  onClick={() => onOpenRecommendedTarget(target)}
-                  type="button"
-                >
-                  <span className="shell-proactive-action-title">{target.title}</span>
-                  <span className="shell-proactive-action-summary">{target.recommendationReason}</span>
-                </button>
-              ))}
-            </div>
-          ) : null}
-          {selectedLane === "monitors" && monitorItems.length > 0 ? (
-            <div className="shell-proactive-action-list">
-              {monitorItems.map((item) => (
-                <button
-                  className="shell-proactive-action"
-                  key={item.id}
-                  onClick={() => onOpenMonitor(item)}
-                  type="button"
-                >
-                  <span className="shell-proactive-action-title">{item.label}</span>
-                  <span className="shell-proactive-action-summary">{item.summary}</span>
-                </button>
-              ))}
-            </div>
-          ) : null}
-          {selectedLane === "staged" && stagedActions.length > 0 ? (
-            <div className="shell-proactive-action-list">
-              {stagedActions.map((item) => (
-                <button
-                  className="shell-proactive-action"
-                  key={item.key}
-                  onClick={() => onOpenStagedAction(item)}
-                  type="button"
-                >
-                  <span className="shell-proactive-action-title">{item.title}</span>
-                  <span className="shell-proactive-action-summary">{item.actionLabel}</span>
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function PlannedWorkspace({ workspaceId }: { workspaceId: WorkspaceId }) {
-  return (
-    <div className="empty-state">
-      <p className="eyebrow">Planned Workspace</p>
-      <h3>{labelForWorkspace(workspaceId)}</h3>
-      <p>
-        This workspace is intentionally present in navigation now so the shell is built around the full environment
-        model, not around one temporary slice.
-      </p>
-    </div>
-  );
-}
-
-function DocumentationWorkspace({
-  documentationPages,
-  selectedDocumentationSlug,
-  setSelectedDocumentationSlug,
-  loadDocumentationPage
-}: {
-  documentationPages: DocumentationPageSummaryDto[];
-  selectedDocumentationSlug: string;
-  setSelectedDocumentationSlug: (value: string) => void;
-  loadDocumentationPage: (slug: string) => Promise<void>;
-}) {
-  return (
-    <div className="documentation-workspace">
-      <section className="panel documentation-table-panel">
-        <PanelHeader
-          title="Documentation Pages"
-          subtitle="Browse documentation pages here, then read and inspect the selected page in the inspector."
-          helpText="This keeps Documentation scalable in the same way as Configuration: the workspace stays navigational and the inspector becomes the reading surface."
-        />
-        <BrowserDataTable
-          key="desktop-documentation"
-          columnTemplate="minmax(0, 1fr) minmax(0, 0.72fr) minmax(0, 1.8fr)"
-          columns={[
-            {
-              id: "title",
-              label: "Title",
-              render: (row) => <strong>{row.title}</strong>,
-              sortValue: (row) => row.title
-            },
-            {
-              id: "category",
-              label: "Category",
-              render: (row) => <Badge tone="active">{row.category}</Badge>,
-              sortValue: (row) => row.category,
-              searchValue: (row) => row.category
-            },
-            {
-              id: "summary",
-              label: "Summary",
-              render: (row) => row.summary,
-              sortValue: (row) => row.summary,
-              searchValue: (row) => `${row.title} ${row.category} ${row.summary}`
-            }
-          ]}
-          emptyMessage="No documentation pages are available."
-          filterLabel="Category"
-          filterOptions={Array.from(new Set(documentationPages.map((page) => page.category))).map((value) => ({
-            label: value,
-            value
-          }))}
-          getFilterValue={(row) => row.category}
-          getRowKey={(row) => row.slug}
-          onSelect={(row) => {
-            setSelectedDocumentationSlug(row.slug);
-            void loadDocumentationPage(row.slug);
-          }}
-          rows={documentationPages}
-          searchPlaceholder="Search documentation"
-          selectedKey={selectedDocumentationSlug}
-        />
-      </section>
-    </div>
-  );
-}
-
-function DashboardWorkspace({
-  actionQueue,
-  attentionItems,
-  workspaceSummary,
-  isDecidingApproval,
-  navigateToActionQueueItem,
-  navigateToWorkspace,
-  onDashboardApprovalDecision,
-  onDashboardContinueRecovery,
-  onDashboardContinueThread,
-  onDashboardContinueWorkItem
-}: {
-  actionQueue: ActionQueueItem[];
-  attentionItems: GlobalAttentionItem[];
-  workspaceSummary: WorkspaceSummaryDto | null;
-  isDecidingApproval: boolean;
-  navigateToActionQueueItem: (item: ActionQueueItem) => Promise<void>;
-  navigateToWorkspace: (workspace: WorkspaceId) => Promise<void>;
-  onDashboardApprovalDecision: (requestId: string, decision: "approve" | "deny") => Promise<void>;
-  onDashboardContinueRecovery: (incidentId: string) => Promise<void>;
-  onDashboardContinueThread: (threadId: string) => Promise<void>;
-  onDashboardContinueWorkItem: (workItemId: string) => Promise<void>;
-}) {
-  const [selectedDashboardKey, setSelectedDashboardKey] = useState<string | null>(actionQueue[0]?.key ?? null);
-  const previousTopQueueItemRef = useRef<ActionQueueItem | null>(null);
-  const previousQueueOrderRef = useRef<string[]>([]);
-  const previousQueueSnapshotRef = useRef<Array<{ key: string; title: string }>>([]);
-  const [queueShiftSummary, setQueueShiftSummary] = useState<string | null>(null);
-  const [queueChangeSummary, setQueueChangeSummary] = useState<string>(
-    "No queue membership or ordering changes were observed on the last refresh."
-  );
-
-  useEffect(() => {
-    if (!actionQueue.some((row) => row.key === selectedDashboardKey)) {
-      setSelectedDashboardKey(actionQueue[0]?.key ?? null);
-    }
-  }, [actionQueue, selectedDashboardKey]);
-
-  useEffect(() => {
-    const currentTopQueueItem = actionQueue[0] ?? null;
-    const previousTopQueueItem = previousTopQueueItemRef.current;
-    const previousQueueOrder = previousQueueOrderRef.current;
-    const previousQueueSnapshot = previousQueueSnapshotRef.current;
-    const previousQueueKeySet = new Set(previousQueueSnapshot.map((row) => row.key));
-    const currentQueueKeySet = new Set(actionQueue.map((row) => row.key));
-
-    const enteredQueueItems = actionQueue
-      .filter((row) => !previousQueueKeySet.has(row.key))
-      .slice(0, 2)
-      .map((row) => row.title);
-    const removedQueueItems = previousQueueSnapshot
-      .filter((row) => !currentQueueKeySet.has(row.key))
-      .slice(0, 2)
-      .map((row) => row.title);
-    const movedQueueCount = actionQueue.reduce((count, row, index) => {
-      const previousIndex = previousQueueOrder.findIndex((key) => key === row.key);
-      return previousIndex >= 0 && previousIndex !== index ? count + 1 : count;
-    }, 0);
-    const queueChangeParts: string[] = [];
-    if (enteredQueueItems.length > 0) {
-      queueChangeParts.push(`Entered: ${enteredQueueItems.join(", ")}.`);
-    }
-    if (removedQueueItems.length > 0) {
-      queueChangeParts.push(`Cleared: ${removedQueueItems.join(", ")}.`);
-    }
-    if (movedQueueCount > 0) {
-      queueChangeParts.push(`${movedQueueCount} queued item${movedQueueCount === 1 ? "" : "s"} changed position.`);
-    }
-    setQueueChangeSummary(
-      queueChangeParts.length > 0
-        ? queueChangeParts.join(" ")
-        : "No queue membership or ordering changes were observed on the last refresh."
-    );
-
-    if (
-      currentTopQueueItem &&
-      previousTopQueueItem &&
-      currentTopQueueItem.key !== previousTopQueueItem.key
-    ) {
-      setQueueShiftSummary(
-        `${currentTopQueueItem.title} replaced ${previousTopQueueItem.title} as the top recommendation.`
-      );
-    } else if (!currentTopQueueItem) {
-      setQueueShiftSummary(null);
-    }
-
-    previousTopQueueItemRef.current = currentTopQueueItem;
-    previousQueueOrderRef.current = actionQueue.map((row) => row.key);
-    previousQueueSnapshotRef.current = actionQueue.map((row) => ({ key: row.key, title: row.title }));
-  }, [actionQueue]);
-
-  const selectedDashboardRow =
-    actionQueue.find((row) => row.key === selectedDashboardKey) ?? actionQueue[0] ?? null;
-  const selectedDashboardIndex = selectedDashboardRow
-    ? actionQueue.findIndex((row) => row.key === selectedDashboardRow.key)
-    : -1;
-  const previousDashboardRow =
-    selectedDashboardIndex > 0 ? actionQueue[selectedDashboardIndex - 1] ?? null : null;
-  const nextDashboardRow =
-    selectedDashboardIndex >= 0 && selectedDashboardIndex < actionQueue.length - 1
-      ? actionQueue[selectedDashboardIndex + 1]
-      : null;
-  const outrankingExplanation = selectedDashboardRow
-    ? nextDashboardRow
-      ? (() => {
-          const scoreGap = selectedDashboardRow.score - nextDashboardRow.score;
-          if (selectedDashboardRow.tone !== nextDashboardRow.tone) {
-            return `${selectedDashboardRow.title} carries ${selectedDashboardRow.priorityLabel.toLowerCase()}-priority pressure while ${nextDashboardRow.title} remains ${nextDashboardRow.priorityLabel.toLowerCase()} priority.`;
-          }
-          if (scoreGap > 20) {
-            return `${selectedDashboardRow.title} carries materially stronger governed urgency than ${nextDashboardRow.title}.`;
-          }
-          if (scoreGap > 0) {
-            return `${selectedDashboardRow.title} edges ahead of ${nextDashboardRow.title} on current ranking weight.`;
-          }
-          return `${selectedDashboardRow.title} currently leads ${nextDashboardRow.title} on tie-break ordering.`;
-        })()
-      : `${selectedDashboardRow.title} is currently the final actionable item in the queue.`
-      : "Select a queue item to inspect why it outranks nearby alternatives.";
-  const underRankingExplanation = selectedDashboardRow
-    ? previousDashboardRow
-      ? (() => {
-          const scoreGap = previousDashboardRow.score - selectedDashboardRow.score;
-          if (previousDashboardRow.tone !== selectedDashboardRow.tone) {
-            return `${previousDashboardRow.title} remains above because it carries ${previousDashboardRow.priorityLabel.toLowerCase()}-priority pressure while ${selectedDashboardRow.title} is ${selectedDashboardRow.priorityLabel.toLowerCase()} priority.`;
-          }
-          if (scoreGap > 20) {
-            return `${previousDashboardRow.title} currently carries materially stronger governed urgency than ${selectedDashboardRow.title}.`;
-          }
-          if (scoreGap > 0) {
-            return `${previousDashboardRow.title} narrowly stays ahead of ${selectedDashboardRow.title} on current ranking weight.`;
-          }
-          return `${previousDashboardRow.title} currently leads ${selectedDashboardRow.title} on tie-break ordering.`;
-        })()
-      : `${selectedDashboardRow.title} is currently the top-ranked actionable item.`
-    : "Select a queue item to inspect what still outranks it.";
-  const previousQueueOrder = previousQueueOrderRef.current;
-  const previousQueueSnapshot = previousQueueSnapshotRef.current;
-  const previousQueueKeySet = new Set(previousQueueSnapshot.map((row) => row.key));
-  const selectedPreviousIndex =
-    selectedDashboardRow ? previousQueueOrder.findIndex((key) => key === selectedDashboardRow.key) : -1;
-  const movementSummary =
-    selectedDashboardRow && selectedDashboardIndex >= 0
-      ? selectedPreviousIndex < 0
-        ? `${selectedDashboardRow.title} is newly present in the queue.`
-        : selectedPreviousIndex > selectedDashboardIndex
-          ? `${selectedDashboardRow.title} moved up ${selectedPreviousIndex - selectedDashboardIndex} position${
-              previousQueueOrder.findIndex((key) => key === selectedDashboardRow.key) - selectedDashboardIndex === 1 ? "" : "s"
-            } since the last refresh.`
-          : selectedPreviousIndex < selectedDashboardIndex
-            ? `${selectedDashboardRow.title} moved down ${selectedDashboardIndex - selectedPreviousIndex} position${
-                selectedDashboardIndex - selectedPreviousIndex === 1 ? "" : "s"
-              } since the last refresh.`
-            : `${selectedDashboardRow.title} held the same queue position across the last refresh.`
-      : "Select a queue item to inspect how it moved across refreshes.";
-  const secondarySignalCounts = signalCountsFromItems(attentionItems);
-  const workspaceAttentionQueue = workspaceSummary?.attentionQueue ?? null;
-  const workspaceAttentionItems = useMemo<WorkspaceAttentionDigestItem[]>(() => {
-    if (!workspaceAttentionQueue?.items?.length) {
-      return [];
-    }
-
-    return workspaceAttentionQueue.items.slice(0, 3).map((item, index) => ({
-      key: `${item.kind}-${item.objectId ?? index}`,
-      kind: item.kind,
-      title: item.title,
-      summary: item.summary,
-      tone: item.tone
-    }));
-  }, [workspaceAttentionQueue]);
-  const workspacePostureCards = useMemo(() => {
-    if (!workspaceSummary) {
-      return [];
-    }
-
-    const assignmentTerms = (workspaceSummary.assignmentTerms ?? {}) as Record<string, unknown>;
-    const evidencePosture = (workspaceSummary.evidencePosture ?? {}) as Record<string, unknown>;
-    const usageSummary = (workspaceSummary.usageSummary ?? {}) as Record<string, unknown>;
-    const publicationSummary = (workspaceSummary.publicationSummary ?? {}) as Record<string, unknown>;
-    const businessSummary = (workspaceSummary.businessSummary ?? {}) as Record<string, unknown>;
-
-    return [
-      {
-        key: 'node-mode',
-        label: 'Node Mode',
-        title: `${workspaceSummary.nodeMode.employmentModel} / ${workspaceSummary.nodeMode.trustProfile}`,
-        summary: `${workspaceSummary.nodeMode.visibilityProfile} visibility with ${workspaceSummary.nodeMode.billingProfile} billing.`
-      },
-      {
-        key: 'assignment-terms',
-        label: 'Assignment Terms',
-        title: `${String(assignmentTerms.count ?? 0)} governed terms`,
-        summary: `${String(assignmentTerms.policyBlockedCount ?? 0)} currently policy-blocked.`
-      },
-      {
-        key: 'evidence-posture',
-        label: 'Evidence Posture',
-        title: `${String(evidencePosture.artifactCount ?? 0)} evidence artifacts`,
-        summary: `${String(usageSummary.activeTaskCount ?? 0)} active tasks and ${String(usageSummary.activeWorkerCount ?? 0)} active workers are currently in scope.`
-      },
-      {
-        key: 'publication-posture',
-        label: 'Publication Posture',
-        title: String(publicationSummary.attentionClass ?? 'idle'),
-        summary: `Current business gate: ${String(businessSummary.currentGate ?? 'clear')}.`
-      }
-    ];
-  }, [workspaceSummary]);
-  const workspaceCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const item of actionQueue) {
-      counts.set(item.destinationLabel, (counts.get(item.destinationLabel) ?? 0) + 1);
-    }
-    return Array.from(counts.entries()).slice(0, 4);
-  }, [actionQueue]);
-  const directActionDescriptor = selectedDashboardRow
-    ? (() => {
-        switch (selectedDashboardRow.objectType) {
-          case "Approval":
-            return {
-              title: "Available",
-              summary: "This approval can be decided directly from the dashboard without leaving the operational queue."
-            };
-          case "Thread":
-            return {
-              title: "Available",
-              summary: "This thread can be resumed directly from the dashboard into a ready conversation continuation."
-            };
-          case "Work":
-            return {
-              title: "Available",
-              summary: "This work item can be opened directly into focused workflow and closure context from the dashboard."
-            };
-          case "Recovery":
-            return {
-              title: "Available",
-              summary: "This incident can be opened directly into its recovery context from the dashboard."
-            };
-          default:
-            return {
-              title: "Route Only",
-              summary: "This item currently opens its owning page rather than performing a first-step action directly from the dashboard."
-            };
-        }
-      })()
-    : {
-        title: "Unavailable",
-        summary: "Select a queue item to inspect whether the dashboard can act on it directly."
-      };
-  const recommendedMoveDescriptor = selectedDashboardRow
-    ? (() => {
-        switch (selectedDashboardRow.objectType) {
-          case "Approval":
-            return {
-              title: "Decide Approval",
-              summary: "Review this governed request and either unblock execution or divert it into a different path."
-            };
-          case "Thread":
-            return {
-              title: "Resume Conversation",
-              summary: "Continue the retained thread directly in its governed conversational context."
-            };
-          case "Work":
-            return {
-              title: "Inspect Closure Path",
-              summary: "Open the work item in its workflow and closure context so the next governed step is explicit."
-            };
-          case "Recovery":
-            return {
-              title: "Restore Trust",
-              summary: "Open the incident in recovery context and continue from the dominant restoration objective."
-            };
-          default:
-            return {
-              title: selectedDashboardRow.actionLabel,
-              summary: "Open the owning workspace for the next meaningful step."
-            };
-        }
-      })()
-    : {
-        title: "No Recommended Move",
-        summary: "Select a queue item to see the strongest next action."
-      };
-
-  return (
-    <div className="dashboard-journey">
-      <section className="panel dashboard-detail-panel">
-        <PanelHeader
-          title="Operational Queue"
-          subtitle="The dashboard is the primary attention surface: one ordered backlog of concrete governed work, not categories."
-        />
-        <div className="signal-digest-grid execution-objective-digest">
-          <div className="signal-digest-card">
-            <span className="context-label">Signal</span>
-            <strong>
-              <PrioritySignalCluster counts={secondarySignalCounts} />
-            </strong>
-            <p>Aggregate pressure remains visible, but the backlog below is now the primary operational surface.</p>
-          </div>
-          <div className="signal-digest-card">
-            <span className="context-label">Queue Items</span>
-            <strong>{workspaceAttentionQueue?.count ?? actionQueue.length}</strong>
-            <p>{workspaceAttentionQueue?.topItem ? `${workspaceAttentionQueue.topItem.title} is the current node-level top recommendation.` : actionQueue[0] ? `${actionQueue[0].title} is the current top recommendation.` : "No actionable backlog is currently active."}</p>
-          </div>
-          <div className="signal-digest-card">
-            <span className="context-label">Top Operator Pressure</span>
-            <strong>{workspaceAttentionQueue?.topItem?.title ?? "Quiet"}</strong>
-            <p>{workspaceAttentionQueue?.topItem ? workspaceAttentionQueue.topItem.summary : "No node-level operator attention is currently active."}</p>
-          </div>
-          <div className="signal-digest-card">
-            <span className="context-label">Top Route</span>
-            <strong>{workspaceCounts[0]?.[0] ?? "Quiet"}</strong>
-            <p>{workspaceCounts[0] ? `${workspaceCounts[0][1]} actionable items currently route here.` : "No workspace currently dominates the queue."}</p>
-          </div>
-        </div>
-        {workspaceAttentionItems.length > 0 ? (
-          <div className="signal-digest-grid execution-objective-digest">
-            {workspaceAttentionItems.map((item) => (
-              <div key={item.key} className="signal-digest-card">
-                <span className="context-label">{item.kind.replace(/-/g, " ")}</span>
-                <strong>{item.title}</strong>
-                <p>{item.summary}</p>
-              </div>
-            ))}
-          </div>
-        ) : null}
-        {workspacePostureCards.length > 0 ? (
-          <div className="signal-digest-grid execution-objective-digest">
-            {workspacePostureCards.map((item) => (
-              <div key={item.key} className="signal-digest-card">
-                <span className="context-label">{item.label}</span>
-                <strong>{item.title}</strong>
-                <p>{item.summary}</p>
-              </div>
-            ))}
-          </div>
-        ) : null}
-      </section>
-
-      <section className="panel dashboard-table-panel">
-        <PanelHeader
-          title="Priority Queue"
-          subtitle="Each row is one concrete operational target, already prioritized, sequenced, and routed."
-        />
-        <BrowserDataTable
-          key="dashboard-priority-queue"
-          columnTemplate="minmax(0, 0.72fr) minmax(0, 0.7fr) minmax(0, 1.1fr) minmax(0, 0.78fr) minmax(0, 1.45fr) minmax(0, 0.95fr) 44px"
-          initialSortDirection="desc"
-          columns={[
-            {
-              id: "priority",
-              label: "Priority",
-              render: (row) => <PriorityStateChip label={row.priorityLabel} tone={row.tone} />,
-              sortValue: (row) => attentionToneWeight(row.tone)
-            },
-            {
-              id: "type",
-              label: "Type",
-              render: (row) => row.objectType,
-              sortValue: (row) => row.objectType,
-              searchValue: (row) => row.objectType
-            },
-            {
-              id: "title",
-              label: "Title",
-              render: (row) => <strong>{row.title}</strong>,
-              sortValue: (row) => row.title,
-              searchValue: (row) => `${row.title} ${row.whyNow} ${row.destinationLabel} ${row.references.join(" ")}`
-            },
-            {
-              id: "state",
-              label: "State",
-              render: (row) => row.stateLabel,
-              sortValue: (row) => row.stateLabel
-            },
-            {
-              id: "why",
-              label: "Why Now",
-              render: (row) => row.whyNow,
-              sortValue: (row) => row.whyNow,
-              searchValue: (row) => row.whyNow
-            },
-            {
-              id: "destination",
-              label: "Destination",
-              render: (row) => row.destinationLabel,
-              sortValue: (row) => row.destinationLabel
-            },
-            {
-              id: "open",
-              label: "",
-              render: (row) => (
-                <button
-                  aria-label={row.actionLabel}
-                  className="panel-titlebar-toggle table-row-action"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    void navigateToActionQueueItem(row);
-                  }}
-                  title={row.actionLabel}
-                  type="button"
-                >
-                  <span aria-hidden="true">↗</span>
-                </button>
-              ),
-              sortValue: () => ""
-            }
-          ]}
-          emptyMessage="No actionable backlog is currently active."
-          filterLabel="Priority"
-          filterOptions={[
-            { label: "High", value: "High" },
-            { label: "Medium", value: "Medium" },
-            { label: "Low", value: "Low" }
-          ]}
-          getFilterValue={(row) => row.priorityLabel}
-          getRowKey={(row) => row.key}
-          onSelect={(row) => setSelectedDashboardKey(row.key)}
-          rows={actionQueue}
-          searchPlaceholder="Search action queue"
-          selectedKey={selectedDashboardKey}
-        />
-      </section>
-
-      <section className="panel dashboard-detail-panel">
-        {selectedDashboardRow ? (
-          <>
-            <div className="panel-header">
-              <div>
-                <p className="eyebrow">Selected Action</p>
-                <h3>{selectedDashboardRow.title}</h3>
-              </div>
-              <PriorityStateChip label={selectedDashboardRow.priorityLabel} tone={selectedDashboardRow.tone} />
-            </div>
-            <p className="lead-copy">{selectedDashboardRow.whyNow}</p>
-            <div className="signal-digest-grid execution-objective-digest">
-              <div className="signal-digest-card">
-                <span className="context-label">Object</span>
-                <strong>{selectedDashboardRow.objectType}</strong>
-                <p>{selectedDashboardRow.objectId}</p>
-              </div>
-              <div className="signal-digest-card">
-                <span className="context-label">Destination</span>
-                <strong>{selectedDashboardRow.destinationLabel}</strong>
-                <p>{selectedDashboardRow.effectSummary}</p>
-              </div>
-              <div className="signal-digest-card dashboard-recommended-card">
-                <span className="context-label">Recommended Move</span>
-                <strong>{recommendedMoveDescriptor.title}</strong>
-                <p>{recommendedMoveDescriptor.summary}</p>
-              </div>
-              <div className="signal-digest-card">
-                <span className="context-label">Action Mode</span>
-                <strong>{directActionDescriptor.title}</strong>
-                <p>{directActionDescriptor.summary}</p>
-              </div>
-              <div className="signal-digest-card dashboard-trust-card">
-                <span className="context-label">Stable Ranking Logic</span>
-                <strong>{selectedDashboardRow.priorityLabel}</strong>
-                <div className="dashboard-trust-stack">
-                  <div>
-                    <span className="context-label">Priority</span>
-                    <p>This row is sequenced from concrete governed urgency, not aggregate category counts.</p>
-                  </div>
-                  <div>
-                    <span className="context-label">Ranking Reason</span>
-                    <p>{selectedDashboardRow.rankReason}</p>
-                  </div>
-                </div>
-              </div>
-              <div className="signal-digest-card">
-                <span className="context-label">Why Above Next</span>
-                <strong>{nextDashboardRow ? nextDashboardRow.title : "Queue tail"}</strong>
-                <p>{outrankingExplanation}</p>
-              </div>
-              <div className="signal-digest-card">
-                <span className="context-label">Why Below Previous</span>
-                <strong>{previousDashboardRow ? previousDashboardRow.title : "Queue head"}</strong>
-                <p>{underRankingExplanation}</p>
-              </div>
-              <div className="signal-digest-card dashboard-trust-card">
-                <span className="context-label">Transient Refresh Effects</span>
-                <strong>{nextDashboardRow?.title ?? "No further queued action"}</strong>
-                <div className="dashboard-trust-stack">
-                  <div>
-                    <span className="context-label">Likely Next</span>
-                    <p>
-                      {nextDashboardRow
-                        ? `${nextDashboardRow.destinationLabel} is the next likely route after this action is handled.`
-                        : "Completing this action would leave no remaining queued follow-up in the current dashboard slice."}
-                    </p>
-                  </div>
-                  <div>
-                    <span className="context-label">Queue Shift</span>
-                    <p>{queueShiftSummary ?? "No recent top-of-queue change has been observed in this session."}</p>
-                  </div>
-                  <div>
-                    <span className="context-label">Changed Since Refresh</span>
-                    <p>{queueChangeSummary}</p>
-                  </div>
-                  <div>
-                    <span className="context-label">Movement</span>
-                    <p>{movementSummary}</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <section className="linked-entities-panel">
-              <PanelHeader
-                title="Related Context"
-                subtitle="These references explain why the queue item is ranked where it is and what context you will carry into the target surface."
-              />
-              <div className="ref-list">
-                {selectedDashboardRow.references.map((reference) => (
-                  <span className="thread-flag" key={reference}>
-                    {reference}
-                  </span>
-                ))}
-              </div>
-            </section>
-            <div className="dashboard-detail-actions">
-              <button
-                className="action-button"
-                onClick={() => void navigateToActionQueueItem(selectedDashboardRow)}
-                type="button"
-              >
-                {selectedDashboardRow.actionLabel}
-              </button>
-              {selectedDashboardRow.objectType === "Approval" ? (
-                <>
-                  <button
-                    className="action-button secondary-button"
-                    disabled={isDecidingApproval}
-                    onClick={() => void onDashboardApprovalDecision(selectedDashboardRow.objectId, "approve")}
-                    type="button"
-                  >
-                    {isDecidingApproval ? "Submitting..." : "Approve from Dashboard"}
-                  </button>
-                  <button
-                    className="action-button deny-button"
-                    disabled={isDecidingApproval}
-                    onClick={() => void onDashboardApprovalDecision(selectedDashboardRow.objectId, "deny")}
-                    type="button"
-                  >
-                    {isDecidingApproval ? "Submitting..." : "Deny from Dashboard"}
-                  </button>
-                </>
-              ) : null}
-              {selectedDashboardRow.objectType === "Thread" ? (
-                <button
-                  className="action-button secondary-button"
-                  onClick={() => void onDashboardContinueThread(selectedDashboardRow.objectId)}
-                  type="button"
-                >
-                  Continue from Dashboard
-                </button>
-              ) : null}
-              {selectedDashboardRow.objectType === "Recovery" ? (
-                <button
-                  className="action-button secondary-button"
-                  onClick={() => void onDashboardContinueRecovery(selectedDashboardRow.objectId)}
-                  type="button"
-                >
-                  Continue Recovery from Dashboard
-                </button>
-              ) : null}
-              {selectedDashboardRow.objectType === "Work" ? (
-                <button
-                  className="action-button secondary-button"
-                  onClick={() => void onDashboardContinueWorkItem(selectedDashboardRow.objectId)}
-                  type="button"
-                >
-                  Continue Work from Dashboard
-                </button>
-              ) : null}
-              <button
-                className="dock-button"
-                onClick={() => void navigateToWorkspace(selectedDashboardRow.destinationWorkspace)}
-                type="button"
-              >
-                Open Page
-              </button>
-            </div>
-          </>
-        ) : (
-          <div className="empty-state">
-            <p className="eyebrow">No Actions</p>
-            <h3>The operational queue is currently clear.</h3>
-          </div>
-        )}
-      </section>
-    </div>
-  );
-}
-
-function JourneyStageStrip({
-  eyebrow,
-  title,
-  summary,
-  steps
-}: {
-  eyebrow: string;
-  title: string;
-  summary: string;
-  steps: JourneyStep[];
-}) {
-  return (
-    <section className="panel journey-panel">
-      <div className="panel-header">
-        <div>
-          <p className="eyebrow">{eyebrow}</p>
-          <h3>{title}</h3>
-        </div>
-      </div>
-      <p className="panel-subtitle">{summary}</p>
-      <div className="journey-step-grid">
-        {steps.map((step, index) => (
-          <article className={`journey-step journey-step-${step.tone}`} key={step.id}>
-            <div className="journey-step-top">
-              <span className="journey-step-index">0{index + 1}</span>
-              <Badge tone={step.tone}>{step.title}</Badge>
-            </div>
-            <strong>{step.title}</strong>
-            <p>{step.summary}</p>
-          </article>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function SupervisionBoard({
-  lanes,
-  onOpenJourney,
-  onPrimaryAction
-}: {
-  lanes: Array<{
-    id: string;
-    label: string;
-    summary: string;
-    tone: "active" | "warning" | "danger" | "steady";
-    rows: Array<{
-      key: string;
-      title: string;
-      lane: string;
-      state: string;
-      nextStep: string;
-      tone: "active" | "warning" | "danger" | "steady";
-      detail: string;
-    }>;
-  }>;
-  onOpenJourney: (key: string) => void;
-  onPrimaryAction: (row: {
-    key: string;
-    title: string;
-    lane: string;
-    state: string;
-    nextStep: string;
-    tone: "active" | "warning" | "danger" | "steady";
-    detail: string;
-  }) => Promise<void>;
-}) {
-  return (
-    <section className="panel supervision-board-panel">
-      <PanelHeader
-        title="Supervision Board"
-        subtitle="Long-running work should remain visible as managed continuations with clear next moves."
-      />
-      <div className="supervision-board">
-        {lanes.map((lane) => (
-          <section className="supervision-lane" key={lane.id}>
-            <div className="supervision-lane-header">
-              <div>
-                <p className="eyebrow">{lane.label}</p>
-                <p className="panel-subtitle">{lane.summary}</p>
-              </div>
-              <Badge tone={lane.tone}>{String(lane.rows.length)}</Badge>
-            </div>
-            <div className="supervision-lane-body">
-              {lane.rows.length > 0 ? (
-                lane.rows.map((row) => (
-                  <article className={`supervision-card supervision-card-${row.tone}`} key={row.key}>
-                    <div className="supervision-card-top">
-                      <strong>{row.title}</strong>
-                      <Badge tone={row.tone}>{row.state}</Badge>
-                    </div>
-                    <p>{row.detail}</p>
-                    <div className="supervision-card-actions">
-                      <button className="starter-chip" onClick={() => onOpenJourney(row.key)} type="button">
-                        Focus
-                      </button>
-                      <button className="starter-chip" onClick={() => void onPrimaryAction(row)} type="button">
-                        {row.nextStep}
-                      </button>
-                    </div>
-                  </article>
-                ))
-              ) : (
-                <p className="list-empty">No continuations in this lane.</p>
-              )}
-            </div>
-          </section>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function OperateWorkspace({
-  artifacts,
-  navigateToBrowserDomain,
-  navigateToConversationSection,
-  navigateToEvidenceSection,
-  navigateToExecutionSection,
-  navigateToRecoverySection,
-  selectedSection,
-  summary,
-  status,
-  approvalRequests,
-  incidents,
-  workItems,
-  selectedApproval
-}: {
-  artifacts: ArtifactSummaryDto[];
-  navigateToBrowserDomain: (domain: BrowserDomain) => Promise<void>;
-  navigateToConversationSection: (section: ConversationSection) => Promise<void>;
-  navigateToEvidenceSection: (section: EvidenceSection) => Promise<void>;
-  navigateToExecutionSection: (section: ExecutionSection) => Promise<void>;
-  navigateToRecoverySection: (section: RecoverySection) => Promise<void>;
-  selectedSection: OperateSection;
-  summary: EnvironmentSummaryDto | null;
-  status: EnvironmentStatusDto | null;
-  approvalRequests: ApprovalRequestSummaryDto[];
-  incidents: IncidentSummaryDto[];
-  workItems: WorkItemSummaryDto[];
-  selectedApproval: ApprovalRequestDto | null;
-}) {
-  if (!summary || !status) {
-    return (
-      <div className="empty-state">
-        <p className="eyebrow">No Environment Bound</p>
-        <h3>The shell is ready for an explicit binding.</h3>
-      </div>
-    );
-  }
-  function toneForIncidentState(severity: IncidentSummaryDto["severity"]): "active" | "warning" | "danger" | "steady" {
-    return severity === "critical" || severity === "high" ? "danger" : severity === "moderate" ? "warning" : "steady";
-  }
-
-  function toneForWorkState(state: WorkItemSummaryDto["state"]): "active" | "warning" | "danger" | "steady" {
-    return state === "blocked" || state === "quarantined" ? "warning" : state === "active" ? "active" : "steady";
-  }
-
-  function toneForTaskState(state: EnvironmentSummaryDto["activeTasks"][number]["state"]): "active" | "warning" | "danger" | "steady" {
-    return state === "blocked" ? "danger" : state === "active" ? "active" : state === "waiting" ? "warning" : "steady";
-  }
-
-  function toneForWorkerState(state: EnvironmentSummaryDto["activeWorkers"][number]["state"]): "active" | "warning" | "danger" | "steady" {
-    return state === "active" ? "active" : state === "waiting" ? "warning" : "steady";
-  }
-
-  const orientationRows = [
-    {
-      key: "binding",
-      record: "Current Binding",
-      domain: "environment",
-      entity: summary.environmentLabel,
-      impact: summary.activeContext.focusSummary,
-      nextAction: "inspect environment",
-      targetWorkspace: "browser" as WorkspaceId,
-      tone: status.connectionState === "bound" ? ("active" as const) : ("warning" as const),
-      detail: "Verify the current environment root, runtime identity, and active continuation before drilling into a narrower workspace.",
-      facts: [
-        ["Environment", summary.environmentId],
-        ["Connection", status.connectionState],
-        ["Host", status.hostState],
-        ["Last Update", status.lastUpdatedAt]
-      ]
-    },
-    {
-      key: "runtime",
-      record: "Runtime Posture",
-      domain: "runtime",
-      entity: summary.activeContext.runtimePackage ?? summary.activeContext.runtimeLabel,
-      impact: summary.imagePosture.summary,
-      nextAction: "open listener",
-      targetWorkspace: "runtime" as WorkspaceId,
-      tone: status.runtimeState === "recovering" ? ("danger" as const) : ("active" as const),
-      detail: "Use this surface to move directly into live evaluation or browser inspection at the currently active package and image posture.",
-      facts: [
-        ["Runtime", summary.activeContext.runtimeLabel],
-        ["Package", summary.activeContext.runtimePackage ?? "unknown"],
-        ["State", status.runtimeState],
-        ["Workflow", status.workflowState]
-      ]
-    },
-    {
-      key: "continuation",
-      record: "Active Continuation",
-      domain: "conversation",
-      entity: summary.activeContext.currentThreadTitle ?? "No active thread",
-      impact: summary.activeContext.currentTurnSummary ?? "No current turn summary is attached.",
-      nextAction: "resume conversation",
-      targetWorkspace: "conversations" as WorkspaceId,
-      tone: summary.attention.interruptedTurns > 0 ? ("warning" as const) : ("active" as const),
-      detail: "The current supervised thread should remain the bridge between Browser, Listener, Recovery, and Evidence.",
-      facts: [
-        ["Thread", summary.activeContext.currentThreadTitle ?? "none"],
-        ["Interrupted", String(summary.attention.interruptedTurns)],
-        ["Tasks", String(summary.activeTasks.length)],
-        ["Workers", String(summary.activeWorkers.length)]
-      ]
-    },
-    {
-      key: "pressure",
-      record: "Attention Pressure",
-      domain: "workflow",
-      entity: status.workflowState,
-      impact: `${summary.attention.approvalsAwaiting} approvals, ${summary.attention.openIncidents} incidents, ${summary.attention.blockedWork} blocked work`,
-      nextAction: "review journeys",
-      targetWorkspace: "runtime" as WorkspaceId,
-      tone: status.workflowState === "attention_required" ? ("warning" as const) : ("steady" as const),
-      detail: "This condenses the work that still needs explicit human attention before the environment can be treated as clear.",
-      facts: [
-        ["Approvals", String(summary.attention.approvalsAwaiting)],
-        ["Incidents", String(summary.attention.openIncidents)],
-        ["Blocked Work", String(summary.attention.blockedWork)],
-        ["Streams", String(summary.attention.activeStreams)]
-      ]
-    },
-    {
-      key: "evidence",
-      record: "Recent Evidence",
-      domain: "evidence",
-      entity: summary.recentArtifacts[0]?.title ?? "No recent artifact",
-      impact: summary.recentArtifacts[0]?.summary ?? "Durable artifacts appear here as proof and consequence rather than as detached attachments.",
-      nextAction: "review artifacts",
-      targetWorkspace: "artifacts" as WorkspaceId,
-      tone: summary.recentArtifacts.length > 0 ? ("active" as const) : ("steady" as const),
-      detail: "Recent artifacts should be part of first-run orientation because they often explain what changed and what still needs review.",
-      facts: [
-        ["Recent Artifacts", String(summary.recentArtifacts.length)],
-        ["Open Incidents", String(summary.incidents.length)],
-        ["Open Approvals", String(summary.approvals.length)],
-        ["Target", "Evidence > Artifacts"]
-      ]
-    }
-  ];
-
-  const journeyRows = [
-    ...workItems.map((item) => ({
-      key: `work:${item.workItemId}`,
-      title: item.title,
-      lane: "work",
-      state: item.state,
-      urgency: item.state === "blocked" || item.state === "quarantined" ? "high" : "active",
-      dependency: item.waitingReason ?? "ready",
-      nextStep: item.state === "blocked" || item.state === "quarantined" ? "resolve blocker" : "open execution",
-      targetWorkspace: "runtime" as WorkspaceId,
-      tone: toneForWorkState(item.state),
-      detail: item.waitingReason ?? "Governed work is ready to continue in the execution workspace.",
-      facts: [
-        ["Approvals", String(item.approvalCount)],
-        ["Incidents", String(item.incidentCount)],
-        ["Artifacts", String(item.artifactCount)],
-        ["Validation", item.validationBurden]
-      ]
-    })),
-    ...approvalRequests.map((request) => ({
-      key: `approval:${request.requestId}`,
-      title: request.title,
-      lane: "approval",
-      state: request.state,
-      urgency: request.state === "awaiting" ? "high" : "steady",
-      dependency: "human decision",
-      nextStep: request.state === "awaiting" ? "review approval" : "inspect decision",
-      targetWorkspace: "runtime" as WorkspaceId,
-      tone: toneForApprovalState(request.state),
-      detail: request.summary,
-      facts: [
-        ["Type", "approval gate"],
-        ["State", request.state],
-        ["Workspace", "Execution > Approvals"],
-        ["Consequence", selectedApproval?.requestId === request.requestId ? selectedApproval.consequenceSummary : "Review the decision consequence in Execution."]
-      ]
-    })),
-    ...incidents.map((incident) => ({
-      key: `incident:${incident.incidentId}`,
-      title: incident.title,
-      lane: "incident",
-      state: incident.state,
-      urgency: incident.severity,
-      dependency: "recovery path",
-      nextStep: incident.state === "resolved" ? "review closure" : "open recovery",
-      targetWorkspace: "incidents" as WorkspaceId,
-      tone: toneForIncidentState(incident.severity),
-      detail: `Severity ${incident.severity}. Recovery remains part of the current continuation until closure is trustworthy again.`,
-      facts: [
-        ["Severity", incident.severity],
-        ["State", incident.state],
-        ["Workspace", "Recovery"],
-        ["Artifacts", String(artifacts.filter((artifact) => artifact.kind.includes("incident")).length)]
-      ]
-    }))
-  ];
-
-  const evidenceRows = (artifacts.length > 0 ? artifacts : summary.recentArtifacts).map((artifact) => ({
-    key: artifact.artifactId,
-    artifact: artifact.title,
-    type: artifact.kind,
-    updatedAt: artifact.updatedAt,
-    summary: artifact.summary,
-    impact:
-      artifact.kind.includes("incident")
-        ? "recovery"
-        : artifact.kind.includes("spec") || artifact.kind.includes("source")
-          ? "source"
-          : "workflow",
-    targetWorkspace: "artifacts" as WorkspaceId,
-    tone: artifact.kind.includes("incident") ? ("warning" as const) : ("active" as const),
-    facts: [
-      ["Artifact", artifact.title],
-      ["Kind", artifact.kind],
-      ["Updated", artifact.updatedAt],
-      ["Workspace", "Evidence"]
-    ]
-  }));
-  const taskRows = summary.activeTasks.map((task) => ({
-    key: task.taskId,
-    title: task.title,
-    state: task.state,
-    summary: task.summary,
-    tone: toneForTaskState(task.state)
-  }));
-  const workerRows = summary.activeWorkers.map((worker) => ({
-    key: worker.workerId,
-    title: worker.label,
-    state: worker.state,
-    summary: worker.responsibility,
-    tone: toneForWorkerState(worker.state)
-  }));
-  const parallelSnapshot = {
-    activeTasks: taskRows.filter((task) => task.state === "active").length,
-    blockedTasks: taskRows.filter((task) => task.state === "blocked").length,
-    waitingWorkers: workerRows.filter((worker) => worker.state === "waiting").length
-  };
-
-  const [selectedOrientationKey, setSelectedOrientationKey] = useState<string | null>(orientationRows[0]?.key ?? null);
-  const [selectedJourneyKey, setSelectedJourneyKey] = useState<string | null>(journeyRows[0]?.key ?? null);
-  const [selectedEvidenceKey, setSelectedEvidenceKey] = useState<string | null>(evidenceRows[0]?.key ?? null);
-
-  useEffect(() => {
-    if (!orientationRows.some((row) => row.key === selectedOrientationKey)) {
-      setSelectedOrientationKey(orientationRows[0]?.key ?? null);
-    }
-  }, [orientationRows, selectedOrientationKey]);
-
-  useEffect(() => {
-    if (!journeyRows.some((row) => row.key === selectedJourneyKey)) {
-      setSelectedJourneyKey(journeyRows[0]?.key ?? null);
-    }
-  }, [journeyRows, selectedJourneyKey]);
-
-  useEffect(() => {
-    if (!evidenceRows.some((row) => row.key === selectedEvidenceKey)) {
-      setSelectedEvidenceKey(evidenceRows[0]?.key ?? null);
-    }
-  }, [evidenceRows, selectedEvidenceKey]);
-
-  const selectedOrientation = orientationRows.find((row) => row.key === selectedOrientationKey) ?? orientationRows[0] ?? null;
-  const selectedJourney = journeyRows.find((row) => row.key === selectedJourneyKey) ?? journeyRows[0] ?? null;
-  const selectedEvidence = evidenceRows.find((row) => row.key === selectedEvidenceKey) ?? evidenceRows[0] ?? null;
-  const supervisionLanes = {
-    foreground: journeyRows.filter((row) => row.tone === "danger" || row.urgency === "critical" || row.urgency === "high").slice(0, 4),
-    active: journeyRows.filter((row) => row.tone === "active").slice(0, 4),
-    background: journeyRows.filter((row) => row.tone === "steady" || row.tone === "warning").slice(0, 4)
-  };
-  const operateSnapshotCards = [
-    {
-      key: "continuation",
-      label: "Continuation",
-      value: summary.activeContext.currentThreadTitle ?? summary.environmentLabel,
-      detail: summary.activeContext.currentTurnSummary ?? summary.activeContext.focusSummary
-    },
-    {
-      key: "pressure",
-      label: "Pressure",
-      value: `${summary.attention.approvalsAwaiting + summary.attention.openIncidents + summary.attention.blockedWork}`,
-      detail: `${summary.attention.approvalsAwaiting} approvals, ${summary.attention.openIncidents} incidents, ${summary.attention.blockedWork} blocked`
-    },
-    {
-      key: "runtime",
-      label: "Runtime",
-      value: summary.activeContext.runtimePackage ?? summary.activeContext.runtimeLabel,
-      detail: `${status.runtimeState} image posture inside ${summary.environmentLabel}`
-    },
-    {
-      key: "evidence",
-      label: "Evidence",
-      value: `${evidenceRows.length} artifacts`,
-      detail: evidenceRows[0]?.artifact ?? "No recent artifact is currently foregrounded."
-    }
-  ];
-
-  async function openOrientationPrimary(row: (typeof orientationRows)[number]): Promise<void> {
-    if (row.key === "binding") {
-      await navigateToBrowserDomain("systems");
-      return;
-    }
-    if (row.key === "runtime") {
-      await navigateToExecutionSection("listener");
-      return;
-    }
-    if (row.key === "continuation") {
-      await navigateToConversationSection("threads");
-      return;
-    }
-    await navigateToExecutionSection("approvals");
-  }
-
-  async function openJourneyPrimary(row: {
-    lane: string;
-  }): Promise<void> {
-    if (row.lane === "work") {
-      await navigateToExecutionSection("work");
-      return;
-    }
-    if (row.lane === "approval") {
-      await navigateToExecutionSection("approvals");
-      return;
-    }
-    await navigateToRecoverySection("incidents");
-  }
-
-  async function openEvidencePrimary(): Promise<void> {
-    await navigateToEvidenceSection("artifacts");
-  }
-
-  return (
-    <div className="environment-grid">
-      <section className="panel operate-overview-panel">
-        <div className="panel-header">
-          <div>
-            <p className="eyebrow">Operate Snapshot</p>
-            <h3>{selectedSection === "journeys" ? "Supervised Journeys" : selectedSection === "evidence" ? "Proof And Closure" : "Environment Orientation"}</h3>
-          </div>
-          <Badge tone={status.workflowState === "attention_required" ? "warning" : "active"}>{status.workflowState}</Badge>
-        </div>
-        <div className="signal-digest-grid operate-overview-digest">
-          {operateSnapshotCards.map((card) => (
-            <div className="signal-digest-card" key={card.key}>
-              <span className="context-label">{card.label}</span>
-              <strong>{card.value}</strong>
-              <p>{card.detail}</p>
-            </div>
-          ))}
-        </div>
-        <div className="browser-action-strip">
-          <button className="starter-chip" onClick={() => void navigateToConversationSection("threads")} type="button">
-            Open Threads
-          </button>
-          <button className="starter-chip" onClick={() => void navigateToExecutionSection("work")} type="button">
-            Open Work
-          </button>
-          <button className="starter-chip" onClick={() => void navigateToEvidenceSection("artifacts")} type="button">
-            Open Artifacts
-          </button>
-          <button className="starter-chip" onClick={() => void navigateToExecutionSection("listener")} type="button">
-            Open Listener
-          </button>
-        </div>
-      </section>
-
-      {selectedSection === "orientation" ? (
-        <>
-          <section className="panel operate-table-panel">
-            <PanelHeader
-              title="Orientation Records"
-              subtitle="Each row is an operational checkpoint into the live environment and opens the next relevant workspace."
-            />
-            <BrowserDataTable
-              key="operate-orientation"
-              columnTemplate="minmax(0, 1.05fr) minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 0.9fr)"
-              columns={[
-                { id: "record", label: "Record", render: (row) => <strong>{row.record}</strong>, sortValue: (row) => row.record },
-                {
-                  id: "domain",
-                  label: "Domain",
-                  render: (row) => <Badge tone={row.tone}>{row.domain}</Badge>,
-                  sortValue: (row) => row.domain,
-                  searchValue: (row) => row.domain
-                },
-                { id: "entity", label: "Entity", render: (row) => row.entity, sortValue: (row) => row.entity },
-                {
-                  id: "impact",
-                  label: "Impact",
-                  render: (row) => row.impact,
-                  sortValue: (row) => row.impact,
-                  searchValue: (row) => `${row.record} ${row.domain} ${row.entity} ${row.impact}`
-                },
-                {
-                  id: "next",
-                  label: "Next",
-                  render: (row) => <span className="operate-next-step">{row.nextAction}</span>,
-                  sortValue: (row) => row.nextAction
-                }
-              ]}
-              emptyMessage="No orientation records are available."
-              filterLabel="Domain"
-              filterOptions={Array.from(new Set(orientationRows.map((row) => row.domain))).map((value) => ({ label: value, value }))}
-              getFilterValue={(row) => row.domain}
-              getRowKey={(row) => row.key}
-              onSelect={(row) => setSelectedOrientationKey(row.key)}
-              rows={orientationRows}
-              searchPlaceholder="Search orientation records"
-              selectedKey={selectedOrientation?.key ?? null}
-            />
-          </section>
-
-          {selectedOrientation ? (
-            <section className="panel operate-detail-panel">
-              <PanelHeader
-                title={selectedOrientation.record}
-                subtitle="Selection detail stays below the table so orientation scales without fragmenting the page."
-              />
-              <div className="browser-focus-card">
-                <div>
-                  <p className="context-label">In Focus</p>
-                  <strong>{selectedOrientation.entity}</strong>
-                  <p>{selectedOrientation.detail}</p>
-                </div>
-                <Badge tone={selectedOrientation.tone}>{selectedOrientation.domain}</Badge>
-              </div>
-              <div className="signal-digest-grid operate-detail-digest">
-                <div className="signal-digest-card">
-                  <span className="context-label">Primary Concern</span>
-                  <strong>{selectedOrientation.record}</strong>
-                  <p>{selectedOrientation.impact}</p>
-                </div>
-                <div className="signal-digest-card">
-                  <span className="context-label">Next Move</span>
-                  <strong>{selectedOrientation.nextAction}</strong>
-                  <p>Use the selected row to move directly into the relevant engineering workspace.</p>
-                </div>
-              </div>
-              <dl className="detail-list">
-                {selectedOrientation.facts.map(([label, value]) => (
-                  <DetailRow key={`${selectedOrientation.key}:${label}`} label={label} value={value} />
-                ))}
-              </dl>
-              <div className="browser-action-strip">
-                <button className="starter-chip" onClick={() => void openOrientationPrimary(selectedOrientation)} type="button">
-                  {selectedOrientation.key === "binding"
-                    ? "Open Systems"
-                    : selectedOrientation.key === "runtime"
-                      ? "Open Listener"
-                      : selectedOrientation.key === "continuation"
-                        ? "Open Threads"
-                        : "Open Approvals"}
-                </button>
-                <button className="starter-chip" onClick={() => void navigateToBrowserDomain("symbols")} type="button">
-                  Inspect In Browser
-                </button>
-                <button className="starter-chip" onClick={() => void navigateToEvidenceSection("artifacts")} type="button">
-                  Open Evidence
-                </button>
-              </div>
-            </section>
-          ) : null}
-
-        </>
-      ) : null}
-
-      {selectedSection === "journeys" ? (
-        <>
-          <section className="panel operate-parallel-panel">
-            <PanelHeader
-              title="Parallel Supervision"
-              subtitle="Long-running and branching work should stay visible as coordinated continuations, not hidden inside secondary summaries."
-            />
-            <div className="signal-digest-grid operate-parallel-digest">
-              <div className="signal-digest-card">
-                <span className="context-label">Active Tasks</span>
-                <strong>{parallelSnapshot.activeTasks}</strong>
-                <p>{taskRows[0]?.title ?? "No active task branch is currently running."}</p>
-              </div>
-              <div className="signal-digest-card">
-                <span className="context-label">Blocked Tasks</span>
-                <strong>{parallelSnapshot.blockedTasks}</strong>
-                <p>{taskRows.find((task) => task.state === "blocked")?.title ?? "No blocked branch is currently foregrounded."}</p>
-              </div>
-              <div className="signal-digest-card">
-                <span className="context-label">Waiting Workers</span>
-                <strong>{parallelSnapshot.waitingWorkers}</strong>
-                <p>{workerRows.find((worker) => worker.state === "waiting")?.title ?? "No waiting worker is currently stalled."}</p>
-              </div>
-            </div>
-            <div className="operate-parallel-grid">
-              <section className="parallel-lane">
-                <div className="parallel-lane-header">
-                  <div>
-                    <p className="eyebrow">Task Branches</p>
-                    <h4>Governed tasks in flight</h4>
-                  </div>
-                  <Badge tone={taskRows.some((task) => task.state === "blocked") ? "danger" : taskRows.some((task) => task.state === "active") ? "active" : "steady"}>
-                    {`${taskRows.length} visible`}
-                  </Badge>
-                </div>
-                <div className="parallel-card-list">
-                  {taskRows.length > 0 ? (
-                    taskRows.slice(0, 4).map((task) => (
-                      <button className="parallel-card" key={task.key} onClick={() => void navigateToExecutionSection("work")} type="button">
-                        <div className="parallel-card-top">
-                          <strong>{task.title}</strong>
-                          <Badge tone={task.tone}>{task.state}</Badge>
-                        </div>
-                        <p>{task.summary}</p>
-                      </button>
-                    ))
-                  ) : (
-                    <div className="parallel-card parallel-card-empty">
-                      <strong>No governed task branches</strong>
-                      <p>Tasks appear here when the environment exposes long-running work beyond the current turn.</p>
-                    </div>
-                  )}
-                </div>
-              </section>
-              <section className="parallel-lane">
-                <div className="parallel-lane-header">
-                  <div>
-                    <p className="eyebrow">Workers</p>
-                    <h4>Actors carrying execution</h4>
-                  </div>
-                  <Badge tone={workerRows.some((worker) => worker.state === "active") ? "active" : "steady"}>
-                    {`${workerRows.length} visible`}
-                  </Badge>
-                </div>
-                <div className="parallel-card-list">
-                  {workerRows.length > 0 ? (
-                    workerRows.slice(0, 4).map((worker) => (
-                      <button className="parallel-card" key={worker.key} onClick={() => void navigateToConversationSection("threads")} type="button">
-                        <div className="parallel-card-top">
-                          <strong>{worker.title}</strong>
-                          <Badge tone={worker.tone}>{worker.state}</Badge>
-                        </div>
-                        <p>{worker.summary}</p>
-                      </button>
-                    ))
-                  ) : (
-                    <div className="parallel-card parallel-card-empty">
-                      <strong>No active workers</strong>
-                      <p>Worker posture appears here once execution is delegated across visible actors.</p>
-                    </div>
-                  )}
-                </div>
-              </section>
-            </div>
-            <div className="browser-action-strip">
-              <button className="starter-chip" onClick={() => void navigateToExecutionSection("work")} type="button">
-                Open Work Queue
-              </button>
-              <button className="starter-chip" onClick={() => void navigateToConversationSection("threads")} type="button">
-                Resume Threads
-              </button>
-              <button className="starter-chip" onClick={() => void navigateToExecutionSection("listener")} type="button">
-                Open Listener
-              </button>
-            </div>
-          </section>
-
-          <section className="panel operate-table-panel">
-            <PanelHeader
-              title="Journey Queue"
-              subtitle="This queue should make the next supervised move obvious across work, approvals, and recovery."
-            />
-            <BrowserDataTable
-              key="operate-journeys"
-              columnTemplate="minmax(0, 1.25fr) minmax(0, 0.8fr) minmax(0, 0.75fr) minmax(0, 1.2fr) minmax(0, 0.95fr)"
-              columns={[
-                { id: "journey", label: "Journey", render: (row) => <strong>{row.title}</strong>, sortValue: (row) => row.title },
-                {
-                  id: "lane",
-                  label: "Lane",
-                  render: (row) => <Badge tone={row.tone}>{row.lane}</Badge>,
-                  sortValue: (row) => row.lane,
-                  searchValue: (row) => row.lane
-                },
-                {
-                  id: "state",
-                  label: "State",
-                  render: (row) => <span className="operate-state">{row.state}</span>,
-                  sortValue: (row) => row.state
-                },
-                { id: "dependency", label: "Dependency", render: (row) => row.dependency, sortValue: (row) => row.dependency },
-                {
-                  id: "next",
-                  label: "Next",
-                  render: (row) => <span className="operate-next-step">{row.nextStep}</span>,
-                  sortValue: (row) => row.nextStep
-                }
-              ]}
-              emptyMessage="No journeys are active."
-              filterLabel="Lane"
-              filterOptions={Array.from(new Set(journeyRows.map((row) => row.lane))).map((value) => ({ label: value, value }))}
-              getFilterValue={(row) => row.lane}
-              getRowKey={(row) => row.key}
-              onSelect={(row) => setSelectedJourneyKey(row.key)}
-              rows={journeyRows}
-              searchPlaceholder="Search journeys"
-              selectedKey={selectedJourney?.key ?? null}
-            />
-          </section>
-
-          {selectedJourney ? (
-            <section className="panel operate-detail-panel">
-              <PanelHeader
-                title={selectedJourney.title}
-                subtitle="Journey detail keeps dependency, proof burden, and launch target together."
-              />
-              <div className="browser-focus-card">
-                <div>
-                  <p className="context-label">Dependency</p>
-                  <strong>{selectedJourney.dependency}</strong>
-                  <p>{selectedJourney.detail}</p>
-                </div>
-                <Badge tone={selectedJourney.tone}>{selectedJourney.state}</Badge>
-              </div>
-              <div className="signal-digest-grid operate-detail-digest">
-                <div className="signal-digest-card">
-                  <span className="context-label">Lane</span>
-                  <strong>{selectedJourney.lane}</strong>
-                  <p>{selectedJourney.state}</p>
-                </div>
-                <div className="signal-digest-card">
-                  <span className="context-label">Next Step</span>
-                  <strong>{selectedJourney.nextStep}</strong>
-                  <p>{selectedJourney.urgency === "high" || selectedJourney.urgency === "critical" ? "This continuation is carrying elevated pressure." : "This continuation can be resumed without emergency posture."}</p>
-                </div>
-              </div>
-              <dl className="detail-list">
-                {selectedJourney.facts.map(([label, value]) => (
-                  <DetailRow key={`${selectedJourney.key}:${label}`} label={label} value={value} />
-                ))}
-              </dl>
-              <div className="browser-action-strip">
-                <button className="starter-chip" onClick={() => void openJourneyPrimary(selectedJourney)} type="button">
-                  {selectedJourney.lane === "work"
-                    ? "Open Work"
-                    : selectedJourney.lane === "approval"
-                      ? "Open Approvals"
-                      : "Open Recovery"}
-                </button>
-                <button className="starter-chip" onClick={() => void navigateToConversationSection("threads")} type="button">
-                  Resume In Conversations
-                </button>
-                <button className="starter-chip" onClick={() => void navigateToBrowserDomain("governance")} type="button">
-                  Inspect Context
-                </button>
-              </div>
-            </section>
-          ) : null}
-
-          <SupervisionBoard
-            lanes={[
-              {
-                id: "foreground",
-                label: "Foreground",
-                summary: "Work that should dominate the next operator move.",
-                tone: supervisionLanes.foreground.length > 0 ? "danger" : "steady",
-                rows: supervisionLanes.foreground
-              },
-              {
-                id: "active",
-                label: "Advancing",
-                summary: "Continuations that are active but not currently blocking trust.",
-                tone: supervisionLanes.active.length > 0 ? "active" : "steady",
-                rows: supervisionLanes.active
-              },
-              {
-                id: "background",
-                label: "Background",
-                summary: "Visible but non-dominant continuations that should not disappear.",
-                tone: supervisionLanes.background.length > 0 ? "warning" : "steady",
-                rows: supervisionLanes.background
-              }
-            ]}
-            onOpenJourney={(key) => setSelectedJourneyKey(key)}
-            onPrimaryAction={openJourneyPrimary}
-          />
-
-        </>
-      ) : null}
-
-      {selectedSection === "evidence" ? (
-        <>
-          <section className="panel operate-table-panel">
-            <PanelHeader
-              title="Evidence Table"
-              subtitle="Recent durable artifacts remain explicit engineering objects with provenance, scope, and closure consequence."
-            />
-            <BrowserDataTable
-              key="operate-evidence"
-              columnTemplate="minmax(0, 1.15fr) minmax(0, 0.85fr) minmax(0, 0.9fr) minmax(0, 1.45fr)"
-              columns={[
-                { id: "artifact", label: "Artifact", render: (row) => <strong>{row.artifact}</strong>, sortValue: (row) => row.artifact },
-                {
-                  id: "type",
-                  label: "Type",
-                  render: (row) => <Badge tone={row.tone}>{row.type}</Badge>,
-                  sortValue: (row) => row.type,
-                  searchValue: (row) => row.type
-                },
-                { id: "updated", label: "Updated", render: (row) => row.updatedAt, sortValue: (row) => row.updatedAt },
-                {
-                  id: "summary",
-                  label: "Summary",
-                  render: (row) => row.summary,
-                  sortValue: (row) => row.summary,
-                  searchValue: (row) => `${row.artifact} ${row.type} ${row.summary}`
-                }
-              ]}
-              emptyMessage="No evidence artifacts are available."
-              filterLabel="Impact"
-              filterOptions={Array.from(new Set(evidenceRows.map((row) => row.impact))).map((value) => ({ label: value, value }))}
-              getFilterValue={(row) => row.impact}
-              getRowKey={(row) => row.key}
-              onSelect={(row) => setSelectedEvidenceKey(row.key)}
-              rows={evidenceRows}
-              searchPlaceholder="Search evidence"
-              selectedKey={selectedEvidence?.key ?? null}
-            />
-          </section>
-
-          {selectedEvidence ? (
-            <section className="panel operate-detail-panel">
-              <PanelHeader
-                title={selectedEvidence.artifact}
-                subtitle="Evidence detail should keep artifact posture, linkage, and next validation move on one surface."
-              />
-              <div className="browser-focus-card">
-                <div>
-                  <p className="context-label">Artifact Summary</p>
-                  <strong>{selectedEvidence.type}</strong>
-                  <p>{selectedEvidence.summary}</p>
-                </div>
-                <Badge tone={selectedEvidence.tone}>{selectedEvidence.impact}</Badge>
-              </div>
-              <div className="signal-digest-grid operate-detail-digest">
-                <div className="signal-digest-card">
-                  <span className="context-label">Evidence Domain</span>
-                  <strong>{selectedEvidence.impact}</strong>
-                  <p>{selectedEvidence.type}</p>
-                </div>
-                <div className="signal-digest-card">
-                  <span className="context-label">Closure Hint</span>
-                  <strong>{selectedEvidence.impact === "recovery" ? "Review Before Closure" : "Validate And Attach"}</strong>
-                  <p>{selectedEvidence.summary}</p>
-                </div>
-              </div>
-              <dl className="detail-list">
-                {selectedEvidence.facts.map(([label, value]) => (
-                  <DetailRow key={`${selectedEvidence.key}:${label}`} label={label} value={value} />
-                ))}
-              </dl>
-              <div className="browser-action-strip">
-                <button className="starter-chip" onClick={() => void openEvidencePrimary()} type="button">
-                  Open Artifacts
-                </button>
-                <button className="starter-chip" onClick={() => void navigateToBrowserDomain("source")} type="button">
-                  Inspect Related Source
-                </button>
-                <button className="starter-chip" onClick={() => void navigateToExecutionSection("listener")} type="button">
-                  Validate In Listener
-                </button>
-              </div>
-            </section>
-          ) : null}
-
-        </>
-      ) : null}
-    </div>
-  );
-}
-
-function ExecutionWorkspace(
-  props: {
-    runtimeSummary: RuntimeSummaryDto | null;
-    runtimeForm: string;
-    setRuntimeForm: (value: string) => void;
-    evaluateRuntimeForm: () => Promise<void>;
-    replSessions: ReplSessionProfileDto[];
-    currentReplSessionId: string | null;
-    switchReplSession: (sessionId: string) => Promise<void>;
-    createReplSession: () => Promise<void>;
-    replSessionTitleDraft: string;
-    setReplSessionTitleDraft: (value: string) => void;
-    runtimeInspection: QueryResultDto<RuntimeInspectionResultDto> | null;
-    runtimeInspectionMode: RuntimeInspectionMode;
-    runtimeInspectorSymbol: string;
-    runtimeInspectorPackage: string;
-    setRuntimeInspectionMode: (value: RuntimeInspectionMode) => void;
-    setRuntimeInspectorSymbol: (value: string) => void;
-    setRuntimeInspectorPackage: (value: string) => void;
-    inspectRuntimeSymbol: () => Promise<void>;
-    runtimeResult: CommandResultDto<RuntimeEvalResultDto> | null;
-    isEvaluating: boolean;
-    isInspectingRuntime: boolean;
-    workItems: WorkItemSummaryDto[];
-    selectedWorkItemId: string | null;
-    selectedWorkItem: WorkItemDetailDto | null;
-    selectedWorkflowRecord: WorkflowRecordDto | null;
-    approvalRequests: ApprovalRequestSummaryDto[];
-  }
-) {
-  const selectedWorkTitle = props.selectedWorkItem?.title ?? props.workItems[0]?.title ?? "No governed work item selected";
-  const executionObjective =
-    props.selectedWorkItem?.waitingReason ??
-    props.selectedWorkflowRecord?.closureSummary ??
-    props.runtimeSummary?.divergencePosture ??
-    "Inspect runtime posture, pick the current work item, and resolve whatever still prevents trustworthy continuation.";
-
-  return (
-    <div className="execution-journey">
-      <RuntimeWorkspace
-        createReplSession={props.createReplSession}
-        currentReplSessionId={props.currentReplSessionId}
-        evaluateRuntimeForm={props.evaluateRuntimeForm}
-        isEvaluating={props.isEvaluating}
-        inspectRuntimeSymbol={props.inspectRuntimeSymbol}
-        isInspectingRuntime={props.isInspectingRuntime}
-        replSessions={props.replSessions}
-        replSessionTitleDraft={props.replSessionTitleDraft}
-        runtimeInspection={props.runtimeInspection}
-        runtimeInspectionMode={props.runtimeInspectionMode}
-        runtimeInspectorPackage={props.runtimeInspectorPackage}
-        runtimeInspectorSymbol={props.runtimeInspectorSymbol}
-        runtimeForm={props.runtimeForm}
-        runtimeResult={props.runtimeResult}
-        runtimeSummary={props.runtimeSummary}
-        setReplSessionTitleDraft={props.setReplSessionTitleDraft}
-        setRuntimeInspectionMode={props.setRuntimeInspectionMode}
-        setRuntimeInspectorPackage={props.setRuntimeInspectorPackage}
-        setRuntimeInspectorSymbol={props.setRuntimeInspectorSymbol}
-        setRuntimeForm={props.setRuntimeForm}
-        switchReplSession={props.switchReplSession}
-      />
-
-      <JourneyStageStrip
-        eyebrow="Execution Flow"
-        summary="Execution should move through live image inspection, governed work reconciliation, and explicit decisions without turning back into queue-driven SDLC navigation."
-        steps={[
-          {
-            id: "inspect-runtime",
-            title: "Inspect Runtime",
-            summary: "Confirm current package, mutation pressure, and available inspection scopes in the live image.",
-            tone: props.runtimeSummary?.activeMutations ? "warning" : "active"
-          },
-          {
-            id: "reconcile-work",
-            title: "Reconcile Work",
-            summary: "Work stays attached to validation and closure so the operator can see what still prevents trustworthy continuation.",
-            tone: props.workItems.some((item) => item.state === "blocked") ? "warning" : "steady"
-          },
-          {
-            id: "apply-decisions",
-            title: "Apply Decisions",
-            summary: "Approval decisions remain part of execution context. When there is no approval gate, the desktop should state that explicitly and let execution continue.",
-            tone: props.approvalRequests.length > 0 ? "warning" : "active"
-          }
-        ]}
-        title="Execution Journey"
-      />
-      <section className="panel execution-objective-panel">
-        <div className="panel-header">
-          <div>
-            <p className="eyebrow">Current Execution Objective</p>
-            <h3>{selectedWorkTitle}</h3>
-          </div>
-          <Badge tone={props.selectedWorkItem ? toneForWorkState(props.selectedWorkItem.state) : "steady"}>
-            {props.selectedWorkItem?.state ?? "unscoped"}
-          </Badge>
-        </div>
-        <p className="lead-copy">{executionObjective}</p>
-        <div className="signal-digest-grid execution-objective-digest">
-          <div className="signal-digest-card">
-            <span className="context-label">Runtime</span>
-            <strong>{props.runtimeSummary?.currentPackage ?? "Unavailable"}</strong>
-            <p>{props.runtimeSummary?.activeMutations ? "Active mutation pressure is present." : "Runtime is inspectable without active mutation pressure."}</p>
-          </div>
-          <div className="signal-digest-card">
-            <span className="context-label">Work</span>
-            <strong>{props.workItems.length}</strong>
-            <p>{props.workItems[0]?.title ?? "No governed work item is foregrounded."}</p>
-          </div>
-          <div className="signal-digest-card">
-            <span className="context-label">Approvals</span>
-            <strong>{props.approvalRequests.length}</strong>
-            <p>{props.approvalRequests[0]?.title ?? "No approval request is blocking execution."}</p>
-          </div>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function EvidenceWorkspace({
-  artifacts,
-  selectedArtifact,
-  selectedArtifactId,
-  setSelectedArtifactId,
-  events,
-  selectedEventCursor,
-  selectedEvent,
-  eventFamilyFilter,
-  eventVisibilityFilter,
-  setSelectedEventCursor,
-  setEventFamilyFilter,
-  setEventVisibilityFilter,
-  navigateToLinkedEntity
-}: {
-  artifacts: ArtifactSummaryDto[];
-  selectedArtifact: ArtifactDetailDto | null;
-  selectedArtifactId: string | null;
-  setSelectedArtifactId: (artifactId: string) => void;
-  events: EnvironmentEventDto[];
-  selectedEventCursor: number | null;
-  selectedEvent: EnvironmentEventDto | null;
-  eventFamilyFilter: string;
-  eventVisibilityFilter: string;
-  setSelectedEventCursor: (cursor: number) => void;
-  setEventFamilyFilter: (value: string) => void;
-  setEventVisibilityFilter: (value: string) => void;
-  navigateToLinkedEntity: (entity: LinkedEntityRefDto) => Promise<void>;
-}) {
-  const evidenceObjective =
-    selectedArtifact?.summary ??
-    selectedEvent?.summary ??
-    artifacts[0]?.summary ??
-    "Inspect durable evidence first, then replay event structure to reconstruct how the environment arrived here.";
-
-  return (
-    <div className="evidence-journey">
-      <JourneyStageStrip
-        eyebrow="Evidence Flow"
-        summary="Evidence should let the operator move from durable outputs into replayable observation without leaving the current environment method."
-        steps={[
-          {
-            id: "inspect-artifacts",
-            title: "Inspect Artifacts",
-            summary: "Read durable outputs first so recovery and execution are anchored in retained proof.",
-            tone: artifacts.length > 0 ? "active" : "steady"
-          },
-          {
-            id: "replay-events",
-            title: "Replay Events",
-            summary: "Use structured history to reconstruct what happened instead of relying on raw logs or transport traces.",
-            tone: events.length > 0 ? "active" : "steady"
-          },
-          {
-            id: "reconstruct-truth",
-            title: "Reconstruct Truth",
-            summary: "Artifacts and events should converge into a usable narrative about the environment’s current posture.",
-            tone: selectedArtifact || selectedEvent ? "active" : "steady"
-          }
-        ]}
-        title="Evidence Journey"
-      />
-      <section className="panel evidence-objective-panel">
-        <div className="panel-header">
-          <div>
-            <p className="eyebrow">Current Evidence Objective</p>
-            <h3>{selectedArtifact?.title ?? selectedEvent?.kind ?? artifacts[0]?.title ?? "No evidence selected"}</h3>
-          </div>
-          <Badge tone={selectedArtifact || selectedEvent ? "active" : "steady"}>
-            {selectedArtifact ? "artifact" : selectedEvent ? "event" : "idle"}
-          </Badge>
-        </div>
-        <p className="lead-copy">{evidenceObjective}</p>
-        <div className="signal-digest-grid execution-objective-digest">
-          <div className="signal-digest-card">
-            <span className="context-label">Artifacts</span>
-            <strong>{artifacts.length}</strong>
-            <p>{artifacts[0]?.title ?? "No durable artifact is foregrounded."}</p>
-          </div>
-          <div className="signal-digest-card">
-            <span className="context-label">Events</span>
-            <strong>{events.length}</strong>
-            <p>{selectedEvent?.kind ?? "No replayed event is selected."}</p>
-          </div>
-          <div className="signal-digest-card">
-            <span className="context-label">Truth</span>
-            <strong>{selectedArtifact || selectedEvent ? "focused" : "idle"}</strong>
-            <p>{selectedEvent?.summary ?? selectedArtifact?.summary ?? "Evidence will converge here as artifacts and events are inspected together."}</p>
-          </div>
-        </div>
-      </section>
-
-      <div className="evidence-layout">
-        <div className="evidence-main-rail">
-          <ArtifactsWorkspace
-            artifacts={artifacts}
-            selectedArtifact={selectedArtifact}
-            selectedArtifactId={selectedArtifactId}
-            setSelectedArtifactId={setSelectedArtifactId}
-            navigateToLinkedEntity={navigateToLinkedEntity}
-          />
-        </div>
-        <div className="evidence-support-rail">
-          <ActivityWorkspace
-            eventFamilyFilter={eventFamilyFilter}
-            eventVisibilityFilter={eventVisibilityFilter}
-            events={events}
-            selectedEvent={selectedEvent}
-            selectedEventCursor={selectedEventCursor}
-            setEventFamilyFilter={setEventFamilyFilter}
-            setEventVisibilityFilter={setEventVisibilityFilter}
-            setSelectedEventCursor={setSelectedEventCursor}
-          />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-interface BrowserTableColumn<Row> {
-  id: string;
-  label: string;
-  render: (row: Row) => ReactNode;
-  sortValue: (row: Row) => string | number;
-  searchValue?: (row: Row) => string;
-}
-
-interface BrowserTableFilterOption {
-  label: string;
-  value: string;
-}
-
-function BrowserDataTable<Row>({
-  rows,
-  columns,
-  columnTemplate,
-  emptyMessage,
-  filterLabel,
-  filterOptions,
-  getFilterValue,
-  getRowKey,
-  onSelect,
-  searchPlaceholder,
-  selectedKey,
-  toolbarLeading,
-  initialSortColumnId,
-  initialSortDirection = "asc"
-}: {
-  rows: Row[];
-  columns: BrowserTableColumn<Row>[];
-  columnTemplate: string;
-  emptyMessage: string;
-  filterLabel: string;
-  filterOptions: BrowserTableFilterOption[];
-  getFilterValue: (row: Row) => string;
-  getRowKey: (row: Row) => string;
-  onSelect: (row: Row) => void;
-  searchPlaceholder: string;
-  selectedKey: string | null;
-  toolbarLeading?: React.ReactNode;
-  initialSortColumnId?: string;
-  initialSortDirection?: "asc" | "desc";
-}) {
-  const [searchTerm, setSearchTerm] = useState("");
-  const [activeFilter, setActiveFilter] = useState("all");
-  const [sortColumnId, setSortColumnId] = useState(initialSortColumnId ?? columns[0]?.id ?? "default");
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">(initialSortDirection);
-  const [pageSize, setPageSize] = useState(8);
-  const [page, setPage] = useState(1);
-
-  const sortColumn = columns.find((column) => column.id === sortColumnId) ?? columns[0];
-  const normalizedSearch = searchTerm.trim().toLowerCase();
-
-  const filteredRows = useMemo(
-    () =>
-      rows.filter((row) => {
-        const matchesFilter = activeFilter === "all" || getFilterValue(row) === activeFilter;
-        if (!matchesFilter) {
-          return false;
-        }
-
-        if (!normalizedSearch) {
-          return true;
-        }
-
-        return columns.some((column) => {
-          const haystack = (column.searchValue?.(row) ?? String(column.sortValue(row))).toLowerCase();
-          return haystack.includes(normalizedSearch);
-        });
-      }),
-    [activeFilter, columns, getFilterValue, normalizedSearch, rows]
-  );
-
-  const sortedRows = useMemo(() => {
-    if (!sortColumn) {
-      return filteredRows;
-    }
-
-    return [...filteredRows].sort((left, right) => {
-      const leftValue = sortColumn.sortValue(left);
-      const rightValue = sortColumn.sortValue(right);
-
-      if (typeof leftValue === "number" && typeof rightValue === "number") {
-        return sortDirection === "asc" ? leftValue - rightValue : rightValue - leftValue;
-      }
-
-      const comparison = String(leftValue).localeCompare(String(rightValue), undefined, {
-        numeric: true,
-        sensitivity: "base"
-      });
-      return sortDirection === "asc" ? comparison : -comparison;
-    });
-  }, [filteredRows, sortColumn, sortDirection]);
-
-  const totalPages = Math.max(1, Math.ceil(sortedRows.length / pageSize));
-  const pagedRows = sortedRows.slice((page - 1) * pageSize, page * pageSize);
-
-  useEffect(() => {
-    setPage(1);
-  }, [activeFilter, normalizedSearch, pageSize, sortColumnId, sortDirection]);
-
-  useEffect(() => {
-    if (page > totalPages) {
-      setPage(totalPages);
-    }
-  }, [page, totalPages]);
-
-  function toggleSort(columnId: string): void {
-    if (sortColumnId === columnId) {
-      setSortDirection((current) => (current === "asc" ? "desc" : "asc"));
-      return;
-    }
-
-    setSortColumnId(columnId);
-    setSortDirection("asc");
-  }
-
-  return (
-    <section className="browser-table-shell">
-      <div className="browser-table-toolbar">
-        {toolbarLeading ? <div className="browser-table-leading">{toolbarLeading}</div> : null}
-        <input
-          className="filter-input browser-table-search"
-          aria-label={searchPlaceholder}
-          onChange={(event) => setSearchTerm(event.target.value)}
-          placeholder={searchPlaceholder}
-          value={searchTerm}
-        />
-        <label className="browser-table-select-group">
-          <select
-            className="filter-input browser-table-select"
-            aria-label={filterLabel}
-            onChange={(event) => setActiveFilter(event.target.value)}
-            value={activeFilter}
-          >
-            <option value="all">All</option>
-            {filterOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="browser-table-select-group">
-          <select
-            className="filter-input browser-table-select"
-            aria-label="Page Size"
-            onChange={(event) => setPageSize(Number(event.target.value))}
-            value={String(pageSize)}
-          >
-            <option value="8">8</option>
-            <option value="16">16</option>
-            <option value="32">32</option>
-          </select>
-        </label>
-      </div>
-      <div className="browser-table">
-        <div className="browser-table-header browser-table-row" style={{ gridTemplateColumns: columnTemplate }}>
-          {columns.map((column) => {
-            const isActiveSort = sortColumnId === column.id;
-            return (
-              <button
-                className={isActiveSort ? "browser-sort-button active" : "browser-sort-button"}
-                key={column.id}
-                onClick={() => toggleSort(column.id)}
-                type="button"
-              >
-                <span>{column.label}</span>
-                <span className="browser-sort-indicator">
-                  {isActiveSort ? (sortDirection === "asc" ? "↑" : "↓") : "↕"}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-        <div className="browser-table-body browser-table-scroll">
-          {pagedRows.length > 0 ? (
-            pagedRows.map((row) => {
-              const rowKey = getRowKey(row);
-              return (
-                <div
-                  aria-pressed={selectedKey === rowKey}
-                  className={selectedKey === rowKey ? "browser-table-row active" : "browser-table-row"}
-                  key={rowKey}
-                  onClick={() => onSelect(row)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      onSelect(row);
-                    }
-                  }}
-                  role="button"
-                  style={{ gridTemplateColumns: columnTemplate }}
-                  tabIndex={0}
-                >
-                  {columns.map((column) => (
-                    <span className="browser-table-cell" key={`${rowKey}:${column.id}`}>
-                      {column.render(row)}
-                    </span>
-                  ))}
-                </div>
-              );
-            })
-          ) : (
-            <p className="list-empty">{emptyMessage}</p>
-          )}
-        </div>
-      </div>
-      <div className="browser-table-pagination">
-        <span>
-          {sortedRows.length === 0
-            ? "0 results"
-            : `${(page - 1) * pageSize + 1}-${Math.min(page * pageSize, sortedRows.length)} of ${sortedRows.length}`}
-        </span>
-        <div className="browser-table-pagination-actions">
-          <button
-            className="starter-chip"
-            disabled={page <= 1}
-            onClick={() => setPage((current) => Math.max(1, current - 1))}
-            type="button"
-          >
-            Previous
-          </button>
-          <span className="thread-flag">
-            Page {page} / {totalPages}
-          </span>
-          <button
-            className="starter-chip"
-            disabled={page >= totalPages}
-            onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
-            type="button"
-          >
-            Next
-          </button>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function BrowserModePicker({
-  label,
-  options,
-  value,
-  onChange
-}: {
-  label: string;
-  options: Array<{ value: string; label: string }>;
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div className="browser-mode-picker">
-      <span>{label}</span>
-      <select
-        className="filter-input browser-table-select browser-mode-select"
-        aria-label={label}
-        onChange={(event) => onChange(event.target.value)}
-        value={value}
-      >
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-    </div>
-  );
-}
-
 function BrowserWorkspace({
   approvalRequests,
+  isDecidingApproval,
+  consoleLogStream,
+  diagnosticReports,
   runtimeSummary,
+  runtimeTelemetry,
   selectedDomain,
+  selectedConsolePlane,
+  selectedConsoleSourceFilter,
+  selectedConsoleEntryId,
+  selectedDiagnosticSourceFilter,
+  selectedDiagnosticReport,
+  selectedDiagnosticReportId,
+  selectedTelemetryProcessId,
   parenDepthColors,
   packageBrowser,
   navigateToWorkspace,
@@ -10489,6 +11859,12 @@ function BrowserWorkspace({
   setRuntimeInspectionMode,
   setRuntimeInspectorSymbol,
   setRuntimeInspectorPackage,
+  setSelectedConsolePlane,
+  setSelectedConsoleSourceFilter,
+  setSelectedConsoleEntryId,
+  setSelectedDiagnosticSourceFilter,
+  setSelectedDiagnosticReportId,
+  setSelectedTelemetryProcessId,
   browseRuntimeEntity,
   inspectRuntimeSymbol,
   isInspectingRuntime,
@@ -10507,11 +11883,27 @@ function BrowserWorkspace({
   incidents,
   artifacts,
   threads,
-  workItems
+  selectedDocumentationSlug,
+  loadDocumentationPage,
+  workItems,
+  onOpenApprovalRequest,
+  onSubmitApprovalDecision,
+  openInspectorSurface
 }: {
   approvalRequests: ApprovalRequestSummaryDto[];
+  isDecidingApproval: boolean;
+  consoleLogStream: QueryResultDto<ConsoleLogStreamDto> | null;
+  diagnosticReports: DiagnosticReportSummaryDto[];
   runtimeSummary: RuntimeSummaryDto | null;
+  runtimeTelemetry: RuntimeTelemetrySnapshotDto | null;
   selectedDomain: BrowserDomain;
+  selectedConsolePlane: "environment" | "host";
+  selectedConsoleSourceFilter: string;
+  selectedConsoleEntryId: string | null;
+  selectedDiagnosticSourceFilter: string;
+  selectedDiagnosticReport: DiagnosticReportDetailDto | null;
+  selectedDiagnosticReportId: string | null;
+  selectedTelemetryProcessId: string | null;
   parenDepthColors: string[];
   packageBrowser: QueryResultDto<PackageBrowserDto> | null;
   navigateToWorkspace: (workspaceId: WorkspaceId) => void;
@@ -10532,6 +11924,12 @@ function BrowserWorkspace({
   setRuntimeInspectionMode: (value: RuntimeInspectionMode) => void;
   setRuntimeInspectorSymbol: (value: string) => void;
   setRuntimeInspectorPackage: (value: string) => void;
+  setSelectedConsolePlane: (value: "environment" | "host") => void;
+  setSelectedConsoleSourceFilter: (value: string) => void;
+  setSelectedConsoleEntryId: (value: string | null) => void;
+  setSelectedDiagnosticSourceFilter: (value: string) => void;
+  setSelectedDiagnosticReportId: (value: string | null) => void;
+  setSelectedTelemetryProcessId: (value: string | null) => void;
   browseRuntimeEntity: (
     symbol: string,
     packageName: string | undefined,
@@ -10554,7 +11952,12 @@ function BrowserWorkspace({
   incidents: IncidentSummaryDto[];
   artifacts: ArtifactSummaryDto[];
   threads: ThreadSummaryDto[];
+  selectedDocumentationSlug: string;
+  loadDocumentationPage: (slug: string) => Promise<void>;
   workItems: WorkItemSummaryDto[];
+  onOpenApprovalRequest: (requestId: string) => Promise<void>;
+  onSubmitApprovalDecision: (requestId: string, decision: "approve" | "deny") => void;
+  openInspectorSurface: () => Promise<void>;
 }) {
   const [packageWorkspaceMode, setPackageWorkspaceMode] = useState<"packages" | "exports" | "internals">("packages");
   const [symbolWorkspaceMode, setSymbolWorkspaceMode] = useState<
@@ -10564,6 +11967,7 @@ function BrowserWorkspace({
   const [xrefMode, setXrefMode] = useState<"incoming" | "outgoing">("incoming");
   const [symbolInspectorExpanded, setSymbolInspectorExpanded] = useState(false);
   const [selectedSystemName, setSelectedSystemName] = useState<string | null>(null);
+  const [selectedGovernanceKey, setSelectedGovernanceKey] = useState<string | null>(null);
   const [selectedScopeId, setSelectedScopeId] = useState<string | null>(null);
   const [selectedSourceEntryKey, setSelectedSourceEntryKey] = useState<string | null>(null);
   const [selectedDocumentationKey, setSelectedDocumentationKey] = useState<string | null>(null);
@@ -10684,6 +12088,8 @@ function BrowserWorkspace({
     runtimeSummary?.loadedSystemEntries[0]?.name ??
     runtimeSummary?.loadedSystems[0] ??
     null;
+  const selectedSystemEntry =
+    runtimeSummary?.loadedSystemEntries.find((system) => system.name === selectedSystem) ?? null;
   const selectedScope =
     runtimeSummary?.scopes.find((scope) => scope.scopeId === selectedScopeId) ?? runtimeSummary?.scopes[0] ?? null;
   const selectedSourceEntry =
@@ -10694,7 +12100,13 @@ function BrowserWorkspace({
         ? runtimeInspection.data.items
         : (runtimeEntityDetail?.data.relatedItems ?? []).filter((item) => item.label === "Caller")
       : (runtimeEntityDetail?.data.relatedItems ?? []).filter((item) => item.label !== "Caller");
-  const governanceEntries = [
+  const governanceEntries: Array<{
+    id: string;
+    label: string;
+    detail: string;
+    badge: string;
+    correctiveContext?: WorkItemSummaryDto["correctiveContext"];
+  }> = [
     ...approvalRequests.map((request) => ({
       id: request.requestId,
       label: request.title,
@@ -10710,8 +12122,12 @@ function BrowserWorkspace({
     ...workItems.map((item) => ({
       id: item.workItemId,
       label: item.title,
-      detail: item.waitingReason ?? "Governed work remains attached to this environment.",
-      badge: item.state
+      detail:
+        item.correctiveContext?.proposedActions[0]?.reason ??
+        item.waitingReason ??
+        "Governed work remains attached to this environment.",
+      badge: item.state,
+      correctiveContext: item.correctiveContext ?? null
     }))
   ];
   const linkedConversationEntries = threads.map((thread) => ({
@@ -10907,6 +12323,103 @@ function BrowserWorkspace({
     symbolName: scope.symbolName,
     packageName: scope.packageName
   })) ?? [];
+  const telemetryProcessRows =
+    runtimeTelemetry?.processes.map((process) => ({
+      key: process.processId,
+      processId: process.processId,
+      label: process.label,
+      kind: process.kind,
+      state: process.state,
+      cpu: process.cpuPercent != null ? `${process.cpuPercent.toFixed(1)}%` : "n/a",
+      memory: process.memoryMb != null ? `${process.memoryMb.toFixed(1)} MB` : "n/a",
+      summary: process.summary
+    })) ?? [];
+  const selectedTelemetryProcess =
+    runtimeTelemetry?.processes.find((process) => process.processId === selectedTelemetryProcessId) ??
+    runtimeTelemetry?.processes[0] ??
+    null;
+  const consoleEntries = consoleLogStream?.data.entries ?? [];
+  const filteredConsoleEntries = consoleEntries.filter(
+    (entry) => selectedConsoleSourceFilter === "All Sources" || entry.source === selectedConsoleSourceFilter
+  );
+  const consoleRows =
+    filteredConsoleEntries.map((entry) => ({
+      key: entry.entryId,
+      entryId: entry.entryId,
+      timestamp: entry.timestamp,
+      type: entry.type,
+      source: entry.source,
+      message: entry.message,
+      processName: entry.processName ?? "n/a",
+      activityId: entry.activityId ?? "n/a",
+      threadRef: entry.threadRefId ?? entry.turnRefId ?? "n/a"
+    })) ?? [];
+  const consoleAlertCount = consoleEntries.filter(
+    (entry) => entry.type === "warning" || entry.type === "error" || entry.type === "fault"
+  ).length;
+  const visibleConsoleAlertCount = filteredConsoleEntries.filter(
+    (entry) => entry.type === "warning" || entry.type === "error" || entry.type === "fault"
+  ).length;
+  const consoleProcessCount = new Set(consoleEntries.map((entry) => entry.processName).filter(Boolean)).size;
+  const visibleConsoleProcessCount = new Set(filteredConsoleEntries.map((entry) => entry.processName).filter(Boolean)).size;
+  const consoleTopSource =
+    Object.entries(
+      consoleEntries.reduce<Record<string, number>>((counts, entry) => {
+        counts[entry.source] = (counts[entry.source] ?? 0) + 1;
+        return counts;
+      }, {})
+    ).sort((left, right) => right[1] - left[1])[0]?.[0] ?? "n/a";
+  const visibleConsoleTopSource =
+    Object.entries(
+      filteredConsoleEntries.reduce<Record<string, number>>((counts, entry) => {
+        counts[entry.source] = (counts[entry.source] ?? 0) + 1;
+        return counts;
+      }, {})
+    ).sort((left, right) => right[1] - left[1])[0]?.[0] ?? "n/a";
+  const selectedConsoleEntry =
+    filteredConsoleEntries.find((entry) => entry.entryId === selectedConsoleEntryId) ??
+    filteredConsoleEntries[0] ??
+    null;
+  const filteredDiagnosticReports = diagnosticReports.filter(
+    (report) => selectedDiagnosticSourceFilter === "All Sources" || report.source === selectedDiagnosticSourceFilter
+  );
+  const diagnosticRows = filteredDiagnosticReports.map((report) => ({
+    key: report.reportId,
+    reportId: report.reportId,
+    title: report.title,
+    kind: report.kind,
+    source: report.source,
+    createdAt: report.createdAt,
+    processName: report.processName ?? "n/a",
+    pid: report.pid != null ? String(report.pid) : "n/a",
+    summary: report.summary,
+    incidentId: String(
+      (selectedDiagnosticReport?.reportId === report.reportId
+        ? selectedDiagnosticReport.metadata?.incidentId
+        : null) ?? "n/a"
+    ),
+    bugType: String(
+      (selectedDiagnosticReport?.reportId === report.reportId
+        ? selectedDiagnosticReport.metadata?.bugType
+        : null) ?? "n/a"
+    )
+  }));
+  const diagnosticCrashCount = diagnosticReports.filter((report) => report.kind === "crash").length;
+  const diagnosticSpinCount = diagnosticReports.filter((report) => report.kind === "spin").length;
+  const visibleDiagnosticCrashCount = filteredDiagnosticReports.filter((report) => report.kind === "crash").length;
+  const visibleDiagnosticSpinCount = filteredDiagnosticReports.filter((report) => report.kind === "spin").length;
+  const diagnosticProcessCount = new Set(diagnosticReports.map((report) => report.processName).filter(Boolean)).size;
+  const visibleDiagnosticProcessCount = new Set(
+    filteredDiagnosticReports.map((report) => report.processName).filter(Boolean)
+  ).size;
+  const latestDiagnosticTimestamp = diagnosticReports[0]?.createdAt ?? null;
+  const latestVisibleDiagnosticTimestamp = filteredDiagnosticReports[0]?.createdAt ?? null;
+  const selectedDiagnosticReportSummary =
+    filteredDiagnosticReports.find((report) => report.reportId === selectedDiagnosticReportId) ??
+    filteredDiagnosticReports[0] ??
+    null;
+  const activeSelectedDiagnosticReport =
+    selectedDiagnosticReportSummary?.reportId === selectedDiagnosticReport?.reportId ? selectedDiagnosticReport : null;
   const sourceRows = sourceEntries.map((item) => ({
     key: `${item.path}:${item.line ?? 0}`,
     label: item.label,
@@ -10925,21 +12438,41 @@ function BrowserWorkspace({
   }));
   const governanceRows: Array<{
     key: string;
+    objectId: string;
+    objectType: string;
     label: string;
     detail: string;
     badge: string;
+    trace: string;
+    correctiveContext?: WorkItemSummaryDto["correctiveContext"];
     tone: "active" | "warning" | "danger" | "steady";
   }> = governanceEntries.map((entry) => ({
     key: `${entry.badge}:${entry.id}`,
+    objectId: entry.id,
+    objectType: approvalRequests.some((request) => request.requestId === entry.id)
+      ? "Approval"
+      : incidents.some((incident) => incident.incidentId === entry.id)
+        ? "Incident"
+        : entry.correctiveContext
+          ? "Corrective Work Item"
+          : "Work Item",
     label: entry.label,
     detail: entry.detail,
     badge: entry.badge,
+    trace: approvalRequests.some((request) => request.requestId === entry.id)
+      ? "Execution > Approvals"
+      : incidents.some((incident) => incident.incidentId === entry.id)
+        ? "Recovery > Incidents"
+        : entry.correctiveContext
+          ? "Execution > Work > Corrective Direction"
+          : "Execution > Work",
     tone:
       entry.badge === "blocked" || entry.badge === "denied"
         ? "danger"
         : entry.badge === "waiting" || entry.badge === "recovering" || entry.badge === "awaiting"
           ? "warning"
-          : "active"
+          : "active",
+    correctiveContext: entry.correctiveContext ?? null
   }));
   const linkedConversationRows: Array<{
     key: string;
@@ -10965,12 +12498,89 @@ function BrowserWorkspace({
           : "active",
     detail: entry.detail
   }));
+  const selectedGovernanceEntry =
+    governanceRows.find((row) => row.key === selectedGovernanceKey) ??
+    governanceRows[0] ??
+    null;
+  const selectedGovernanceWorkSummary =
+    selectedGovernanceEntry &&
+    (selectedGovernanceEntry.objectType === "Work Item" || selectedGovernanceEntry.objectType === "Corrective Work Item")
+      ? workItems.find((item) => item.workItemId === selectedGovernanceEntry.objectId) ?? null
+      : null;
+  const selectedGovernanceFallbackApproval =
+    selectedGovernanceWorkSummary && selectedGovernanceWorkSummary.approvalCount > 0
+      ? approvalRequests.find((request) => request.state === "awaiting") ?? null
+      : null;
+  const selectedGovernanceApprovalId =
+    selectedGovernanceEntry?.objectType === "Approval"
+      ? selectedGovernanceEntry.objectId
+      : selectedGovernanceFallbackApproval?.requestId ?? null;
+  const selectedGovernanceApprovalSummary = selectedGovernanceApprovalId
+    ? approvalRequests.find((request) => request.requestId === selectedGovernanceApprovalId) ?? null
+    : null;
+  const selectedGovernanceIdentityRows = selectedGovernanceEntry
+    ? [
+        ["Object Id", selectedGovernanceEntry.objectId],
+        ["Authority", selectedGovernanceEntry.objectType],
+        ["Trace", selectedGovernanceEntry.trace]
+      ]
+    : [];
+  const selectedGovernanceCorrectiveRows = selectedGovernanceEntry?.correctiveContext
+    ? [
+        ["Corrective Kind", selectedGovernanceEntry.correctiveContext.kind],
+        ["Decision", selectedGovernanceEntry.correctiveContext.decision ?? "unknown"],
+        ["Approval Posture", selectedGovernanceEntry.correctiveContext.approvalPosture ?? "unknown"],
+        [
+          "Alignment",
+          selectedGovernanceEntry.correctiveContext.alignmentStatus
+            ? `${selectedGovernanceEntry.correctiveContext.alignmentStatus}${
+                selectedGovernanceEntry.correctiveContext.alignmentScore != null
+                  ? ` (${selectedGovernanceEntry.correctiveContext.alignmentScore.toFixed(2)})`
+                  : ""
+              }`
+            : "unknown"
+        ]
+      ]
+    : [];
+  const selectedLinkedConversationIdentityRows = selectedLinkedConversation
+    ? [
+        ["Object Id", selectedLinkedConversation.id],
+        ["Authority", selectedLinkedConversation.badge],
+        ["Trace", `${selectedLinkedConversation.latestTurnState} · ${selectedLinkedConversation.latestActivityAt}`]
+      ]
+    : [];
+  const selectedSystemIdentityRows = selectedSystemEntry
+    ? [
+        ["Object Id", selectedSystemEntry.name],
+        ["Authority", selectedSystemEntry.type === "asdf-system" ? "ASDF System" : "System"],
+        ["Trace", selectedSystemEntry.status]
+      ]
+    : [];
   const documentationRows = documentationEntries.map((entry) => ({
     key: entry.key,
+    slug: entry.key,
     label: entry.label,
     category: entry.category,
     summary: entry.summary
   }));
+  const browserFocusIdentityRows = [
+    [
+      "Object Id",
+      focusedSymbol
+        ? focusedPackage
+          ? `${focusedPackage}::${focusedSymbol}`
+          : focusedSymbol
+        : focusedPackage ?? domainDescriptor.label
+    ],
+    ["Authority", effectiveEntityKind ?? domainDescriptor.label],
+    [
+      "Trace",
+      sourcePreview?.data.path
+        ? `${sourcePreview.data.path}${sourcePreview.data.focusLine ? `:${sourcePreview.data.focusLine}` : ""}`
+        : runtimeInspection?.data.mode ?? "browse"
+    ]
+  ];
+  const showGenericBrowserFocus = false;
 
   function buildFilterOptions(values: string[]): BrowserTableFilterOption[] {
     return Array.from(new Set(values.filter(Boolean))).map((value) => ({
@@ -10984,17 +12594,6 @@ function BrowserWorkspace({
       setRuntimeForm(activeListenerForm);
     }
   }, [activeListenerForm, runtimeForm, setRuntimeForm]);
-
-  useEffect(() => {
-    if (selectedDomain !== "symbols" || activeSymbolBucket.symbols.length > 0) {
-      return;
-    }
-
-    const fallbackBucket = kindBuckets.find((bucket) => bucket.symbols.length > 0);
-    if (fallbackBucket && fallbackBucket.key !== symbolWorkspaceMode) {
-      setSymbolWorkspaceMode(fallbackBucket.key as typeof symbolWorkspaceMode);
-    }
-  }, [activeSymbolBucket.symbols.length, kindBuckets, selectedDomain, symbolWorkspaceMode]);
 
   useEffect(() => {
     if (selectedDomain !== "symbols" || !runtimeInspection?.data.symbol) {
@@ -11038,8 +12637,29 @@ function BrowserWorkspace({
                 <p className="eyebrow">Browser</p>
                 <h3>{domainDescriptor.label}</h3>
               </div>
-              <Badge tone="active">{runtimeSummary?.currentPackage ?? "CL-USER"}</Badge>
             </div>
+            {showGenericBrowserFocus ? (
+              <>
+                <div className="browser-focus-card">
+                  <div>
+                    <p className="context-label">Focused Entity</p>
+                    <strong>{focusedSymbol ?? focusedPackage ?? domainDescriptor.label}</strong>
+                    <p>
+                      {runtimeInspection?.data.summary ??
+                        runtimeEntityDetail?.data.summary ??
+                        sourcePreview?.data.summary ??
+                        domainDescriptor.summary}
+                    </p>
+                  </div>
+                  <Badge tone="steady">{effectiveEntityKind ?? "browser focus"}</Badge>
+                </div>
+                <dl className="detail-list">
+                  {browserFocusIdentityRows.map(([label, value]) => (
+                    <DetailRow key={`browser-focus:${label}`} label={label} value={value} />
+                  ))}
+                </dl>
+              </>
+            ) : null}
             {selectedDomain === "packages" ? (
               <div className="browser-domain-stack">
                 <div className="browser-domain-toolbar">
@@ -11348,6 +12968,28 @@ function BrowserWorkspace({
                   searchPlaceholder="Search loaded systems"
                   selectedKey={selectedSystem}
                 />
+                {selectedSystemEntry ? (
+                  <>
+                    <div className="browser-focus-card">
+                      <div>
+                        <p className="context-label">Selected System</p>
+                        <strong>{selectedSystemEntry.name}</strong>
+                        <p>{selectedSystemEntry.status}</p>
+                      </div>
+                      <Badge tone="steady">{selectedSystemEntry.type === "asdf-system" ? "ASDF System" : "System"}</Badge>
+                    </div>
+                    <dl className="detail-list">
+                      {selectedSystemIdentityRows.map(([label, value]) => (
+                        <DetailRow key={`browser-system:${label}`} label={label} value={value} />
+                      ))}
+                    </dl>
+                    <div className="browser-action-strip">
+                      <button className="starter-chip" onClick={() => void openInspectorSurface()} type="button">
+                        Open Inspector
+                      </button>
+                    </div>
+                  </>
+                ) : null}
               </div>
             ) : selectedDomain === "runtime-objects" ? (
               <div className="browser-domain-stack">
@@ -11392,6 +13034,287 @@ function BrowserWorkspace({
                   searchPlaceholder="Search runtime scopes"
                   selectedKey={selectedScope?.scopeId ?? null}
                 />
+              </div>
+            ) : selectedDomain === "console" ? (
+              <div className="browser-domain-stack">
+                <BrowserModePicker
+                  label="Console Plane"
+                  onChange={(value) => {
+                    setSelectedConsolePlane(value as "environment" | "host");
+                    setSelectedConsoleSourceFilter("All Sources");
+                    setSelectedConsoleEntryId(null);
+                  }}
+                  options={[
+                    { value: "environment", label: "Environment" },
+                    { value: "host", label: "Host" }
+                  ]}
+                  value={selectedConsolePlane}
+                />
+                <FilterSelect
+                  label="Source"
+                  onChange={(value) => {
+                    setSelectedConsoleSourceFilter(value);
+                    setSelectedConsoleEntryId(null);
+                  }}
+                  options={["All Sources", ...buildFilterOptions(consoleEntries.map((row) => row.source)).map((option) => option.value)]}
+                  value={selectedConsoleSourceFilter}
+                />
+                <div className="metric-grid">
+                  <MetricTile label="Visible" value={filteredConsoleEntries.length} />
+                  <MetricTile label="Alerts" value={visibleConsoleAlertCount} />
+                  <MetricTile label="Processes" value={visibleConsoleProcessCount} />
+                  <MetricTile label="Top Source" value={visibleConsoleTopSource} />
+                </div>
+                <BrowserDataTable
+                  key={`console:${selectedConsolePlane}`}
+                  columnTemplate="minmax(0, 1fr) minmax(0, 0.7fr) minmax(0, 1.6fr)"
+                  columns={[
+                    {
+                      id: "source",
+                      label: "Source",
+                      render: (row) => <strong>{row.source}</strong>,
+                      sortValue: (row) => row.source,
+                      searchValue: (row) =>
+                        `${row.source} ${row.message} ${row.processName} ${row.activityId} ${row.threadRef}`
+                    },
+                    {
+                      id: "type",
+                      label: "Type",
+                      render: (row) => row.type,
+                      sortValue: (row) => row.type
+                    },
+                    {
+                      id: "message",
+                      label: "Message",
+                      render: (row) => row.message,
+                      sortValue: (row) => row.message,
+                      searchValue: (row) =>
+                        `${row.message} ${row.timestamp} ${row.processName} ${row.activityId} ${row.threadRef}`
+                    }
+                  ]}
+                  emptyMessage="No console entries are currently available."
+                  filterLabel="Type"
+                  filterOptions={buildFilterOptions(consoleRows.map((row) => row.type))}
+                  getFilterValue={(row) => row.type}
+                  getRowKey={(row) => row.key}
+                  onSelect={(row) => setSelectedConsoleEntryId(row.entryId)}
+                  rows={consoleRows}
+                  searchPlaceholder="Search console entries"
+                  selectedKey={selectedConsoleEntry?.entryId ?? null}
+                />
+                {selectedConsoleEntry ? (
+                  <>
+                    <div className="browser-focus-card">
+                      <div>
+                        <p className="context-label">Selected Console Entry</p>
+                        <strong>{selectedConsoleEntry.source}</strong>
+                        <p>{selectedConsoleEntry.message}</p>
+                      </div>
+                      <Badge tone={selectedConsoleEntry.type === "error" || selectedConsoleEntry.type === "fault" ? "danger" : selectedConsoleEntry.type === "warning" ? "warning" : "steady"}>
+                        {selectedConsoleEntry.type}
+                      </Badge>
+                    </div>
+	                    <dl className="detail-list">
+	                      <DetailRow label="Plane" value={selectedConsoleEntry.plane} />
+	                      <DetailRow label="Timestamp" value={selectedConsoleEntry.timestamp} />
+	                      <DetailRow label="Process" value={selectedConsoleEntry.processName ?? "n/a"} />
+	                      <DetailRow label="PID" value={selectedConsoleEntry.pid ? String(selectedConsoleEntry.pid) : "n/a"} />
+	                      <DetailRow label="Category" value={selectedConsoleEntry.category} />
+	                      <DetailRow label="Source" value={selectedConsoleEntry.source} />
+	                      <DetailRow label="Activity" value={selectedConsoleEntry.activityId ?? "n/a"} />
+	                      <DetailRow label="Thread" value={selectedConsoleEntry.threadRefId ?? selectedConsoleEntry.turnRefId ?? "n/a"} />
+	                    </dl>
+                  </>
+                ) : null}
+              </div>
+            ) : selectedDomain === "diagnostics" ? (
+              <div className="browser-domain-stack">
+                <FilterSelect
+                  label="Source"
+                  onChange={(value) => {
+                    setSelectedDiagnosticSourceFilter(value);
+                    setSelectedDiagnosticReportId(null);
+                  }}
+                  options={[
+                    "All Sources",
+                    ...buildFilterOptions(diagnosticReports.map((row) => row.source)).map((option) => option.value)
+                  ]}
+                  value={selectedDiagnosticSourceFilter}
+                />
+                <div className="metric-grid">
+                  <MetricTile label="Visible" value={filteredDiagnosticReports.length} />
+                  <MetricTile label="Crash" value={visibleDiagnosticCrashCount} />
+                  <MetricTile label="Spin" value={visibleDiagnosticSpinCount} />
+                  <MetricTile
+                    label="Latest"
+                    value={latestVisibleDiagnosticTimestamp ? transcriptRecencyLabel(latestVisibleDiagnosticTimestamp) : "n/a"}
+                  />
+                </div>
+                <BrowserDataTable
+                  key="diagnostics"
+                  columnTemplate="minmax(0, 1.1fr) minmax(0, 0.8fr) minmax(0, 1fr)"
+                  columns={[
+                    {
+                      id: "title",
+                      label: "Report",
+                      render: (row) => <strong>{row.title}</strong>,
+                      sortValue: (row) => row.title,
+                      searchValue: (row) =>
+                        `${row.title} ${row.processName} ${row.pid} ${row.summary} ${row.incidentId} ${row.bugType}`
+                    },
+                    {
+                      id: "kind",
+                      label: "Kind",
+                      render: (row) => row.kind,
+                      sortValue: (row) => row.kind
+                    },
+                    {
+                      id: "source",
+                      label: "Source",
+                      render: (row) => row.source,
+                      sortValue: (row) => row.source,
+                      searchValue: (row) =>
+                        `${row.source} ${row.createdAt} ${row.processName} ${row.pid} ${row.summary} ${row.incidentId} ${row.bugType}`
+                    }
+                  ]}
+                  emptyMessage="No retained diagnostic reports are currently available."
+                  filterLabel="Kind"
+                  filterOptions={buildFilterOptions(diagnosticRows.map((row) => row.kind))}
+                  getFilterValue={(row) => row.kind}
+                  getRowKey={(row) => row.key}
+                  onSelect={(row) => setSelectedDiagnosticReportId(row.reportId)}
+                  rows={diagnosticRows}
+                  searchPlaceholder="Search diagnostic reports"
+                  selectedKey={selectedDiagnosticReportSummary?.reportId ?? null}
+                />
+                {selectedDiagnosticReportSummary ? (
+                  <>
+                    <div className="browser-focus-card">
+                      <div>
+                        <p className="context-label">Selected Diagnostic Report</p>
+                        <strong>{selectedDiagnosticReportSummary.title}</strong>
+                        <p>{selectedDiagnosticReportSummary.summary}</p>
+                      </div>
+                      <Badge tone="warning">{selectedDiagnosticReportSummary.kind}</Badge>
+                    </div>
+                    <dl className="detail-list">
+                      <DetailRow label="Created" value={selectedDiagnosticReportSummary.createdAt} />
+                      <DetailRow label="Kind" value={selectedDiagnosticReportSummary.kind} />
+                      <DetailRow label="Source" value={selectedDiagnosticReportSummary.source} />
+                      <DetailRow label="Process" value={selectedDiagnosticReportSummary.processName ?? "n/a"} />
+                      <DetailRow label="Process Count" value={String(diagnosticProcessCount)} />
+                      <DetailRow label="Path" value={selectedDiagnosticReportSummary.path ?? "n/a"} />
+                    </dl>
+                  </>
+                ) : null}
+              </div>
+            ) : selectedDomain === "processes" ? (
+              <div className="browser-domain-stack">
+                <BrowserDataTable
+                  key="processes"
+                  columnTemplate="minmax(0, 1.1fr) minmax(0, 0.8fr) minmax(0, 0.7fr) minmax(0, 0.7fr) minmax(0, 1.2fr)"
+                  columns={[
+                    {
+                      id: "process",
+                      label: "Process",
+                      render: (row) => <strong>{row.label}</strong>,
+                      sortValue: (row) => row.label,
+                      searchValue: (row) => `${row.label} ${row.kind} ${row.summary}`
+                    },
+                    {
+                      id: "kind",
+                      label: "Kind",
+                      render: (row) => row.kind,
+                      sortValue: (row) => row.kind
+                    },
+                    {
+                      id: "state",
+                      label: "State",
+                      render: (row) => row.state,
+                      sortValue: (row) => row.state
+                    },
+                    {
+                      id: "cpu",
+                      label: "CPU",
+                      render: (row) => row.cpu,
+                      sortValue: (row) => row.cpu
+                    },
+                    {
+                      id: "memory",
+                      label: "Memory",
+                      render: (row) => row.memory,
+                      sortValue: (row) => row.memory
+                    }
+                  ]}
+                  emptyMessage="No runtime-linked processes are currently visible."
+                  filterLabel="Kind"
+                  filterOptions={buildFilterOptions(telemetryProcessRows.map((row) => row.kind))}
+                  getFilterValue={(row) => row.kind}
+                  getRowKey={(row) => row.key}
+                  onSelect={(row) => setSelectedTelemetryProcessId(row.processId)}
+                  rows={telemetryProcessRows}
+                  searchPlaceholder="Search runtime processes"
+                  selectedKey={selectedTelemetryProcess?.processId ?? null}
+                />
+                {selectedTelemetryProcess ? (
+                  <>
+                    <div className="browser-focus-card">
+                      <div>
+                        <p className="context-label">Selected Process</p>
+                        <strong>{selectedTelemetryProcess.label}</strong>
+                        <p>{selectedTelemetryProcess.summary}</p>
+                      </div>
+                      <Badge tone="active">{selectedTelemetryProcess.state}</Badge>
+                    </div>
+                    <dl className="detail-list">
+                      <DetailRow label="Object Id" value={selectedTelemetryProcess.processId} />
+                      <DetailRow label="PID" value={String(selectedTelemetryProcess.pid ?? "n/a")} />
+                      <DetailRow label="CPU" value={selectedTelemetryProcess.cpuPercent != null ? `${selectedTelemetryProcess.cpuPercent.toFixed(1)}%` : "n/a"} />
+                      <DetailRow label="Memory" value={selectedTelemetryProcess.memoryMb != null ? `${selectedTelemetryProcess.memoryMb.toFixed(1)} MB` : "n/a"} />
+                      <DetailRow label="Elapsed" value={selectedTelemetryProcess.elapsed ?? "n/a"} />
+                      <DetailRow label="Authority" value={selectedTelemetryProcess.kind === "compatibility-process" ? "governed compatibility process" : "governed runtime"} />
+                      <DetailRow label="Trace" value={selectedTelemetryProcess.workItemId ?? selectedTelemetryProcess.threadId ?? selectedTelemetryProcess.controlToken ?? "runtime telemetry"} />
+                    </dl>
+                  </>
+                ) : null}
+              </div>
+            ) : selectedDomain === "performance" ? (
+              <div className="browser-domain-stack">
+                <div className="metrics-grid">
+                  <MetricTile label="CPU" value={runtimeTelemetry?.cpu.utilizationPercent != null ? `${runtimeTelemetry.cpu.utilizationPercent.toFixed(1)}%` : "n/a"} />
+                  <MetricTile label="Load 1m" value={runtimeTelemetry?.cpu.loadAverage1m != null ? runtimeTelemetry.cpu.loadAverage1m.toFixed(2) : "n/a"} />
+                  <MetricTile label="RSS" value={runtimeTelemetry?.memory.rssMb != null ? `${runtimeTelemetry.memory.rssMb.toFixed(1)} MB` : "n/a"} />
+                  <MetricTile label="Heap Used" value={runtimeTelemetry?.memory.heapUsedMb != null ? `${runtimeTelemetry.memory.heapUsedMb.toFixed(1)} MB` : "n/a"} />
+                </div>
+                <div className="browser-focus-card">
+                  <div>
+                    <p className="context-label">Performance Posture</p>
+                    <strong>{runtimeTelemetry?.activitySummary ?? "Runtime telemetry is not yet available."}</strong>
+                    <p>{runtimeTelemetry?.cpu.summary ?? "CPU and memory posture will appear once telemetry is sampled."}</p>
+                  </div>
+                  <Badge tone="steady">{runtimeTelemetry?.cpu.coreCount ? `${runtimeTelemetry.cpu.coreCount} cores` : "host"}</Badge>
+                </div>
+                <dl className="detail-list">
+                  <DetailRow label="Sampled At" value={runtimeTelemetry?.sampledAt ?? "n/a"} />
+                  <DetailRow label="CPU Summary" value={runtimeTelemetry?.cpu.summary ?? "n/a"} />
+                  <DetailRow label="Memory Summary" value={runtimeTelemetry?.memory.summary ?? "n/a"} />
+                  <DetailRow label="System Memory" value={runtimeTelemetry?.memory.systemUsedPercent != null ? `${runtimeTelemetry.memory.systemUsedPercent.toFixed(1)}%` : "n/a"} />
+                </dl>
+              </div>
+            ) : selectedDomain === "host-io" ? (
+              <div className="browser-domain-stack">
+                <div className="metrics-grid">
+                  <MetricTile label="Connections" value={runtimeTelemetry?.network.openConnectionCount != null ? String(runtimeTelemetry.network.openConnectionCount) : "n/a"} />
+                  <MetricTile label="Interfaces" value={runtimeTelemetry?.network.interfaceCount != null ? String(runtimeTelemetry.network.interfaceCount) : "n/a"} />
+                  <MetricTile label="Disk Read" value={runtimeTelemetry?.disk.readKbps != null ? `${runtimeTelemetry.disk.readKbps.toFixed(0)} KB/s` : "n/a"} />
+                  <MetricTile label="Disk Write" value={runtimeTelemetry?.disk.writeKbps != null ? `${runtimeTelemetry.disk.writeKbps.toFixed(0)} KB/s` : "n/a"} />
+                </div>
+                <dl className="detail-list">
+                  <DetailRow label="Network Summary" value={runtimeTelemetry?.network.summary ?? "n/a"} />
+                  <DetailRow label="Disk Summary" value={runtimeTelemetry?.disk.summary ?? "n/a"} />
+                  <DetailRow label="Runtime PID" value={String(runtimeTelemetry?.runtimePid ?? "n/a")} />
+                  <DetailRow label="Activity" value={runtimeTelemetry?.activitySummary ?? "n/a"} />
+                </dl>
               </div>
             ) : selectedDomain === "source" ? (
               <div className="browser-domain-stack">
@@ -11484,39 +13407,124 @@ function BrowserWorkspace({
                 />
               </div>
             ) : selectedDomain === "governance" ? (
-              <BrowserDataTable
-                key="governance"
-                columnTemplate="minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 1.35fr)"
-                columns={[
-                  {
-                    id: "item",
-                    label: "Item",
-                    render: (row) => <strong>{row.label}</strong>,
-                    sortValue: (row) => row.label
-                  },
-                  {
-                    id: "state",
-                    label: "State",
-                    render: (row) => <PriorityStateChip label={row.badge} tone={row.tone} />,
-                    sortValue: (row) => row.badge
-                  },
-                  {
-                    id: "detail",
-                    label: "Detail",
-                    render: (row) => row.detail,
-                    sortValue: (row) => row.detail
-                  }
-                ]}
-                emptyMessage="No governance-linked entities are loaded."
-                filterLabel="State"
-                filterOptions={buildFilterOptions(governanceRows.map((row) => row.badge))}
-                getFilterValue={(row) => row.badge}
-                getRowKey={(row) => row.key}
-                onSelect={() => undefined}
-                rows={governanceRows}
-                searchPlaceholder="Search governance items"
-                selectedKey={null}
-              />
+              <div className="browser-domain-stack">
+                <BrowserDataTable
+                  key="governance"
+                  columnTemplate="minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 1.35fr)"
+                  columns={[
+                    {
+                      id: "item",
+                      label: "Item",
+                      render: (row) => <strong>{row.label}</strong>,
+                      sortValue: (row) => row.label
+                    },
+                    {
+                      id: "state",
+                      label: "State",
+                      render: (row) => <PriorityStateChip label={row.badge} tone={row.tone} />,
+                      sortValue: (row) => row.badge
+                    },
+                    {
+                      id: "detail",
+                      label: "Detail",
+                      render: (row) => row.detail,
+                      sortValue: (row) => row.detail
+                    }
+                  ]}
+                  emptyMessage="No governance-linked entities are loaded."
+                  filterLabel="State"
+                  filterOptions={buildFilterOptions(governanceRows.map((row) => row.badge))}
+                  getFilterValue={(row) => row.badge}
+                  getRowKey={(row) => row.key}
+                  onSelect={(row) => setSelectedGovernanceKey(row.key)}
+                  rows={governanceRows}
+                  searchPlaceholder="Search governance items"
+                  selectedKey={selectedGovernanceEntry?.key ?? null}
+                />
+                {selectedGovernanceEntry ? (
+                  <>
+                    <div className="browser-focus-card">
+                      <div>
+                        <p className="context-label">Selected Governance Object</p>
+                        <strong>{selectedGovernanceEntry.label}</strong>
+                        <p>{selectedGovernanceEntry.detail}</p>
+                      </div>
+                      <PriorityStateChip label={selectedGovernanceEntry.badge} tone={selectedGovernanceEntry.tone} />
+                    </div>
+                    <dl className="detail-list">
+                      {selectedGovernanceIdentityRows.map(([label, value]) => (
+                        <DetailRow key={`browser-governance:${label}`} label={label} value={value} />
+                      ))}
+                      {selectedGovernanceCorrectiveRows.map(([label, value]) => (
+                        <DetailRow key={`browser-governance-corrective:${label}`} label={label} value={value} />
+                      ))}
+                    </dl>
+                    {selectedGovernanceEntry.correctiveContext?.proposedActions.length ? (
+                      <div className="thread-section">
+                        <p className="context-label">Corrective Actions</p>
+                        <div className="thread-card-list">
+                          {selectedGovernanceEntry.correctiveContext.proposedActions.map((action, index) => (
+                            <article className="thread-row active" key={`browser-governance-action:${index}`}>
+                              <div>
+                                <strong>{action.kind ?? "correction"}</strong>
+                                <p>{action.reason ?? "No corrective rationale captured."}</p>
+                              </div>
+                              <span>{action.target ?? "governed target"}</span>
+                            </article>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                    {selectedGovernanceEntry.correctiveContext?.triggerEvents.length ? (
+                      <div className="thread-section">
+                        <p className="context-label">Trigger Evidence</p>
+                        <div className="thread-flags">
+                          {selectedGovernanceEntry.correctiveContext.triggerEvents.map((event, index) => (
+                            <span className="thread-flag" key={`browser-governance-trigger:${index}`}>
+                              {event.kind ?? event.family ?? "event"}
+                              {event.eventId ? ` · ${event.eventId}` : ""}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                    <div className="browser-action-strip">
+                      {selectedGovernanceApprovalId ? (
+                        <button
+                          className="starter-chip"
+                          onClick={() => void onOpenApprovalRequest(selectedGovernanceApprovalId)}
+                          type="button"
+                        >
+                          Review Approval
+                        </button>
+                      ) : null}
+                      {selectedGovernanceApprovalId && selectedGovernanceApprovalSummary?.state === "awaiting" ? (
+                        <button
+                          className="starter-chip"
+                          disabled={isDecidingApproval}
+                          onClick={() => onSubmitApprovalDecision(selectedGovernanceApprovalId, "approve")}
+                          type="button"
+                        >
+                          {isDecidingApproval ? "Submitting..." : "Approve Corrective Work"}
+                        </button>
+                      ) : null}
+                      {selectedGovernanceApprovalId && selectedGovernanceApprovalSummary?.state === "awaiting" ? (
+                        <button
+                          className="starter-chip"
+                          disabled={isDecidingApproval}
+                          onClick={() => onSubmitApprovalDecision(selectedGovernanceApprovalId, "deny")}
+                          type="button"
+                        >
+                          {isDecidingApproval ? "Submitting..." : "Deny Corrective Work"}
+                        </button>
+                      ) : null}
+                      <button className="starter-chip" onClick={() => void openInspectorSurface()} type="button">
+                        Open Inspector
+                      </button>
+                    </div>
+                  </>
+                ) : null}
+              </div>
             ) : selectedDomain === "linked-conversations" ? (
               <div className="browser-domain-stack">
                 <BrowserDataTable
@@ -11556,6 +13564,31 @@ function BrowserWorkspace({
                   searchPlaceholder="Search linked conversations"
                   selectedKey={selectedLinkedConversation?.id ?? null}
                 />
+                {selectedLinkedConversation ? (
+                  <>
+                    <div className="browser-focus-card">
+                      <div>
+                        <p className="context-label">Selected Linked Conversation</p>
+                        <strong>{selectedLinkedConversation.label}</strong>
+                        <p>{selectedLinkedConversation.detail}</p>
+                      </div>
+                      <PriorityStateChip
+                        label={selectedLinkedConversation.badge}
+                        tone={toneForThreadState(selectedLinkedConversation.badge as ThreadSummaryDto["state"])}
+                      />
+                    </div>
+                    <dl className="detail-list">
+                      {selectedLinkedConversationIdentityRows.map(([label, value]) => (
+                        <DetailRow key={`browser-linked-conversation:${label}`} label={label} value={value} />
+                      ))}
+                    </dl>
+                    <div className="browser-action-strip">
+                      <button className="starter-chip" onClick={() => void openInspectorSurface()} type="button">
+                        Open Inspector
+                      </button>
+                    </div>
+                  </>
+                ) : null}
               </div>
             ) : selectedDomain === "documentation" ? (
               <div className="browser-domain-stack">
@@ -11588,10 +13621,13 @@ function BrowserWorkspace({
                   filterOptions={buildFilterOptions(documentationRows.map((row) => row.category))}
                   getFilterValue={(row) => row.category}
                   getRowKey={(row) => row.key}
-                  onSelect={(row) => setSelectedDocumentationKey(row.key)}
+                  onSelect={(row) => {
+                    setSelectedDocumentationKey(row.key);
+                    void loadDocumentationPage(row.slug);
+                  }}
                   rows={documentationRows}
                   searchPlaceholder="Search documentation references"
-                  selectedKey={selectedDocumentation.key}
+                  selectedKey={selectedDocumentationSlug}
                 />
               </div>
             ) : (
@@ -11605,1854 +13641,6 @@ function BrowserWorkspace({
         </div>
       </div>
     </div>
-  );
-}
-
-function ConversationsWorkspace({
-  threads,
-  conversationDraft,
-  pageSignalCounts,
-  selectedConversationMessageId,
-  selectedThreadId,
-  selectedThread,
-  selectedTurnId,
-  selectedTurn,
-  setConversationDraft,
-  setSelectedConversationMessageId,
-  onOpenCreateConversationSession,
-  onOpenRenameConversationSession,
-  setSelectedThreadId,
-  setSelectedTurnId,
-  navigateToLinkedEntity
-}: {
-  threads: ThreadSummaryDto[];
-  conversationDraft: string;
-  pageSignalCounts: SignalCounts;
-  selectedConversationMessageId: string | null;
-  selectedThreadId: string | null;
-  selectedThread: ThreadDetailDto | null;
-  selectedTurnId: string | null;
-  selectedTurn: TurnDetailDto | null;
-  setConversationDraft: (value: string) => void;
-  setSelectedConversationMessageId: (messageId: string | null) => void;
-  onOpenCreateConversationSession: () => void;
-  onOpenRenameConversationSession: (threadId: string, title: string) => void;
-  setSelectedThreadId: (threadId: string) => void;
-  setSelectedTurnId: (turnId: string) => void;
-  navigateToLinkedEntity: (entity: LinkedEntityRefDto) => Promise<void>;
-}) {
-  const [selectedThreadSubview, setSelectedThreadSubview] = useState<ConversationSection>("threads");
-  const [threadTableExpanded, setThreadTableExpanded] = useState(true);
-  const [browseConversationTab, setBrowseConversationTab] = useState<"context" | "turn" | "entry" | "linked">(
-    "context"
-  );
-  const threadRows = threads.map((thread) => ({
-    key: thread.threadId,
-    title: thread.title,
-    state: thread.state,
-    latestTurnState: thread.latestTurnState,
-    latestActivityAt: thread.latestActivityAt,
-    summary: thread.summary,
-    flags: thread.attentionFlags
-  }));
-  const attentionThreadRows = useMemo(
-    () =>
-      threadRows.filter(
-        (thread) =>
-          thread.flags.length > 0 ||
-          thread.state === "waiting" ||
-          thread.state === "blocked" ||
-          thread.latestTurnState === "awaiting_approval" ||
-          thread.latestTurnState === "interrupted" ||
-          thread.latestTurnState === "failed"
-      ),
-    [threadRows]
-  );
-  const primaryAttentionThread = attentionThreadRows[0] ?? null;
-  const collapsedThreadSummary = primaryAttentionThread
-    ? attentionThreadRows.length > 1
-      ? `${attentionThreadRows.length} threads require attention. ${primaryAttentionThread.title} is the first surfaced thread.`
-      : `${primaryAttentionThread.title} requires attention.`
-    : `${threadRows.length} conversation sessions available.${selectedThread ? ` ${selectedThread.title} is selected.` : ""}`;
-  const collapsedThreadMeta = primaryAttentionThread
-    ? [
-        primaryAttentionThread.state,
-        primaryAttentionThread.latestTurnState,
-        primaryAttentionThread.flags[0]
-      ]
-        .filter((value): value is string => Boolean(value))
-        .join(" · ")
-    : selectedThread?.summary ?? "Collapse the thread frame to preserve working space without losing navigation context.";
-  const turnRows =
-    selectedThread?.turns.map((turn) => ({
-      key: turn.turnId,
-      title: turn.title,
-      state: turn.state,
-      createdAt: turn.createdAt
-    })) ?? [];
-  const selectedConversationMessage =
-    selectedThread?.messages.find((message) => message.messageId === selectedConversationMessageId) ?? null;
-
-  useEffect(() => {
-    if (!selectedThread && selectedThreadSubview !== "threads") {
-      setSelectedThreadSubview("threads");
-    }
-  }, [selectedThread, selectedThreadSubview]);
-
-  return (
-    <div className="conversations-journey">
-      <div className="conversation-layout">
-        <div className="conversation-threads-shell">
-          <section
-            aria-label="Thread Navigation"
-            className={`panel conversation-list-panel${threadTableExpanded ? "" : " conversation-list-panel-collapsed"}`}
-          >
-            {threadTableExpanded ? (
-              <div className="conversation-frame-header">
-                <div>
-                  <p className="eyebrow">Conversations &gt;&gt; Threads</p>
-                </div>
-                <div className="conversation-frame-header-actions">
-                  <PrioritySignalCluster counts={pageSignalCounts} />
-                  <Badge tone="steady">{`${threadRows.length} threads`}</Badge>
-                  <button
-                    aria-label="Collapse thread table"
-                    className="panel-titlebar-toggle"
-                    onClick={() => setThreadTableExpanded((current) => !current)}
-                    title="Collapse thread table"
-                    type="button"
-                  >
-                    <span aria-hidden="true">−</span>
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="conversation-frame-inline">
-                <div className="conversation-frame-inline-title">
-                  <span className="conversation-frame-inline-eyebrow">Conversations &gt;&gt; Threads</span>
-                </div>
-                <div className="conversation-frame-inline-summary" title={`${collapsedThreadSummary} ${collapsedThreadMeta}`}>
-                  <strong>{collapsedThreadSummary}</strong>
-                  <span>{collapsedThreadMeta}</span>
-                </div>
-                <div className="conversation-frame-inline-actions">
-                  <PrioritySignalCluster counts={pageSignalCounts} />
-                  <Badge tone="steady">{`${threadRows.length} threads`}</Badge>
-                  {primaryAttentionThread ? (
-                    <button
-                      className="thread-collapsed-focus-button"
-                      onClick={() => setSelectedThreadId(primaryAttentionThread.key)}
-                      type="button"
-                    >
-                      Focus {primaryAttentionThread.title}
-                    </button>
-                  ) : null}
-                  <button
-                    aria-label="Expand thread table"
-                    className="panel-titlebar-toggle"
-                    onClick={() => setThreadTableExpanded(true)}
-                    title="Expand thread table"
-                    type="button"
-                  >
-                    <span aria-hidden="true">+</span>
-                  </button>
-                </div>
-              </div>
-            )}
-            {threadTableExpanded ? (
-              <BrowserDataTable
-                key="conversation-threads"
-                columnTemplate="minmax(180px, 1.05fr) minmax(92px, max-content) minmax(112px, max-content) minmax(132px, 0.92fr) minmax(220px, 1.2fr) 44px"
-                columns={[
-                  {
-                    id: "thread",
-                    label: "Thread",
-                    render: (row) => <strong>{row.title}</strong>,
-                    sortValue: (row) => row.title,
-                    searchValue: (row) => `${row.title} ${row.summary} ${row.flags.join(" ")}`
-                  },
-                  {
-                    id: "state",
-                    label: "State",
-                    render: (row) => <PriorityStateChip label={row.state} tone={toneForThreadState(row.state)} />,
-                    sortValue: (row) => row.state
-                  },
-                  {
-                    id: "turn",
-                    label: "Latest Turn",
-                    render: (row) => row.latestTurnState,
-                    sortValue: (row) => row.latestTurnState
-                  },
-                  {
-                    id: "updated",
-                    label: "Updated",
-                    render: (row) => row.latestActivityAt,
-                    sortValue: (row) => row.latestActivityAt
-                  },
-                  {
-                    id: "summary",
-                    label: "Summary",
-                    render: (row) => row.summary,
-                    sortValue: (row) => row.summary,
-                    searchValue: (row) => row.summary
-                  },
-                  {
-                    id: "edit",
-                    label: "",
-                    render: (row) => (
-                      <button
-                        aria-label={`Rename ${row.title}`}
-                        className="panel-titlebar-toggle table-row-action"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onOpenRenameConversationSession(row.key, row.title);
-                        }}
-                        title={`Rename ${row.title}`}
-                        type="button"
-                      >
-                        <span aria-hidden="true">✎</span>
-                      </button>
-                    ),
-                    sortValue: () => ""
-                  }
-                ]}
-                emptyMessage="No structured conversation threads are available."
-                filterLabel="State"
-                filterOptions={Array.from(new Set(threadRows.map((row) => row.state))).map((value) => ({ label: value, value }))}
-                getFilterValue={(row) => row.state}
-                getRowKey={(row) => row.key}
-                onSelect={(row) => {
-                  setSelectedThreadId(row.key);
-                }}
-                rows={threadRows}
-                searchPlaceholder="Search conversation threads"
-                selectedKey={selectedThreadId}
-                toolbarLeading={
-                  <button
-                    aria-label="New conversation session"
-                    className="panel-titlebar-toggle"
-                    onClick={onOpenCreateConversationSession}
-                    title="New conversation session"
-                    type="button"
-                  >
-                    <span aria-hidden="true">{`{+}`}</span>
-                  </button>
-                }
-              />
-            ) : null}
-          </section>
-
-          <section className="panel conversation-thread-panel conversation-browse-detail-panel">
-            <div className="conversation-thread-subview-header">
-              <p className="eyebrow">
-                {selectedThread ? `Conversations >> Threads >> ${selectedThread.title}` : "Conversations >> Threads"}
-              </p>
-              {selectedThread ? (
-                <div className="inspector-tabs" role="tablist" aria-label="Selected thread views">
-                  {conversationSections.map((section) => (
-                    <button
-                      aria-selected={selectedThreadSubview === section.id}
-                      className={selectedThreadSubview === section.id ? "inspector-tab active" : "inspector-tab"}
-                      key={section.id}
-                      onClick={() => setSelectedThreadSubview(section.id)}
-                      role="tab"
-                      type="button"
-                    >
-                      {section.id === "threads" ? "Overview" : section.label}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <p className="inspector-copy">
-                  Select a thread first. Turns and drafting become available only inside the active thread context.
-                </p>
-              )}
-            </div>
-            {selectedThreadSubview === "threads" ? (
-              <>
-                <div className="inspector-tabs" role="tablist" aria-label="Conversation browse panels">
-                  {[
-                    { id: "context", label: "Context" },
-                    { id: "turn", label: "Turn" },
-                    { id: "entry", label: "Entry" },
-                    { id: "linked", label: "Linked" }
-                  ].map((tab) => (
-                    <button
-                      aria-selected={tab.id === browseConversationTab}
-                      className={tab.id === browseConversationTab ? "inspector-tab active" : "inspector-tab"}
-                      key={tab.id}
-                      onClick={() => setBrowseConversationTab(tab.id as typeof browseConversationTab)}
-                      role="tab"
-                      type="button"
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
-                </div>
-                <div className="inspector-tab-panel" role="tabpanel">
-                  {browseConversationTab === "context" ? (
-                    <dl className="detail-list">
-                      <DetailRow label="Thread" value={selectedThread?.title ?? "No thread selected"} />
-                      <DetailRow label="State" value={selectedThread?.state ?? "idle"} />
-                      <DetailRow label="Turns" value={String(selectedThread?.turns.length ?? 0)} />
-                      <DetailRow label="Linked Entities" value={String(selectedThread?.linkedEntities.length ?? 0)} />
-                    </dl>
-                  ) : null}
-                  {browseConversationTab === "turn" ? (
-                    <dl className="detail-list">
-                      <DetailRow label="Turn" value={selectedTurn?.title ?? "No turn selected"} />
-                      <DetailRow label="Turn State" value={selectedTurn?.state ?? "idle"} />
-                      <DetailRow label="Operations" value={String(selectedTurn?.operationIds.length ?? 0)} />
-                      <DetailRow label="Artifacts" value={String(selectedTurn?.artifactIds.length ?? 0)} />
-                      <DetailRow label="Approvals" value={String(selectedTurn?.approvalIds.length ?? 0)} />
-                    </dl>
-                  ) : null}
-                  {browseConversationTab === "entry" ? (
-                    selectedConversationMessage ? (
-                      <dl className="detail-list">
-                        <DetailRow label="Source" value={selectedConversationMessage.role} />
-                        <DetailRow label="Timestamp" value={selectedConversationMessage.createdAt} />
-                      </dl>
-                    ) : (
-                      <p className="inspector-copy">
-                        Select a transcript entry in Workspace to inspect its source and timestamp here.
-                      </p>
-                    )
-                  ) : null}
-                  {browseConversationTab === "linked" ? (
-                    selectedThread ? (
-                      <LinkedEntityList entities={selectedThread.linkedEntities} navigateToLinkedEntity={navigateToLinkedEntity} />
-                    ) : (
-                      <p className="inspector-copy">
-                        Select a conversation session to inspect the artifacts, approvals, incidents, and work attached to it.
-                      </p>
-                    )
-                  ) : null}
-                </div>
-              </>
-            ) : null}
-            {selectedThreadSubview === "turns" ? (
-              selectedThread ? (
-                <div className="conversation-subview-stack">
-                  <BrowserDataTable
-                    key={`conversation-turns:${selectedThread.threadId}`}
-                    columnTemplate="minmax(0, 1.2fr) minmax(0, 0.85fr) minmax(0, 1fr)"
-                    columns={[
-                      {
-                        id: "turn",
-                        label: "Turn",
-                        render: (row) => <strong>{row.title}</strong>,
-                        sortValue: (row) => row.title,
-                        searchValue: (row) => `${row.title} ${row.state} ${row.createdAt}`
-                      },
-                      {
-                        id: "state",
-                        label: "State",
-                        render: (row) => <PriorityStateChip label={row.state} tone={toneForTurnState(row.state)} />,
-                        sortValue: (row) => row.state
-                      },
-                      {
-                        id: "created",
-                        label: "Created",
-                        render: (row) => row.createdAt,
-                        sortValue: (row) => row.createdAt
-                      }
-                    ]}
-                    emptyMessage="No turns are available for the selected thread."
-                    filterLabel="State"
-                    filterOptions={Array.from(new Set(turnRows.map((row) => row.state))).map((value) => ({ label: value, value }))}
-                    getFilterValue={(row) => row.state}
-                    getRowKey={(row) => row.key}
-                    onSelect={(row) => setSelectedTurnId(row.key)}
-                    rows={turnRows}
-                    searchPlaceholder="Search turns"
-                    selectedKey={selectedTurnId}
-                  />
-                  {selectedTurn ? (
-                    <div className="conversation-subview-detail">
-                      <div className="browser-focus-card">
-                        <div>
-                          <p className="context-label">Turn Summary</p>
-                          <strong>{selectedTurn.title}</strong>
-                          <p>{selectedTurn.summary}</p>
-                        </div>
-                        <PriorityStateChip label={selectedTurn.state} tone={toneForTurnState(selectedTurn.state)} />
-                      </div>
-                      <div className="turn-refs-grid">
-                        <RefBlock label="Operations" values={selectedTurn.operationIds} />
-                        <RefBlock label="Artifacts" values={selectedTurn.artifactIds} />
-                        <RefBlock label="Incidents" values={selectedTurn.incidentIds} />
-                        <RefBlock label="Approvals" values={selectedTurn.approvalIds} />
-                        <RefBlock label="Work Items" values={selectedTurn.workItemIds} />
-                      </div>
-                    </div>
-                  ) : (
-                    <p className="inspector-copy">Select a turn to inspect its governed references.</p>
-                  )}
-                </div>
-              ) : (
-                <p className="inspector-copy">
-                  Select a thread in the thread table first to inspect its turns.
-                </p>
-              )
-            ) : null}
-            {selectedThreadSubview === "draft" ? (
-              selectedThread ? (
-                <div className="conversation-subview-stack">
-                  <textarea
-                    className="runtime-editor conversation-draft-editor"
-                    onChange={(event) => setConversationDraft(event.target.value)}
-                    value={conversationDraft}
-                  />
-                  <div className="browser-focus-card">
-                    <div>
-                      <p className="context-label">Draft Context</p>
-                      <strong>{selectedThread.title}</strong>
-                      <p>{selectedThread.summary}</p>
-                    </div>
-                    <Badge tone="steady">{`${selectedThread.messages.length} messages`}</Badge>
-                  </div>
-                  <div className="signal-digest-grid conversation-detail-digest">
-                    <div className="signal-digest-card">
-                      <span className="context-label">Turns</span>
-                      <strong>{selectedThread.turns.length}</strong>
-                      <p>Drafting remains grounded in the current continuation rather than detached note taking.</p>
-                    </div>
-                    <div className="signal-digest-card">
-                      <span className="context-label">Linked Entities</span>
-                      <strong>{selectedThread.linkedEntities.length}</strong>
-                      <p>Relevant artifacts, approvals, and incidents remain visible while composing the next turn.</p>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <p className="inspector-copy">
-                  Select a thread in the thread table first so the draft has conversation context.
-                </p>
-              )
-            ) : null}
-          </section>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function RuntimeWorkspace({
-  replSessions,
-  currentReplSessionId,
-  switchReplSession,
-  createReplSession,
-  replSessionTitleDraft,
-  setReplSessionTitleDraft,
-  runtimeSummary,
-  runtimeForm,
-  setRuntimeForm,
-  evaluateRuntimeForm,
-  runtimeInspection,
-  runtimeInspectionMode,
-  runtimeInspectorSymbol,
-  runtimeInspectorPackage,
-  setRuntimeInspectionMode,
-  setRuntimeInspectorSymbol,
-  setRuntimeInspectorPackage,
-  inspectRuntimeSymbol,
-  runtimeResult,
-  isEvaluating,
-  isInspectingRuntime
-}: {
-  replSessions: ReplSessionProfileDto[];
-  currentReplSessionId: string | null;
-  switchReplSession: (sessionId: string) => Promise<void>;
-  createReplSession: () => Promise<void>;
-  replSessionTitleDraft: string;
-  setReplSessionTitleDraft: (value: string) => void;
-  runtimeSummary: RuntimeSummaryDto | null;
-  runtimeForm: string;
-  setRuntimeForm: (value: string) => void;
-  evaluateRuntimeForm: () => Promise<void>;
-  runtimeInspection: QueryResultDto<RuntimeInspectionResultDto> | null;
-  runtimeInspectionMode: RuntimeInspectionMode;
-  runtimeInspectorSymbol: string;
-  runtimeInspectorPackage: string;
-  setRuntimeInspectionMode: (value: RuntimeInspectionMode) => void;
-  setRuntimeInspectorSymbol: (value: string) => void;
-  setRuntimeInspectorPackage: (value: string) => void;
-  inspectRuntimeSymbol: () => Promise<void>;
-  runtimeResult: CommandResultDto<RuntimeEvalResultDto> | null;
-  isEvaluating: boolean;
-  isInspectingRuntime: boolean;
-}) {
-  const scopeRows = runtimeSummary?.scopes.map((scope) => ({
-    key: scope.scopeId,
-    packageName: scope.packageName,
-    symbolName: scope.symbolName ?? "",
-    kind: scope.kind,
-    summary: scope.summary
-  })) ?? [];
-  const [selectedScopeKey, setSelectedScopeKey] = useState<string | null>(scopeRows[0]?.key ?? null);
-
-  useEffect(() => {
-    if (!scopeRows.some((scope) => scope.key === selectedScopeKey)) {
-      setSelectedScopeKey(scopeRows[0]?.key ?? null);
-    }
-  }, [scopeRows, selectedScopeKey]);
-
-  const selectedScope = scopeRows.find((scope) => scope.key === selectedScopeKey) ?? scopeRows[0] ?? null;
-  const activeReplSession = replSessions.find((session) => session.sessionId === currentReplSessionId) ?? replSessions[0] ?? null;
-
-  if (!runtimeSummary) {
-    return (
-      <div className="empty-state">
-        <p className="eyebrow">No Runtime Surface</p>
-        <h3>Bind an environment to open the live image surface.</h3>
-      </div>
-    );
-  }
-
-  return (
-    <div className="runtime-grid">
-      <section className="panel runtime-session-panel">
-        <PanelHeader
-          title="Project REPL Sessions"
-          subtitle="Listener work should retain named project-scoped sessions rather than collapsing into one ambient editor state."
-        />
-        <div className="signal-digest-grid runtime-session-digest">
-          <div className="signal-digest-card">
-            <span className="context-label">Sessions</span>
-            <strong>{replSessions.length}</strong>
-            <p>{replSessions[0]?.title ?? "No retained REPL session is currently available."}</p>
-          </div>
-          <div className="signal-digest-card">
-            <span className="context-label">Active Session</span>
-            <strong>{activeReplSession?.title ?? "Primary Listener"}</strong>
-            <p>{activeReplSession?.lastSummary ?? "The listener keeps the current package and latest runtime result attached to the active session."}</p>
-          </div>
-          <div className="signal-digest-card">
-            <span className="context-label">Package</span>
-            <strong>{activeReplSession?.packageName ?? runtimeSummary.currentPackage}</strong>
-            <p>{runtimeSummary.divergencePosture}</p>
-          </div>
-        </div>
-        <div className="runtime-session-strip">
-          {replSessions.length > 0 ? (
-            replSessions.slice(0, 6).map((session) => (
-              <button
-                className={session.sessionId === currentReplSessionId ? "runtime-session-card active" : "runtime-session-card"}
-                key={session.sessionId}
-                onClick={() => void switchReplSession(session.sessionId)}
-                type="button"
-              >
-                <div className="runtime-session-card-top">
-                  <strong>{session.title}</strong>
-                  <Badge tone={session.sessionId === currentReplSessionId ? "active" : "steady"}>
-                    {session.packageName ?? "listener"}
-                  </Badge>
-                </div>
-                <p>{session.lastSummary ?? "No runtime result has been retained for this session yet."}</p>
-              </button>
-            ))
-          ) : (
-            <div className="runtime-session-card runtime-session-card-empty">
-              <strong>No retained REPL sessions</strong>
-              <p>Create a listener session to keep separate runtime explorations and form history inside the same project.</p>
-            </div>
-          )}
-        </div>
-        <div className="browser-action-strip">
-          <label className="runtime-session-create">
-            <span className="context-label">New Session</span>
-            <input onChange={(event) => setReplSessionTitleDraft(event.target.value)} value={replSessionTitleDraft} />
-          </label>
-          <button className="starter-chip" onClick={() => void createReplSession()} type="button">
-            New REPL Session
-          </button>
-        </div>
-      </section>
-
-      <section className="panel runtime-scope-panel">
-        <PanelHeader
-          title="Inspection Scopes"
-          subtitle="Packages, symbols, and loaded definitions stay available as execution inspection entry points."
-        />
-        <BrowserDataTable
-          key="runtime-scopes"
-          columnTemplate="minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 1.4fr)"
-          columns={[
-            {
-              id: "package",
-              label: "Package",
-              render: (row) => <strong>{row.packageName}</strong>,
-              sortValue: (row) => row.packageName,
-              searchValue: (row) => `${row.packageName} ${row.symbolName} ${row.summary}`
-            },
-            {
-              id: "symbol",
-              label: "Symbol",
-              render: (row) => row.symbolName || "Package Scope",
-              sortValue: (row) => row.symbolName || row.packageName
-            },
-            {
-              id: "kind",
-              label: "Kind",
-              render: (row) => <Badge tone="steady">{row.kind}</Badge>,
-              sortValue: (row) => row.kind
-            },
-            {
-              id: "summary",
-              label: "Summary",
-              render: (row) => row.summary,
-              sortValue: (row) => row.summary,
-              searchValue: (row) => row.summary
-            }
-          ]}
-          emptyMessage="No inspection scopes are available."
-          filterLabel="Kind"
-          filterOptions={Array.from(new Set(scopeRows.map((row) => row.kind))).map((value) => ({ label: value, value }))}
-          getFilterValue={(row) => row.kind}
-          getRowKey={(row) => row.key}
-          onSelect={(row) => setSelectedScopeKey(row.key)}
-          rows={scopeRows}
-          searchPlaceholder="Search scopes"
-          selectedKey={selectedScopeKey}
-        />
-      </section>
-
-      <section className="panel runtime-inspector-panel">
-        <div className="panel-header">
-          <div>
-            <p className="eyebrow">Inspector</p>
-            <h3>Live Symbol And XREF</h3>
-          </div>
-          <Badge tone="steady">{runtimeInspectionMode}</Badge>
-        </div>
-        <div className="runtime-inspector-controls">
-          <input
-            className="filter-input"
-            onChange={(event) => setRuntimeInspectorSymbol(event.target.value)}
-            placeholder="Symbol"
-            value={runtimeInspectorSymbol}
-          />
-          <input
-            className="filter-input"
-            onChange={(event) => setRuntimeInspectorPackage(event.target.value)}
-            placeholder={runtimeSummary.currentPackage}
-            value={runtimeInspectorPackage}
-          />
-          <select
-            className="filter-input"
-            onChange={(event) => setRuntimeInspectionMode(event.target.value as RuntimeInspectionMode)}
-            value={runtimeInspectionMode}
-          >
-            <option value="describe">Describe</option>
-            <option value="definitions">Find Definition</option>
-            <option value="callers">Who Calls This</option>
-            <option value="methods">Methods</option>
-            <option value="divergence">Source/Image Drift</option>
-          </select>
-          <button
-            className="action-button"
-            disabled={isInspectingRuntime || runtimeInspectorSymbol.trim().length === 0}
-            onClick={() => void inspectRuntimeSymbol()}
-            type="button"
-          >
-            {isInspectingRuntime ? "Inspecting..." : "Inspect Symbol"}
-          </button>
-        </div>
-        {selectedScope ? (
-          <div className="browser-focus-card runtime-scope-focus">
-            <div>
-              <p className="context-label">Selected Scope</p>
-              <strong>{selectedScope.symbolName ? `${selectedScope.packageName} / ${selectedScope.symbolName}` : selectedScope.packageName}</strong>
-              <p>{selectedScope.summary}</p>
-            </div>
-            <button
-              className="starter-chip"
-              onClick={() => {
-                setRuntimeInspectorPackage(selectedScope.packageName);
-                setRuntimeInspectorSymbol(selectedScope.symbolName);
-              }}
-              type="button"
-            >
-              Load Into Inspector
-            </button>
-          </div>
-        ) : null}
-        {runtimeInspection ? (
-          <div className="runtime-result-stack">
-            <p className="lead-copy">{runtimeInspection.data.summary}</p>
-            <div className="ref-list">
-              <span className="thread-flag">{runtimeInspection.data.packageName}</span>
-              {runtimeInspection.data.runtimePresence ? (
-                <span className="thread-flag">{runtimeInspection.data.runtimePresence}</span>
-              ) : null}
-              {runtimeInspection.data.divergence ? (
-                <span className="thread-flag">{runtimeInspection.data.divergence}</span>
-              ) : null}
-            </div>
-            <div className="entity-list">
-              {runtimeInspection.data.items.map((item) => (
-                <div className="entity-row" key={`${item.label}:${item.detail}`}>
-                  <div>
-                    <strong>{item.label}</strong>
-                    <p>{item.detail}</p>
-                  </div>
-                  {item.emphasis ? <Badge tone="steady">{item.emphasis}</Badge> : null}
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <p className="list-empty">
-            Inspect a symbol to get live object metadata, definitions, callers, methods, or source/image drift.
-          </p>
-        )}
-      </section>
-
-      <section className="panel runtime-eval-panel">
-        <div className="panel-header">
-          <div>
-            <p className="eyebrow">REPL</p>
-            <h3>Listener</h3>
-          </div>
-          <Badge tone="active">{runtimeSummary.currentPackage}</Badge>
-        </div>
-        <textarea
-          className="runtime-editor"
-          onChange={(event) => setRuntimeForm(event.target.value)}
-          value={runtimeForm}
-        />
-        <button
-          className="action-button"
-          disabled={isEvaluating || runtimeForm.trim().length === 0}
-          onClick={() => void evaluateRuntimeForm()}
-          type="button"
-        >
-          {isEvaluating ? "Evaluating..." : "Run Form"}
-        </button>
-      </section>
-
-      <section className="panel runtime-result-panel">
-        <PanelHeader
-          title="Listener Result"
-          subtitle="Evaluation remains governed, but the primary surface is still direct interactive development against the live image."
-        />
-        {runtimeResult ? (
-          <div className="runtime-result-stack">
-            <div className="runtime-result-header">
-              <Badge tone={toneForCommandStatus(runtimeResult.status)}>{runtimeResult.status}</Badge>
-              <span className="runtime-result-op">{runtimeResult.operation}</span>
-            </div>
-            <p className="lead-copy">{runtimeResult.data.summary}</p>
-            {runtimeResult.data.valuePreview ? (
-              <pre className="runtime-preview">{runtimeResult.data.valuePreview}</pre>
-            ) : null}
-            <div className="ref-list">
-              {runtimeResult.data.operationId ? <span className="thread-flag">{runtimeResult.data.operationId}</span> : null}
-              {runtimeResult.data.approvalId ? <span className="thread-flag">{runtimeResult.data.approvalId}</span> : null}
-              {runtimeResult.data.incidentId ? <span className="thread-flag">{runtimeResult.data.incidentId}</span> : null}
-              {runtimeResult.data.artifactIds.map((artifactId) => (
-                <span className="thread-flag" key={artifactId}>
-                  {artifactId}
-                </span>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <p className="list-empty">Run a form to see governed runtime results here.</p>
-        )}
-      </section>
-
-      <section className="panel runtime-history-panel">
-        <PanelHeader
-          title="Session History"
-          subtitle="Each project REPL session now retains its recent evaluation trail instead of collapsing everything into the current editor state."
-        />
-        {activeReplSession && (activeReplSession.history?.length ?? 0) > 0 ? (
-          <div className="runtime-history-list">
-            {(activeReplSession.history ?? []).map((entry) => (
-              <div className="runtime-history-entry" key={entry.entryId}>
-                <div className="runtime-history-entry-top">
-                  <Badge tone={toneForCommandStatus(entry.status)}>{entry.status}</Badge>
-                  <span className="runtime-result-op">{entry.timestamp}</span>
-                </div>
-                <pre className="runtime-history-form">{entry.form}</pre>
-                <p>{entry.summary}</p>
-                {entry.valuePreview ? <pre className="runtime-preview">{entry.valuePreview}</pre> : null}
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="list-empty">Run forms in this session to build a retained listener history here.</p>
-        )}
-      </section>
-
-      <section className="panel runtime-summary-panel">
-        <div className="panel-header">
-          <div>
-            <p className="eyebrow">Live Image</p>
-            <h3>Listener Runtime Context</h3>
-          </div>
-          <Badge tone={runtimeSummary.activeMutations > 0 ? "warning" : "active"}>
-            {runtimeSummary.currentPackage}
-          </Badge>
-        </div>
-        <div className="runtime-summary-grid">
-          <ContextBlock label="Runtime Id" value={runtimeSummary.runtimeId} />
-          <ContextBlock label="Loaded Systems" value={String(runtimeSummary.loadedSystemCount)} />
-          <ContextBlock label="Active Mutations" value={String(runtimeSummary.activeMutations)} />
-          <ContextBlock label="Linked Incidents" value={String(runtimeSummary.linkedIncidentIds.length)} />
-        </div>
-        <div className="runtime-loaded-systems">
-          {runtimeSummary.loadedSystems.map((systemName) => (
-            <span className="thread-flag" key={systemName}>
-              {systemName}
-            </span>
-          ))}
-        </div>
-        <p className="lead-copy">{runtimeSummary.divergencePosture}</p>
-        <p className="mission-support">{runtimeSummary.sourceRelationship}</p>
-      </section>
-    </div>
-  );
-}
-
-function ApprovalsWorkspace({
-  approvalRequests,
-  selectedApprovalId,
-  selectedApproval,
-  approvalDecision,
-  isDecidingApproval,
-  setSelectedApprovalId,
-  submitApprovalDecision,
-  navigateToLinkedEntity
-}: {
-  approvalRequests: ApprovalRequestSummaryDto[];
-  selectedApprovalId: string | null;
-  selectedApproval: ApprovalRequestDto | null;
-  approvalDecision: CommandResultDto<ApprovalDecisionDto> | null;
-  isDecidingApproval: boolean;
-  setSelectedApprovalId: (requestId: string) => void;
-  submitApprovalDecision: (decision: "approve" | "deny") => Promise<void>;
-  navigateToLinkedEntity: (entity: LinkedEntityRefDto) => Promise<void>;
-}) {
-  const approvalRows = approvalRequests.map((request) => ({
-    key: request.requestId,
-    title: request.title,
-    state: request.state,
-    requestId: request.requestId,
-    summary: request.summary
-  }));
-
-  return (
-    <div className="approvals-grid">
-      <section className="approvals-list-panel">
-        <PanelHeader
-          title="Governed Decisions"
-          subtitle="Approvals appear here as execution decisions with consequence, not as detached prompts."
-        />
-        <BrowserDataTable
-          key="execution-approvals"
-          columnTemplate="minmax(0, 1.15fr) minmax(0, 0.8fr) minmax(0, 0.95fr) minmax(0, 1.45fr)"
-          columns={[
-            {
-              id: "title",
-              label: "Request",
-              render: (row) => <strong>{row.title}</strong>,
-              sortValue: (row) => row.title,
-              searchValue: (row) => `${row.title} ${row.summary} ${row.requestId}`
-            },
-            {
-              id: "state",
-              label: "State",
-              render: (row) => <PriorityStateChip label={row.state} tone={toneForApprovalState(row.state)} />,
-              sortValue: (row) => row.state
-            },
-            {
-              id: "id",
-              label: "Request Id",
-              render: (row) => row.requestId,
-              sortValue: (row) => row.requestId
-            },
-            {
-              id: "summary",
-              label: "Summary",
-              render: (row) => row.summary,
-              sortValue: (row) => row.summary,
-              searchValue: (row) => row.summary
-            }
-          ]}
-          emptyMessage="No approval requests in this environment."
-          filterLabel="State"
-          filterOptions={Array.from(new Set(approvalRows.map((row) => row.state))).map((value) => ({ label: value, value }))}
-          getFilterValue={(row) => row.state}
-          getRowKey={(row) => row.key}
-          onSelect={(row) => setSelectedApprovalId(row.key)}
-          rows={approvalRows}
-          searchPlaceholder="Search approval requests"
-          selectedKey={selectedApprovalId}
-        />
-      </section>
-
-      <section className="approval-detail-panel">
-        {selectedApproval ? (
-          <div className="panel">
-            <div className="panel-header">
-              <div>
-                <p className="eyebrow">Decision Context</p>
-                <h3>{selectedApproval.title}</h3>
-              </div>
-              <PriorityStateChip label={selectedApproval.state} tone={toneForApprovalState(selectedApproval.state)} />
-            </div>
-            <div className="browser-focus-card">
-              <div>
-                <p className="context-label">Requested Action</p>
-                <strong>{selectedApproval.requestedAction}</strong>
-                <p>{selectedApproval.summary}</p>
-              </div>
-              <Badge tone="steady">{selectedApproval.createdAt}</Badge>
-            </div>
-            <div className="approval-facts">
-              <ContextBlock label="Scope" value={selectedApproval.scopeSummary} />
-              <ContextBlock label="Policy" value={selectedApproval.policyId ?? "None"} />
-              <ContextBlock label="Created" value={selectedApproval.createdAt} />
-              <ContextBlock label="State" value={selectedApproval.state} />
-            </div>
-            <div className="approval-explanation">
-              <p className="lead-copy">{selectedApproval.rationale}</p>
-              <p className="mission-support">{selectedApproval.consequenceSummary}</p>
-            </div>
-            <section className="linked-entities-panel">
-              <PanelHeader title="Linked Context" subtitle="Turns, operations, work, and incidents stay visible before decision." />
-              <LinkedEntityList entities={selectedApproval.linkedEntities} navigateToLinkedEntity={navigateToLinkedEntity} />
-            </section>
-          </div>
-        ) : (
-          <div className="empty-state">
-            <p className="eyebrow">No Approval Selected</p>
-            <h3>Select an approval request to inspect its governed decision context.</h3>
-          </div>
-        )}
-      </section>
-
-      <section className="approval-action-panel">
-        <div className="panel">
-          <PanelHeader title="Apply Decision" subtitle="The operator either unblocks execution or diverts it into a different governed path." />
-          <div className="approval-actions">
-            <button
-              className="action-button"
-              disabled={!selectedApproval || isDecidingApproval}
-              onClick={() => void submitApprovalDecision("approve")}
-              type="button"
-            >
-              {isDecidingApproval ? "Submitting..." : "Approve Request"}
-            </button>
-            <button
-              className="action-button deny-button"
-              disabled={!selectedApproval || isDecidingApproval}
-              onClick={() => void submitApprovalDecision("deny")}
-              type="button"
-            >
-              {isDecidingApproval ? "Submitting..." : "Deny Request"}
-            </button>
-          </div>
-          {approvalDecision ? (
-            <div className="runtime-result-stack">
-              <div className="runtime-result-header">
-                <Badge tone={toneForApprovalDecision(approvalDecision.data.decision)}>
-                  {approvalDecision.data.decision}
-                </Badge>
-                <span className="runtime-result-op">{approvalDecision.operation}</span>
-              </div>
-              <p className="lead-copy">{approvalDecision.data.summary}</p>
-              <div className="ref-list">
-                {approvalDecision.data.resumedEntityIds.map((entityId) => (
-                  <span className="thread-flag" key={entityId}>
-                    {entityId}
-                  </span>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <p className="list-empty">Select an approval request to decide it here.</p>
-          )}
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function IncidentsWorkspace({
-  incidents,
-  selectedIncidentId,
-  selectedIncident,
-  pendingIncidentFocusId,
-  clearPendingIncidentFocusId,
-  setSelectedIncidentId,
-  navigateToLinkedEntity
-}: {
-  incidents: IncidentSummaryDto[];
-  selectedIncidentId: string | null;
-  selectedIncident: IncidentDetailDto | null;
-  pendingIncidentFocusId: string | null;
-  clearPendingIncidentFocusId: () => void;
-  setSelectedIncidentId: (incidentId: string) => void;
-  navigateToLinkedEntity: (entity: LinkedEntityRefDto) => Promise<void>;
-}) {
-  const incidentDetailPanelRef = useRef<HTMLDivElement | null>(null);
-  const selectedIncidentArtifactIds = selectedIncident?.artifactIds ?? [];
-  const selectedIncidentLinkedCount = selectedIncident?.linkedEntities.length ?? 0;
-  const recoveryObjective =
-    selectedIncident?.nextAction ??
-    selectedIncident?.recoverySummary ??
-    "Assess the dominant incident, restore trust, and only then return the environment to execution.";
-
-  useEffect(() => {
-    if (
-      !pendingIncidentFocusId ||
-      selectedIncident?.incidentId !== pendingIncidentFocusId
-    ) {
-      return;
-    }
-
-    const incidentPanel = incidentDetailPanelRef.current;
-    if (!incidentPanel) {
-      return;
-    }
-
-    incidentPanel.focus();
-    incidentPanel.scrollIntoView({ block: "start", behavior: "smooth" });
-    clearPendingIncidentFocusId();
-  }, [clearPendingIncidentFocusId, pendingIncidentFocusId, selectedIncident?.incidentId]);
-
-  return (
-    <div className="incidents-grid">
-      <JourneyStageStrip
-        eyebrow="Recovery Flow"
-        summary="Recovery should guide the operator from failure assessment into restoration, then back toward trustworthy continuation."
-        steps={[
-          {
-            id: "assess",
-            title: "Assess Failure",
-            summary: "Identify the dominant incident, severity, and recovery state without losing connection to runtime context.",
-            tone: incidents.length > 0 ? "danger" : "steady"
-          },
-          {
-            id: "restore",
-            title: "Restore Trust",
-            summary: "Use linked work and evidence to drive the environment toward a state that can be trusted again.",
-            tone:
-              selectedIncident?.recoveryState === "awaiting_acknowledgement"
-                ? "danger"
-                : selectedIncident?.recoveryState === "active_recovery"
-                  ? "warning"
-                  : selectedIncident
-                    ? "active"
-                    : "steady"
-          },
-          {
-            id: "resume",
-            title: "Resume Execution",
-            summary: "Recovery is complete only when the environment can re-enter execution without hidden obligations.",
-            tone: selectedIncidentArtifactIds.length > 0 || selectedIncidentLinkedCount > 0 ? "active" : "steady"
-          }
-        ]}
-        title="Recovery Journey"
-      />
-      <section className="panel recovery-objective-panel">
-        <div className="panel-header">
-          <div>
-            <p className="eyebrow">Current Recovery Objective</p>
-            <h3>{selectedIncident?.title ?? "No incident selected"}</h3>
-          </div>
-          <Badge tone={selectedIncident ? toneForIncidentSeverity(selectedIncident.severity) : "steady"}>
-            {selectedIncident?.state ?? "clear"}
-          </Badge>
-        </div>
-        <p className="lead-copy">{recoveryObjective}</p>
-        <div className="signal-digest-grid execution-objective-digest">
-          <div className="signal-digest-card">
-            <span className="context-label">Incidents</span>
-            <strong>{incidents.length}</strong>
-            <p>{incidents[0]?.title ?? "No incident dominates the environment."}</p>
-          </div>
-          <div className="signal-digest-card">
-            <span className="context-label">Recovery State</span>
-            <strong>{selectedIncident?.recoveryState ?? "idle"}</strong>
-            <p>{selectedIncident?.blockedReason ?? "Recovery can proceed without an explicit blocking reason."}</p>
-          </div>
-          <div className="signal-digest-card">
-            <span className="context-label">Evidence</span>
-            <strong>{selectedIncidentArtifactIds.length}</strong>
-            <p>{selectedIncidentArtifactIds.length > 0 ? "Recovery evidence is already attached to the incident." : "No explicit recovery evidence is attached yet."}</p>
-          </div>
-        </div>
-      </section>
-
-      <div className="recovery-layout">
-        <section className="incidents-list-panel">
-          <div className="panel-header">
-            <div>
-              <p className="eyebrow">Assess Failure</p>
-              <p className="panel-subtitle">Failures stay durable, governed, and recoverable.</p>
-            </div>
-          </div>
-          <div className="thread-list">
-            {incidents.length > 0 ? (
-              incidents.map((incident) => (
-                <button
-                  className={incident.incidentId === selectedIncidentId ? "thread-row active" : "thread-row"}
-                  key={incident.incidentId}
-                  onClick={() => setSelectedIncidentId(incident.incidentId)}
-                  type="button"
-                >
-                  <div className="thread-row-top">
-                    <strong>{incident.title}</strong>
-                    <Badge tone={toneForIncidentSeverity(incident.severity)}>{incident.severity}</Badge>
-                  </div>
-                  <p>{incident.incidentId}</p>
-                  <div className="thread-row-meta">
-                    <span>{incident.state}</span>
-                  </div>
-                </button>
-              ))
-            ) : (
-              <p className="list-empty">No incidents in this environment.</p>
-            )}
-          </div>
-        </section>
-
-        <div className="recovery-main-rail">
-          <section className="incident-detail-panel">
-            {selectedIncident ? (
-              <div className="panel" ref={incidentDetailPanelRef} tabIndex={-1}>
-                <div className="panel-header">
-                  <div>
-                    <p className="eyebrow">Restore Trust</p>
-                    <h3>{selectedIncident.title}</h3>
-                  </div>
-                  <Badge tone={toneForIncidentSeverity(selectedIncident.severity)}>{selectedIncident.state}</Badge>
-                </div>
-                <p className="lead-copy">{selectedIncident.summary}</p>
-                <div className="approval-facts">
-                  <ContextBlock label="Severity" value={selectedIncident.severity} />
-                  <ContextBlock label="Runtime" value={selectedIncident.runtimeId ?? "None"} />
-                  <ContextBlock label="Recovery State" value={selectedIncident.recoveryState} />
-                  <ContextBlock label="Updated" value={selectedIncident.updatedAt} />
-                </div>
-                <div className="approval-explanation">
-                  <p className="lead-copy">{selectedIncident.recoverySummary}</p>
-                  <p className="mission-support">{selectedIncident.nextAction}</p>
-                  {selectedIncident.blockedReason ? (
-                    <p className="mission-support">Blocked: {selectedIncident.blockedReason}</p>
-                  ) : null}
-                </div>
-              </div>
-            ) : (
-              <div className="empty-state">
-                <p className="eyebrow">No Incident Selected</p>
-                <h3>Select an incident to inspect governed recovery posture.</h3>
-              </div>
-            )}
-          </section>
-
-          <section className="incident-linked-panel">
-            {selectedIncident ? (
-              <div className="panel">
-                <PanelHeader title="Resume Execution" subtitle="Recovery stays tied to runtime, work, and evidence until continuation is trustworthy again." />
-                <LinkedEntityList entities={selectedIncident.linkedEntities} navigateToLinkedEntity={navigateToLinkedEntity} />
-                <section className="linked-entities-panel">
-                  <PanelHeader title="Evidence" subtitle="Artifacts remain explicit recovery evidence." />
-                  <div className="ref-list">
-                    {selectedIncident.artifactIds.map((artifactId) => (
-                      <span className="thread-flag" key={artifactId}>
-                        {artifactId}
-                      </span>
-                    ))}
-                  </div>
-                </section>
-              </div>
-            ) : (
-              <div className="empty-state">
-                <p className="eyebrow">No Recovery Context</p>
-                <h3>Select an incident to inspect linked runtime and artifact context.</h3>
-              </div>
-            )}
-          </section>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function WorkWorkspace({
-  workItems,
-  selectedWorkItemId,
-  selectedWorkItem,
-  selectedWorkflowRecord,
-  pendingWorkItemFocusId,
-  clearPendingWorkItemFocusId,
-  setSelectedWorkItemId,
-  navigateToLinkedEntity
-}: {
-  workItems: WorkItemSummaryDto[];
-  selectedWorkItemId: string | null;
-  selectedWorkItem: WorkItemDetailDto | null;
-  selectedWorkflowRecord: WorkflowRecordDto | null;
-  pendingWorkItemFocusId: string | null;
-  clearPendingWorkItemFocusId: () => void;
-  setSelectedWorkItemId: (workItemId: string) => void;
-  navigateToLinkedEntity: (entity: LinkedEntityRefDto) => Promise<void>;
-}) {
-  const workflowDetailPanelRef = useRef<HTMLDivElement | null>(null);
-  const workRows = workItems.map((workItem) => ({
-    key: workItem.workItemId,
-    title: workItem.title,
-    state: workItem.state,
-    waitingReason: workItem.waitingReason ?? "None",
-    approvalCount: workItem.approvalCount,
-    incidentCount: workItem.incidentCount,
-    artifactCount: workItem.artifactCount,
-    validationBurden: workItem.validationBurden,
-    reconciliationBurden: workItem.reconciliationBurden
-  }));
-
-  useEffect(() => {
-    if (
-      !pendingWorkItemFocusId ||
-      selectedWorkItem?.workItemId !== pendingWorkItemFocusId ||
-      !selectedWorkflowRecord
-    ) {
-      return;
-    }
-
-    const workflowPanel = workflowDetailPanelRef.current;
-    if (!workflowPanel) {
-      return;
-    }
-
-    workflowPanel.focus();
-    workflowPanel.scrollIntoView({ block: "start", behavior: "smooth" });
-    clearPendingWorkItemFocusId();
-  }, [clearPendingWorkItemFocusId, pendingWorkItemFocusId, selectedWorkItem?.workItemId, selectedWorkflowRecord]);
-
-  return (
-    <div className="work-grid">
-      <section className="work-list-panel">
-        <PanelHeader
-          title="Reconcile Work"
-          subtitle="Execution items remain visible with their validation and closure obligations attached."
-        />
-        <BrowserDataTable
-          key="execution-work"
-          columnTemplate="minmax(0, 1.1fr) minmax(0, 0.78fr) minmax(0, 1.15fr) minmax(0, 0.7fr) minmax(0, 0.7fr) minmax(0, 0.7fr)"
-          columns={[
-            {
-              id: "title",
-              label: "Work Item",
-              render: (row) => <strong>{row.title}</strong>,
-              sortValue: (row) => row.title,
-              searchValue: (row) => `${row.title} ${row.waitingReason} ${row.validationBurden} ${row.reconciliationBurden}`
-            },
-            {
-              id: "state",
-              label: "State",
-              render: (row) => <PriorityStateChip label={row.state} tone={toneForWorkState(row.state)} />,
-              sortValue: (row) => row.state
-            },
-            {
-              id: "waiting",
-              label: "Waiting",
-              render: (row) => row.waitingReason,
-              sortValue: (row) => row.waitingReason
-            },
-            {
-              id: "approvals",
-              label: "Approvals",
-              render: (row) => row.approvalCount,
-              sortValue: (row) => row.approvalCount
-            },
-            {
-              id: "incidents",
-              label: "Incidents",
-              render: (row) => row.incidentCount,
-              sortValue: (row) => row.incidentCount
-            },
-            {
-              id: "artifacts",
-              label: "Artifacts",
-              render: (row) => row.artifactCount,
-              sortValue: (row) => row.artifactCount
-            }
-          ]}
-          emptyMessage="No governed work items in this environment."
-          filterLabel="State"
-          filterOptions={Array.from(new Set(workRows.map((row) => row.state))).map((value) => ({ label: value, value }))}
-          getFilterValue={(row) => row.state}
-          getRowKey={(row) => row.key}
-          onSelect={(row) => setSelectedWorkItemId(row.key)}
-          rows={workRows}
-          searchPlaceholder="Search work items"
-          selectedKey={selectedWorkItemId}
-        />
-      </section>
-
-      <section className="work-detail-panel">
-        {selectedWorkItem ? (
-          <div className="panel">
-            <div className="panel-header">
-              <div>
-                <p className="eyebrow">Selected Execution Item</p>
-                <h3>{selectedWorkItem.title}</h3>
-              </div>
-              <PriorityStateChip label={selectedWorkItem.state} tone={toneForWorkState(selectedWorkItem.state)} />
-            </div>
-            <div className="browser-focus-card">
-              <div>
-                <p className="context-label">Selected Execution Item</p>
-                <strong>{selectedWorkItem.title}</strong>
-                <p>{selectedWorkItem.waitingReason ?? "No waiting reason is currently blocking this work item."}</p>
-              </div>
-              <Badge tone="steady">{selectedWorkItem.workflowRecordId}</Badge>
-            </div>
-            <div className="approval-facts">
-              <ContextBlock label="Workflow Record" value={selectedWorkItem.workflowRecordId} />
-              <ContextBlock label="Waiting" value={selectedWorkItem.waitingReason ?? "None"} />
-              <ContextBlock label="Runtime" value={selectedWorkItem.runtimeSummary} />
-              <ContextBlock label="Source Relationship" value={selectedWorkItem.sourceRelationship} />
-            </div>
-            <section className="linked-entities-panel">
-              <PanelHeader title="Linked Context" subtitle="Approvals, incidents, and artifacts stay attached to the work." />
-              <LinkedEntityList entities={selectedWorkItem.linkedEntities} navigateToLinkedEntity={navigateToLinkedEntity} />
-            </section>
-          </div>
-        ) : (
-          <div className="empty-state">
-            <p className="eyebrow">No Work Item Selected</p>
-            <h3>Select a governed work item to inspect closure posture.</h3>
-          </div>
-        )}
-      </section>
-
-      <section className="workflow-detail-panel">
-        {selectedWorkflowRecord ? (
-          <div className="panel" ref={workflowDetailPanelRef} tabIndex={-1}>
-            <div className="panel-header">
-              <div>
-                <p className="eyebrow">Closure Path</p>
-                <h3>{selectedWorkflowRecord.phase}</h3>
-              </div>
-              <Badge tone={selectedWorkflowRecord.closureReadiness === "closable" ? "active" : "warning"}>
-                {selectedWorkflowRecord.closureReadiness}
-              </Badge>
-            </div>
-            <div className="approval-facts">
-              <ContextBlock label="Validation" value={selectedWorkflowRecord.validationState} />
-              <ContextBlock label="Reconciliation" value={selectedWorkflowRecord.reconciliationState} />
-              <ContextBlock label="Closure" value={selectedWorkflowRecord.closureReadiness} />
-              <ContextBlock label="Phase" value={selectedWorkflowRecord.phase} />
-            </div>
-            <p className="lead-copy">{selectedWorkflowRecord.closureSummary}</p>
-            <section className="linked-entities-panel">
-              <PanelHeader title="Blocking Items" subtitle="Closure is withheld until these obligations clear." />
-              <div className="ref-list">
-                {selectedWorkflowRecord.blockingItems.map((item) => (
-                  <span className="thread-flag" key={item}>
-                    {item}
-                  </span>
-                ))}
-              </div>
-            </section>
-          </div>
-        ) : (
-          <div className="empty-state">
-            <p className="eyebrow">No Workflow Record</p>
-            <h3>Select a work item to inspect its workflow and closure posture.</h3>
-          </div>
-        )}
-      </section>
-    </div>
-  );
-}
-
-function ActivityWorkspace({
-  events,
-  selectedEventCursor,
-  selectedEvent,
-  eventFamilyFilter,
-  eventVisibilityFilter,
-  setSelectedEventCursor,
-  setEventFamilyFilter,
-  setEventVisibilityFilter
-}: {
-  events: EnvironmentEventDto[];
-  selectedEventCursor: number | null;
-  selectedEvent: EnvironmentEventDto | null;
-  eventFamilyFilter: string;
-  eventVisibilityFilter: string;
-  setSelectedEventCursor: (cursor: number) => void;
-  setEventFamilyFilter: (value: string) => void;
-  setEventVisibilityFilter: (value: string) => void;
-}) {
-  const families = useMemo(() => {
-    const values = new Set(events.map((event) => event.family));
-    return ["all", ...Array.from(values)];
-  }, [events]);
-
-  const visibilities = useMemo(() => {
-    const values = new Set(events.map((event) => event.visibility ?? "unspecified"));
-    return ["all", ...Array.from(values)];
-  }, [events]);
-
-  return (
-    <div className="activity-grid">
-      <section className="activity-list-panel">
-        <div className="panel-header">
-          <div>
-            <p className="eyebrow">Event Replay</p>
-            <p className="panel-subtitle">The environment emits replayable operational evidence, not disposable console noise.</p>
-          </div>
-        </div>
-
-        <div className="activity-filter-row">
-          <FilterSelect
-            label="Family"
-            options={families}
-            value={eventFamilyFilter}
-            onChange={setEventFamilyFilter}
-          />
-          <FilterSelect
-            label="Visibility"
-            options={visibilities}
-            value={eventVisibilityFilter}
-            onChange={setEventVisibilityFilter}
-          />
-        </div>
-
-        <div className="activity-summary-grid">
-          <MetricTile label="Visible Events" value={events.length} />
-          <MetricTile
-            label="Operator Events"
-            value={events.filter((event) => (event.visibility ?? "unspecified") === "operator").length}
-          />
-          <MetricTile
-            label="Families"
-            value={new Set(events.map((event) => event.family)).size}
-          />
-        </div>
-
-        <div className="thread-list">
-          {events.length > 0 ? (
-            events.map((event) => (
-              <button
-                className={event.cursor === selectedEventCursor ? "event-row active" : "event-row"}
-                key={event.cursor}
-                onClick={() => setSelectedEventCursor(event.cursor)}
-                type="button"
-              >
-                <div className="event-row-top">
-                  <strong>{event.kind}</strong>
-                  <Badge tone={toneForEventFamily(event.family)}>{event.family}</Badge>
-                </div>
-                <p>{event.summary}</p>
-                <div className="event-row-meta">
-                  <span>{event.timestamp}</span>
-                  <span>{event.visibility ?? "unspecified"}</span>
-                  <span>#{event.cursor}</span>
-                </div>
-              </button>
-            ))
-          ) : (
-            <p className="list-empty">No events match the current observation filters.</p>
-          )}
-        </div>
-      </section>
-
-      <section className="activity-detail-panel">
-        <div className="panel">
-          <div className="panel-header">
-            <div>
-              <p className="eyebrow">Observed Event</p>
-              <h3>{selectedEvent ? selectedEvent.kind : "No event matches the active observation filters"}</h3>
-            </div>
-            <Badge tone={selectedEvent ? toneForEventFamily(selectedEvent.family) : "steady"}>
-              {selectedEvent ? selectedEvent.family : "empty"}
-            </Badge>
-          </div>
-          {selectedEvent ? (
-            <>
-              <p className="lead-copy">{selectedEvent.summary}</p>
-              <div className="approval-facts">
-                <ContextBlock label="Cursor" value={String(selectedEvent.cursor)} />
-                <ContextBlock label="Timestamp" value={selectedEvent.timestamp} />
-                <ContextBlock label="Visibility" value={selectedEvent.visibility ?? "unspecified"} />
-                <ContextBlock label="Entity" value={selectedEvent.entityId ?? "None"} />
-              </div>
-              <section className="linked-entities-panel">
-                <PanelHeader title="Observed Payload" subtitle="Transport payload remains inspectable and structurally explicit." />
-                <pre className="runtime-preview">{JSON.stringify(selectedEvent.payload, null, 2)}</pre>
-              </section>
-            </>
-          ) : (
-            <>
-              <p className="lead-copy">Observation remains part of the evidence journey even when the current filters yield no event rows.</p>
-              <section className="linked-entities-panel">
-                <PanelHeader title="Observed Payload" subtitle="When replay results are empty, the desktop should explain why instead of collapsing the detail stage." />
-                <pre className="runtime-preview">{JSON.stringify({ reason: "no_event_selected", family: eventFamilyFilter, visibility: eventVisibilityFilter }, null, 2)}</pre>
-              </section>
-            </>
-          )}
-        </div>
-      </section>
-
-      <section className="activity-side-panel">
-        <div className="panel">
-          <PanelHeader title="Why Evidence Flows" subtitle="Attention should emerge from event structure and provenance, not from raw log volume." />
-          <div className="entity-list">
-            <div className="entity-row">
-              <div>
-                <strong>Environment-native</strong>
-                <p>Events are scoped to the bound environment rather than to a file, tab, or raw transport trace.</p>
-              </div>
-            </div>
-            <div className="entity-row">
-              <div>
-                <strong>Governed visibility</strong>
-                <p>Operator and team visibility remain explicit so attention can be directed without collapsing context.</p>
-              </div>
-            </div>
-            <div className="entity-row">
-              <div>
-                <strong>Replay before streaming</strong>
-                <p>The desktop can bootstrap from durable event history first, then later layer live subscriptions on top.</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function ArtifactsWorkspace({
-  artifacts,
-  selectedArtifactId,
-  selectedArtifact,
-  setSelectedArtifactId,
-  navigateToLinkedEntity
-}: {
-  artifacts: ArtifactSummaryDto[];
-  selectedArtifactId: string | null;
-  selectedArtifact: ArtifactDetailDto | null;
-  setSelectedArtifactId: (artifactId: string) => void;
-  navigateToLinkedEntity: (entity: LinkedEntityRefDto) => Promise<void>;
-}) {
-  return (
-    <div className="artifacts-grid">
-      <section className="artifacts-list-panel">
-        <div className="panel-header">
-          <div>
-            <p className="eyebrow">Durable Evidence</p>
-            <p className="panel-subtitle">Artifacts remain durable engineering objects with provenance, scope, and downstream consequence.</p>
-          </div>
-        </div>
-        <div className="thread-list">
-          {artifacts.length > 0 ? (
-            artifacts.map((artifact) => (
-              <button
-                className={artifact.artifactId === selectedArtifactId ? "thread-row active" : "thread-row"}
-                key={artifact.artifactId}
-                onClick={() => setSelectedArtifactId(artifact.artifactId)}
-                type="button"
-              >
-                <div className="thread-row-top">
-                  <strong>{artifact.title}</strong>
-                  <Badge tone="steady">{artifact.kind}</Badge>
-                </div>
-                <p>{artifact.summary}</p>
-                <div className="thread-row-meta">
-                  <span>{artifact.artifactId}</span>
-                  <span>{artifact.updatedAt}</span>
-                </div>
-              </button>
-            ))
-          ) : (
-            <p className="list-empty">No artifacts in this environment.</p>
-          )}
-        </div>
-      </section>
-
-      <section className="artifacts-detail-panel">
-        {selectedArtifact ? (
-          <div className="panel">
-            <div className="panel-header">
-              <div>
-                <p className="eyebrow">Selected Evidence</p>
-                <h3>{selectedArtifact.title}</h3>
-              </div>
-              <Badge tone={toneForArtifactState(selectedArtifact.state)}>{selectedArtifact.state}</Badge>
-            </div>
-            <p className="lead-copy">{selectedArtifact.summary}</p>
-            <div className="approval-facts">
-              <ContextBlock label="Artifact Id" value={selectedArtifact.artifactId} />
-              <ContextBlock label="Kind" value={selectedArtifact.kind} />
-              <ContextBlock label="Authority" value={selectedArtifact.authority} />
-              <ContextBlock label="Updated" value={selectedArtifact.updatedAt} />
-            </div>
-            <div className="approval-explanation">
-              <p className="lead-copy">{selectedArtifact.provenance}</p>
-            </div>
-            <section className="linked-entities-panel">
-              <PanelHeader title="Producing Context" subtitle="Artifacts stay attached to the governed work that produced them or still depends on them." />
-              <LinkedEntityList entities={selectedArtifact.linkedEntities} navigateToLinkedEntity={navigateToLinkedEntity} />
-            </section>
-          </div>
-        ) : (
-          <div className="empty-state">
-            <p className="eyebrow">No Artifact Selected</p>
-            <h3>Select an artifact to inspect its provenance and scope.</h3>
-          </div>
-        )}
-      </section>
-
-      <section className="artifacts-observations-panel">
-        {selectedArtifact ? (
-          <div className="panel">
-            <PanelHeader title="Observations" subtitle="Why this artifact matters in the current environment posture." />
-            <div className="entity-list">
-              {selectedArtifact.observations.map((observation) => (
-                <div className="entity-row" key={observation}>
-                  <div>
-                    <strong>{selectedArtifact.kind}</strong>
-                    <p>{observation}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="empty-state">
-            <p className="eyebrow">No Observations</p>
-            <h3>Select an artifact to inspect its current evidentiary posture.</h3>
-          </div>
-        )}
-      </section>
-    </div>
-  );
-}
-
-function HelpHint({ text }: { text: string }) {
-  return (
-    <span className="help-hint" tabIndex={0}>
-      <span aria-hidden="true" className="help-hint-trigger" title={text}>
-        ?
-      </span>
-      <span className="help-hint-bubble" role="tooltip">
-        {text}
-      </span>
-    </span>
-  );
-}
-
-function PanelHeader({
-  title,
-  subtitle,
-  helpText
-}: {
-  title: string;
-  subtitle: string;
-  helpText?: string;
-}) {
-  return (
-    <div className="panel-header">
-      <div>
-        <div className="panel-header-title-row">
-          <p className="eyebrow">{title}</p>
-          {helpText ? <HelpHint text={helpText} /> : null}
-        </div>
-        <p className="panel-subtitle">{subtitle}</p>
-      </div>
-    </div>
-  );
-}
-
-function DetailRow({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="detail-row">
-      <dt>{label}</dt>
-      <dd>{value}</dd>
-    </div>
-  );
-}
-
-function ContextBlock({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="context-block">
-      <p className="context-label">{label}</p>
-      <p className="context-value">{value}</p>
-    </div>
-  );
-}
-
-function MetricTile({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="metric-tile">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function FilterSelect({
-  label,
-  options,
-  value,
-  onChange
-}: {
-  label: string;
-  options: string[];
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label className="filter-select">
-      <span className="context-label">{label}</span>
-      <select className="filter-input" onChange={(event) => onChange(event.target.value)} value={value}>
-        {options.map((option) => (
-          <option key={option} value={option}>
-            {option}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function MessageBubble({
-  message,
-  isSelected,
-  onSelect
-}: {
-  message: MessageDto;
-  isSelected: boolean;
-  onSelect: () => void;
-}) {
-  return (
-    <div
-      aria-pressed={isSelected}
-      className={`message-bubble role-${message.role}${isSelected ? " selected" : ""}`}
-      onClick={onSelect}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onSelect();
-        }
-      }}
-      role="button"
-      tabIndex={0}
-    >
-      <p>{message.content}</p>
-    </div>
-  );
-}
-
-function RefBlock({ label, values }: { label: string; values: string[] }) {
-  return (
-    <div className="ref-block">
-      <p className="context-label">{label}</p>
-      {values.length > 0 ? (
-        <div className="ref-list">
-          {values.map((value) => (
-            <span className="thread-flag" key={value}>
-              {value}
-            </span>
-          ))}
-        </div>
-      ) : (
-        <p className="list-empty">None</p>
-      )}
-    </div>
-  );
-}
-
-function LinkedEntityList({
-  entities,
-  navigateToLinkedEntity
-}: {
-  entities: LinkedEntityRefDto[];
-  navigateToLinkedEntity?: (entity: LinkedEntityRefDto) => Promise<void>;
-}) {
-  return (
-    <div className="entity-list">
-      {entities.map((entity) => {
-        const interactive = Boolean(navigateToLinkedEntity);
-        const content = (
-          <>
-            <div>
-              <strong>{entity.label}</strong>
-              <p>{entity.entityId}</p>
-            </div>
-            <div className="entity-meta">
-              <Badge tone="steady">{entity.entityType}</Badge>
-              {interactive ? <span className="entity-jump-hint">Open</span> : null}
-            </div>
-          </>
-        );
-
-        return interactive ? (
-          <button
-            className="entity-row entity-row-button"
-            key={`${entity.entityType}-${entity.entityId}`}
-            onClick={() => void navigateToLinkedEntity?.(entity)}
-            type="button"
-          >
-            {content}
-          </button>
-        ) : (
-          <div className="entity-row" key={`${entity.entityType}-${entity.entityId}`}>
-            {content}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function Badge({ children, tone }: { children: string; tone: "active" | "warning" | "danger" | "steady" }) {
-  return <span className={`badge badge-${tone}`}>{children}</span>;
-}
-
-function PriorityBubble({ count, priority }: { count: number; priority: SignalPriority }) {
-  return <span className={`priority-bubble priority-${priority}`}>{count}</span>;
-}
-
-function PrioritySignalCluster({ counts }: { counts: SignalCounts }) {
-  if (counts.red + counts.yellow + counts.blue <= 0) {
-    return <span className="workspace-signal workspace-signal-muted">Quiet</span>;
-  }
-
-  return (
-    <div className="priority-signal-cluster" aria-label="Priority signals">
-      {counts.red > 0 ? <PriorityBubble count={counts.red} priority="red" /> : null}
-      {counts.yellow > 0 ? <PriorityBubble count={counts.yellow} priority="yellow" /> : null}
-      {counts.blue > 0 ? <PriorityBubble count={counts.blue} priority="blue" /> : null}
-    </div>
-  );
-}
-
-function PriorityStateChip({
-  label,
-  tone
-}: {
-  label: string;
-  tone: "active" | "warning" | "danger" | "steady";
-}) {
-  const priority = signalPriorityForTone(tone) ?? "blue";
-  return (
-    <span className={`priority-state-chip priority-${priority}`}>
-      <span aria-hidden="true" className="priority-state-dot" />
-      <span>{label}</span>
-    </span>
   );
 }
 
@@ -13656,18 +13844,6 @@ function compressActionQueue(items: ActionQueueItem[]): ActionQueueItem[] {
   });
 }
 
-function groupWorkspaces(): [string, Array<{ id: WorkspaceId; label: string; group: string; primary: boolean }>] [] {
-  const groups = new Map<string, Array<{ id: WorkspaceId; label: string; group: string; primary: boolean }>>();
-
-  for (const workspace of workspaceOrder.filter((item) => item.primary)) {
-    const items = groups.get(workspace.group) ?? [];
-    items.push(workspace);
-    groups.set(workspace.group, items);
-  }
-
-  return Array.from(groups.entries());
-}
-
 function signalPriorityForTone(tone: "active" | "warning" | "danger" | "steady"): SignalPriority | null {
   switch (tone) {
     case "danger":
@@ -13696,9 +13872,6 @@ function priorityLabelForTone(
 
 function signalCountsForWorkspace(workspaceId: WorkspaceId, items: GlobalAttentionItem[]): SignalCounts {
   const targetWorkspace = canonicalWorkspace(workspaceId);
-  if (targetWorkspace === "dashboard") {
-    return signalCountsFromItems(items);
-  }
   const counts: SignalCounts = { red: 0, yellow: 0, blue: 0 };
 
   for (const item of items) {
@@ -13767,22 +13940,6 @@ function toneForTurnState(
   }
 }
 
-function toneForCommandStatus(
-  status: CommandResultDto<RuntimeEvalResultDto>["status"]
-): "active" | "warning" | "danger" | "steady" {
-  switch (status) {
-    case "ok":
-      return "active";
-    case "awaiting_approval":
-      return "warning";
-    case "error":
-    case "rejected":
-      return "danger";
-    default:
-      return "steady";
-  }
-}
-
 function toneForApprovalState(
   state: ApprovalRequestSummaryDto["state"]
 ): "active" | "warning" | "danger" | "steady" {
@@ -13838,36 +13995,6 @@ function toneForWorkState(
       return "warning";
     case "blocked":
     case "quarantined":
-      return "danger";
-    default:
-      return "steady";
-  }
-}
-
-function toneForEventFamily(family: string): "active" | "warning" | "danger" | "steady" {
-  switch (family) {
-    case "runtime":
-    case "conversation":
-      return "active";
-    case "approval":
-    case "workflow":
-      return "warning";
-    case "incident":
-      return "danger";
-    default:
-      return "steady";
-  }
-}
-
-function toneForArtifactState(state: ArtifactDetailDto["state"]): "active" | "warning" | "danger" | "steady" {
-  switch (state) {
-    case "active":
-      return "active";
-    case "draft":
-      return "warning";
-    case "superseded":
-      return "steady";
-    case "evidence":
       return "danger";
     default:
       return "steady";

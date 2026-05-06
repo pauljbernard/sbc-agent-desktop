@@ -16,8 +16,20 @@ export default defineConfig({
           environment: "node",
           include: ["tests/unit/**/*.test.ts"],
           coverage: {
-            include: ["src/renderer/src/workspace-shell.ts", "src/shared/mock-environments.ts", "src/shared/test-reporting.js"]
+            include: [
+              "src/renderer/src/workspace-shell.ts",
+              "src/renderer/src/shell-layout.ts",
+              "src/shared/mock-environments.ts",
+              "src/shared/test-reporting.js"
+            ]
           }
+        }
+      },
+      {
+        test: {
+          name: "renderer-component",
+          environment: "jsdom",
+          include: ["tests/renderer/**/*.test.tsx"]
         }
       },
       {

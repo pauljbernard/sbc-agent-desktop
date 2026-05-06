@@ -43,7 +43,7 @@ It owns:
 - window and panel orchestration
 - global inspector
 - object browser
-- governance queue and attention posture
+- shell-level attention posture
 - display-surface management
 - application launching and app lifecycle
 - desktop-wide evidence and status posture
@@ -83,10 +83,7 @@ It is the system control panel, not the whole operating system.
 Other hosted applications can then emerge on the same architecture, for example:
 
 - runtime listener / Lisp workbench
-- runtime browser
-- package and platform manager
-- compatibility app launcher and manager
-- artifact explorer
+- other future browser-linked capabilities
 - recovery console
 - workflow control surface
 
@@ -168,9 +165,9 @@ Applications must not become shadow desktop shells.
 
 ### What Must Change
 
-The current left-rail workspace taxonomy cannot remain the top-level desktop identity forever.
+The current left-rail workspace taxonomy should not dominate the top-level desktop identity.
 
-It is too application-shaped.
+It must remain subordinate to the shell-level desktop field and resident surfaces.
 
 The next desktop should instead expose:
 
@@ -180,7 +177,14 @@ The next desktop should instead expose:
 - shell-level inspector and object access
 - shell-level proactive posture
 
-The current Operate / Browser / Evidence / Recovery structure can remain, but as navigation inside the control panel application.
+The current live direction is:
+
+- top-level shell items stay shallow and direct
+- `Operate` is the consolidated operational instrument
+- `Browser` is the consolidated introspection instrument
+- `Conversations` and `Configuration` remain separate focused surfaces
+
+That structure should remain inside the control panel application rather than becoming a second desktop shell.
 
 ### What Should Be Preserved
 
