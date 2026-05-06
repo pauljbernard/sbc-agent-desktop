@@ -1,5 +1,5 @@
 title: sbcl-agent Desktop User Documentation
-description: User documentation for the sbcl-agent desktop: an environment-first, agentic development workspace.
+description: "User documentation for the sbcl-agent desktop: an environment-first, agentic development workspace."
 theme: minima
 markdown: kramdown
 plugins:
