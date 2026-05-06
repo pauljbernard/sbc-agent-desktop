@@ -14,6 +14,7 @@ The desktop treats conversations as governed runtime objects with:
 - turns
 - linked engineering entities
 - durable continuation state
+- selected-thread workspace persistence
 
 ## Threads
 
@@ -26,6 +27,8 @@ The page starts with the thread table, then shows the selected thread below it:
 - linked entities
 
 Use this when you want to understand the larger supervised conversation.
+
+The selected thread should remain stable while you inspect history and send the next message. If the thread changes, treat that as a bug rather than normal behavior.
 
 ## Turns
 
@@ -48,11 +51,18 @@ Use `Draft` when you want to prepare the next supervised conversation step.
 
 The editor is the primary surface on this page. The selected thread context appears below it so the draft stays grounded in the current continuation.
 
+Current draft behavior assumes:
+
+- the selected thread remains active while you send
+- transcript history stays visible after a send
+- governed follow-up work can route from the same conversation context into approvals or work without losing thread orientation
+
 ## Recommended Workflow
 
 1. pick the active thread
 2. inspect the relevant turn if you need lifecycle detail
 3. draft the next step only after you understand the linked context
+4. move into Execution or Evidence if the next action depends on direct runtime or artifact inspection
 
 ## Important Distinction
 

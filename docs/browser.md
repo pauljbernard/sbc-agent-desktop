@@ -47,6 +47,7 @@ Source panels in Browser are Lisp-aware:
 - code is formatted for readability
 - parentheses are colorized by depth
 - the view is vertically scrollable
+- editor-symbol context can be surfaced alongside the browser work without shifting the main source panel itself
 
 Parenthesis color settings are available in [Configuration](configuration.md).
 
@@ -57,6 +58,7 @@ Parenthesis color settings are available in [Configuration](configuration.md).
 3. inspect detail and source
 4. jump into `XREF` or `Documentation`
 5. use linked context to move into Conversations, Execution, or Evidence as needed
+6. keep the browser as the live semantic inspection surface rather than falling back immediately to file browsing
 
 ## Important Distinction
 

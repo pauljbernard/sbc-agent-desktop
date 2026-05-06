@@ -7,9 +7,9 @@ title: Desktop Tour
 The desktop shell is organized around a stable frame:
 
 - a full-width shell header
-- a left navigation rail
+- a left rail
 - a central workspace canvas
-- a right inspector rail
+- a right rail
 - a compact footer status dock
 
 ## Shell Header
@@ -18,9 +18,16 @@ The header identifies the product and keeps shell continuity visible across work
 
 It is not where workspace-local operations happen.
 
-## Navigation Rail
+## Left Rail
 
-The navigation rail is hierarchical and space-efficient.
+The left rail hosts docked shell panels.
+
+Today that usually means:
+
+- a navigation panel
+- utility panels that stay docked beside navigation instead of being forced into the main canvas
+
+Docked panels are presented as a compact, scrollable selectable list at the top of the rail. The active entry determines which rail panel body is visible.
 
 Top-level workspaces:
 
@@ -32,7 +39,14 @@ Top-level workspaces:
 - Evidence
 - Configuration
 
-Each top-level area expands to show subpages. This means the desktop keeps one navigation system instead of duplicating submenus inside the canvas.
+The navigation surface itself is still hierarchical. Top-level areas expand to show subpages, which lets the desktop keep one navigation system instead of duplicating submenus inside the canvas.
+
+The left rail can also be:
+
+- collapsed
+- re-expanded
+- resized with the splitter
+- used as a docking target for floating shell panels
 
 ## Workspace Canvas
 
@@ -55,11 +69,47 @@ The shell is designed to support one working sequence:
 
 That sequence is intentional. The desktop is trying to reduce the gap between inspection, action, and proof.
 
-## Inspector Rail
+## Right Rail
 
-The inspector is secondary context.
+The right rail is the secondary-context rail.
 
-It should help you keep orientation, but it should not replace the main workspace surface.
+It usually hosts:
+
+- the workspace inspector
+- editor-symbol and related context panels
+
+Like the left rail, it supports:
+
+- multiple docked panels
+- compact selectable rail entries
+- collapse and re-expand
+- resize through the splitter
+- redocking of floating shell panels
+
+The right rail should help you keep orientation, but it should not replace the main workspace surface.
+
+## Floating Panels
+
+Undocked rail panels no longer fall into a dock at the bottom of the application.
+
+When you undock a panel, it becomes a floating window in the central desktop stage. That window keeps explicit actions for docking back into:
+
+- the left rail
+- the right rail
+
+This keeps docking behavior visible and consistent with the multitasking shell model.
+
+## Splitters
+
+The shell has left and right splitters between the rails and the main canvas.
+
+Those splitters allow you to:
+
+- expand a rail
+- contract a rail
+- preserve a more comfortable working width for dense panels
+
+Rail width is part of the shell experience, not a cosmetic afterthought.
 
 ## Footer
 
