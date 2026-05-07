@@ -9268,6 +9268,7 @@ export function App() {
                 stageSourceChange,
                 selectedConsolePlane,
                 selectedConsoleSourceFilter,
+                documentationPages,
                 selectedDocumentationSlug,
                 selectedConsoleEntryId,
                 selectedDiagnosticSourceFilter,
@@ -13711,6 +13712,7 @@ function BrowserWorkspace({
   incidents,
   artifacts,
   threads,
+  documentationPages,
   selectedDocumentationSlug,
   loadDocumentationPage,
   workItems,
@@ -13781,6 +13783,7 @@ function BrowserWorkspace({
   incidents: IncidentSummaryDto[];
   artifacts: ArtifactSummaryDto[];
   threads: ThreadSummaryDto[];
+  documentationPages: DocumentationPageSummaryDto[];
   selectedDocumentationSlug: string;
   loadDocumentationPage: (slug: string) => Promise<void>;
   workItems: WorkItemSummaryDto[];
@@ -14392,12 +14395,12 @@ function BrowserWorkspace({
         ["Trace", selectedSystemEntry.status]
       ]
     : [];
-  const documentationRows = documentationEntries.map((entry) => ({
-    key: entry.key,
-    slug: entry.key,
-    label: entry.label,
-    category: entry.category,
-    summary: entry.summary
+  const documentationRows = documentationPages.map((page) => ({
+    key: page.slug,
+    slug: page.slug,
+    label: page.title,
+    category: page.category,
+    summary: page.summary
   }));
   const browserFocusIdentityRows = [
     [
