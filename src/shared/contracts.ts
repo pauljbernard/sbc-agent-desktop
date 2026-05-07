@@ -1168,6 +1168,7 @@ export interface PackageBrowserSymbolDto {
 
 export interface PackageBrowserDto {
   packageName: string;
+  availablePackages: string[];
   nicknames: string[];
   useList: string[];
   externalSymbols: PackageBrowserSymbolDto[];

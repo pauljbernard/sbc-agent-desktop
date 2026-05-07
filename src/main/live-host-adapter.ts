@@ -1519,6 +1519,9 @@ function adaptPackageBrowserResponse(
       (data.internal_symbols as Record<string, unknown>[] | undefined)
   );
   const useList = asStringArray((data.useList as unknown[] | undefined) ?? (data.use_list as unknown[] | undefined));
+  const availablePackages = asStringArray(
+    (data.availablePackages as unknown[] | undefined) ?? (data.available_packages as unknown[] | undefined)
+  );
   const adaptSymbol = (entry: Record<string, unknown>) => ({
     symbol: String(entry.symbol ?? "UNKNOWN"),
     kind: (() => {
@@ -1547,6 +1550,7 @@ function adaptPackageBrowserResponse(
     status: response.status === "error" ? "error" : "ok",
     data: {
       packageName: String(data.package ?? "CL-USER"),
+      availablePackages,
       nicknames: asStringArray(data.nicknames),
       useList,
       externalSymbols: externalSymbols.map(adaptSymbol),

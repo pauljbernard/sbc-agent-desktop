@@ -592,6 +592,9 @@
   (declare (ignore session))
   (let* ((resolved-package (or (find-package package-name)
                                (error "Unknown package ~S" package-name)))
+         (available-packages (sort (remove-duplicates (mapcar #'package-name (list-all-packages))
+                                                      :test #'string=)
+                                   #'string<))
          (externals '())
          (internals '()))
     (do-external-symbols (symbol resolved-package)
@@ -603,6 +606,7 @@
         (when (eq found-status :internal)
           (push (package-symbol-summary symbol :internal) internals))))
     (list :package (package-name resolved-package)
+          :available-packages available-packages
           :nicknames (sort (copy-list (package-nicknames resolved-package)) #'string<)
           :use-list (sort (mapcar #'package-name (package-use-list resolved-package)) #'string<)
           :external-symbols (sort externals #'string< :key (lambda (entry) (getf entry :symbol)))

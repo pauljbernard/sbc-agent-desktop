@@ -2538,6 +2538,14 @@ export function queryPackageBrowser(input: {
     status: "ok",
     data: {
       packageName,
+      availablePackages: [
+        "COMMON-LISP",
+        "COMMON-LISP-USER",
+        "KEYWORD",
+        "SBCL-AGENT",
+        "SBCL-AGENT.CALCULATOR",
+        packageName
+      ].filter((value, index, values) => values.indexOf(value) === index),
       nicknames: packageName === runtime.currentPackage ? ["SAU"] : [],
       useList: ["COMMON-LISP"],
       externalSymbols: [

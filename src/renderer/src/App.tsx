@@ -13852,6 +13852,7 @@ function BrowserWorkspace({
 
   const packageNames = Array.from(
     new Set([
+      ...(packageBrowser?.data.availablePackages ?? []),
       runtimeSummary?.currentPackage,
       packageBrowser?.data.packageName,
       ...(runtimeSummary?.scopes.map((scope) => scope.packageName) ?? [])
