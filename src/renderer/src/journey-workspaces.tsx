@@ -33,6 +33,7 @@ export type ApprovalsWorkspaceProps = {
   approvalRequests: ApprovalRequestSummaryDto[];
   workItems: WorkItemSummaryDto[];
   reconciliationDecision: ReconciliationDecisionDto | null;
+  environmentFocusLabel: string;
   selectedApprovalId: string | null;
   selectedApproval: ApprovalRequestDto | null;
   approvalDecision: CommandResultDto<ApprovalDecisionDto> | null;
@@ -40,6 +41,7 @@ export type ApprovalsWorkspaceProps = {
   setSelectedApprovalId: (requestId: string) => void;
   submitApprovalDecisionForRequest: (requestId: string, decision: "approve" | "deny") => Promise<void>;
   navigateToLinkedEntity: (entity: LinkedEntityRefDto) => Promise<void>;
+  openConversationDraft: () => Promise<void>;
   openInspectorSurface: () => Promise<void>;
 };
 
@@ -47,6 +49,7 @@ export function ApprovalsWorkspace({
   approvalRequests,
   workItems,
   reconciliationDecision,
+  environmentFocusLabel,
   selectedApprovalId,
   selectedApproval,
   approvalDecision,
@@ -54,6 +57,7 @@ export function ApprovalsWorkspace({
   setSelectedApprovalId,
   submitApprovalDecisionForRequest,
   navigateToLinkedEntity,
+  openConversationDraft,
   openInspectorSurface
 }: ApprovalsWorkspaceProps) {
   const approvalRows = approvalRequests.map((request) => ({
@@ -147,6 +151,7 @@ export function ApprovalsWorkspace({
             </div>
             <div className="browser-focus-card">
               <div>
+                <p className="context-label">{environmentFocusLabel}</p>
                 <p className="context-label">Requested Action</p>
                 <strong>{selectedApproval.requestedAction}</strong>
                 <p>{selectedApproval.summary}</p>
@@ -222,6 +227,9 @@ export function ApprovalsWorkspace({
               <LinkedEntityList entities={selectedApproval.linkedEntities} navigateToLinkedEntity={navigateToLinkedEntity} />
             </section>
             <div className="browser-action-strip">
+              <button className="starter-chip" onClick={() => void openConversationDraft()} type="button">
+                Continue In Conversation
+              </button>
               <button className="starter-chip" onClick={() => void openInspectorSurface()} type="button">
                 Open Inspector
               </button>
@@ -231,6 +239,7 @@ export function ApprovalsWorkspace({
           <div className="empty-state">
             <p className="eyebrow">No Approval Selected</p>
             <h3>Select an approval request to inspect its governed decision context.</h3>
+            <p className="context-label">{environmentFocusLabel}</p>
           </div>
         )}
       </section>
@@ -284,6 +293,7 @@ export function ApprovalsWorkspace({
 
 export type IncidentsWorkspaceProps = {
   incidents: IncidentSummaryDto[];
+  environmentFocusLabel: string;
   selectedIncidentId: string | null;
   selectedIncident: IncidentDetailDto | null;
   pendingIncidentFocusId: string | null;
@@ -291,11 +301,13 @@ export type IncidentsWorkspaceProps = {
   setSelectedIncidentId: (incidentId: string) => void;
   openIncidentRemediationPlanDialog: () => void;
   navigateToLinkedEntity: (entity: LinkedEntityRefDto) => Promise<void>;
+  openConversationDraft: () => Promise<void>;
   openInspectorSurface: () => Promise<void>;
 };
 
 export function IncidentsWorkspace({
   incidents,
+  environmentFocusLabel,
   selectedIncidentId,
   selectedIncident,
   pendingIncidentFocusId,
@@ -303,6 +315,7 @@ export function IncidentsWorkspace({
   setSelectedIncidentId,
   openIncidentRemediationPlanDialog,
   navigateToLinkedEntity,
+  openConversationDraft,
   openInspectorSurface
 }: IncidentsWorkspaceProps) {
   const incidentDetailPanelRef = useRef<HTMLDivElement | null>(null);
@@ -373,6 +386,7 @@ export function IncidentsWorkspace({
           </Badge>
         </div>
         <p className="lead-copy">{recoveryObjective}</p>
+        <p className="context-label">{environmentFocusLabel}</p>
         <div className="signal-digest-grid execution-objective-digest">
           <div className="signal-digest-card">
             <span className="context-label">Incidents</span>
@@ -436,6 +450,7 @@ export function IncidentsWorkspace({
                   </div>
                   <Badge tone={toneForIncidentSeverity(selectedIncident.severity)}>{selectedIncident.state}</Badge>
                 </div>
+                <p className="context-label">{environmentFocusLabel}</p>
                 <p className="lead-copy">{selectedIncident.summary}</p>
                 <div className="approval-facts">
                   <ContextBlock label="Severity" value={selectedIncident.severity} />
@@ -478,6 +493,9 @@ export function IncidentsWorkspace({
                   ) : null}
                 </section>
                 <div className="browser-action-strip">
+                  <button className="starter-chip" onClick={() => void openConversationDraft()} type="button">
+                    Continue In Conversation
+                  </button>
                   <button className="starter-chip" onClick={openIncidentRemediationPlanDialog} type="button">
                     Edit Remediation Plan
                   </button>
@@ -487,6 +505,7 @@ export function IncidentsWorkspace({
               <div className="empty-state">
                 <p className="eyebrow">No Incident Selected</p>
                 <h3>Select an incident to inspect governed recovery posture.</h3>
+                <p className="context-label">{environmentFocusLabel}</p>
               </div>
             )}
           </section>
@@ -558,6 +577,7 @@ export function IncidentsWorkspace({
 
 export type WorkWorkspaceProps = {
   approvalRequests: ApprovalRequestSummaryDto[];
+  environmentFocusLabel: string;
   isDecidingApproval: boolean;
   workItems: WorkItemSummaryDto[];
   selectedWorkItemId: string | null;
@@ -575,11 +595,13 @@ export type WorkWorkspaceProps = {
   openRollbackWorkItemDialog: () => void;
   openCompleteWorkItemValidationsDialog: () => void;
   submitApprovalDecisionForRequest: (requestId: string, decision: "approve" | "deny") => Promise<void>;
+  openConversationDraft: () => Promise<void>;
   openInspectorSurface: () => Promise<void>;
 };
 
 export function WorkWorkspace({
   approvalRequests,
+  environmentFocusLabel,
   isDecidingApproval,
   workItems,
   selectedWorkItemId,
@@ -597,6 +619,7 @@ export function WorkWorkspace({
   openRollbackWorkItemDialog,
   openCompleteWorkItemValidationsDialog,
   submitApprovalDecisionForRequest,
+  openConversationDraft,
   openInspectorSurface
 }: WorkWorkspaceProps) {
   const workflowDetailPanelRef = useRef<HTMLDivElement | null>(null);
@@ -712,6 +735,7 @@ export function WorkWorkspace({
               </div>
               <PriorityStateChip label={selectedWorkItem.state} tone={toneForWorkState(selectedWorkItem.state)} />
             </div>
+            <p className="context-label">{environmentFocusLabel}</p>
             <div className="browser-focus-card">
               <div>
                 <p className="context-label">Selected Execution Item</p>
@@ -881,6 +905,9 @@ export function WorkWorkspace({
               )}
             </section>
             <div className="browser-action-strip">
+              <button className="starter-chip" onClick={() => void openConversationDraft()} type="button">
+                Continue In Conversation
+              </button>
               {selectedWorkItemApprovalId ? (
                 <button
                   className="starter-chip"
@@ -938,6 +965,7 @@ export function WorkWorkspace({
           <div className="empty-state">
             <p className="eyebrow">No Work Item Selected</p>
             <h3>Select a governed work item to inspect closure posture.</h3>
+            <p className="context-label">{environmentFocusLabel}</p>
           </div>
         )}
       </section>

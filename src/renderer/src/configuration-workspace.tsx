@@ -1,9 +1,10 @@
+import type { PackageManagementSummaryDto, ProviderProfileSummaryDto } from "../../shared/contracts";
 import { BrowserDataTable } from "./browser-data-table";
 import { Badge, PanelHeader } from "./surface-support";
 
 export type ThemePreference = "system" | "light" | "dark";
 export type ResolvedTheme = "light" | "dark";
-export type ConfigurationSection = "theme" | "lisp-code-view" | "desktop-surface";
+export type ConfigurationSection = "theme" | "lisp-code-view" | "desktop-surface" | "llm" | "package-management";
 
 interface ConfigurationSectionDescriptor {
   id: ConfigurationSection;
@@ -24,6 +25,8 @@ export function ConfigurationWorkspace({
   dockIconScalePercent,
   conversationTextScalePercent,
   sourceCodeTextScalePercent,
+  providerSummary,
+  packageManagementSummary,
   configurationSections,
   normalizeParenDepthColors
 }: {
@@ -38,6 +41,8 @@ export function ConfigurationWorkspace({
   dockIconScalePercent: number;
   conversationTextScalePercent: number;
   sourceCodeTextScalePercent: number;
+  providerSummary: ProviderProfileSummaryDto | null;
+  packageManagementSummary: PackageManagementSummaryDto | null;
   configurationSections: ConfigurationSectionDescriptor[];
   normalizeParenDepthColors: (colors?: string[] | null) => string[];
 }) {
@@ -54,7 +59,11 @@ export function ConfigurationWorkspace({
           : `${themePreference} (${resolvedTheme})`
         : section.id === "lisp-code-view"
           ? `${normalizeParenDepthColors(lispParenColors).length} configured depths`
-          : `Tooltip ${tooltipScalePercent}% / Controls ${controlIconScalePercent}% / Dock ${dockIconScalePercent}% / Conversation ${conversationTextScalePercent}% / Source ${sourceCodeTextScalePercent}%`,
+          : section.id === "llm"
+            ? `${providerSummary?.routingMode ?? "auto"} / ${providerSummary?.activeProfileName ?? "default"} / ${providerSummary?.profileCount ?? 0} profiles`
+            : section.id === "package-management"
+              ? `${packageManagementSummary?.packageManager ?? "asdf"} / ${packageManagementSummary?.managedSourceRegistryEntryCount ?? 0} source entries / ${packageManagementSummary?.localProjectCount ?? 0} local projects`
+            : `Tooltip ${tooltipScalePercent}% / Controls ${controlIconScalePercent}% / Dock ${dockIconScalePercent}% / Conversation ${conversationTextScalePercent}% / Source ${sourceCodeTextScalePercent}%`,
     summary: section.summary
   }));
 

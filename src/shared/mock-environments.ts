@@ -22,6 +22,8 @@ import type {
   IncidentSummaryDto,
   MessageDto,
   PackageBrowserDto,
+  PackageManagementCommandResultDto,
+  PackageManagementSummaryDto,
   ProjectArchitectureDecisionDto,
   ProjectDetailDto,
   ProjectFeatureSpecificationDto,
@@ -1446,6 +1448,78 @@ const environments: Record<string, MockEnvironmentRecord> = {
   }
 };
 
+const mockPackageManagementByEnvironmentId: Record<string, PackageManagementSummaryDto> = {
+  "local-dev": {
+    packageManager: "quicklisp",
+    projectDir: "/Volumes/data/development/sbcl-agent",
+    workingDirectory: "/Volumes/data/development/sbcl-agent",
+    quicklispAvailableP: true,
+    qlotAvailableP: true,
+    qlotExecutablePath: "/opt/homebrew/bin/qlot",
+    qlotProjectRoot: "/Volumes/data/development/sbcl-agent",
+    loadedSetupCount: 1,
+    loadedSetupPaths: ["/Users/colossus/quicklisp/setup.lisp"],
+    sourceRegistryDirectoryCount: 3,
+    sourceRegistryDirectories: [
+      "/Volumes/data/development/sbcl-agent",
+      "/Volumes/data/development/sbcl-agent/vendor",
+      "/Volumes/data/development/sbcl-agent/quicklisp/local-projects"
+    ],
+    managedSourceRegistryPath: "/Volumes/data/development/sbcl-agent/.sbcl-agent/source-registry.sexp",
+    managedSourceRegistryEntryCount: 2,
+    managedSourceRegistryEntries: [
+      {
+        entryId: "/Volumes/data/development/sbcl-agent/extensions",
+        path: "/Volumes/data/development/sbcl-agent/extensions",
+        existsP: true,
+        managedP: true
+      },
+      {
+        entryId: "/Volumes/data/development/common-lisp/shared",
+        path: "/Volumes/data/development/common-lisp/shared",
+        existsP: true,
+        managedP: true
+      }
+    ],
+    localProjectsRoot: "/Volumes/data/development/sbcl-agent/quicklisp/local-projects",
+    localProjectCount: 2,
+    localProjects: [
+      {
+        projectId: "dexador",
+        name: "dexador",
+        path: "/Volumes/data/development/common-lisp/dexador",
+        linkPath: "/Volumes/data/development/sbcl-agent/quicklisp/local-projects/dexador",
+        existsP: true,
+        managedP: true
+      },
+      {
+        projectId: "spinneret",
+        name: "spinneret",
+        path: "/Volumes/data/development/common-lisp/spinneret",
+        linkPath: "/Volumes/data/development/sbcl-agent/quicklisp/local-projects/spinneret",
+        existsP: true,
+        managedP: true
+      }
+    ]
+  }
+};
+
+function packageManagementForEnvironment(environmentId: string): PackageManagementSummaryDto {
+  const existing = mockPackageManagementByEnvironmentId[environmentId];
+  if (existing) {
+    return existing;
+  }
+  const fallback = mockPackageManagementByEnvironmentId[defaultEnvironmentId];
+  return JSON.parse(JSON.stringify(fallback)) as PackageManagementSummaryDto;
+}
+
+function packageManagementMetadata(environmentId: string): ServiceMetadataDto {
+  return {
+    ...metadata({ environmentId }, "package-management-summary"),
+    runtimeId: environments[environmentId]?.runtimeSummary.runtimeId ?? null
+  };
+}
+
 export const defaultEnvironmentId = "local-dev";
 
 export function listMockEnvironmentIds(): string[] {
@@ -1852,6 +1926,7 @@ export function commandSendConversationMessage(
   const turnId = `turn-${Date.now()}`;
   const prompt = input.prompt.trim();
   const assistantMessage = `Mock assistant response for ${detail.title}: ${prompt}`;
+  const attachments = input.attachments ?? [];
 
   detail.messages = [
     ...detail.messages,
@@ -1859,6 +1934,7 @@ export function commandSendConversationMessage(
       messageId: `message-user-${Date.now()}`,
       role: "user",
       content: prompt,
+      attachments,
       createdAt: timestamp
     },
     {
@@ -1959,6 +2035,167 @@ export function queryRuntimeSummary(
       runtimeId: runtime.runtimeId
     }
   };
+}
+
+export function queryPackageManagementSummary(
+  environmentId: string
+): QueryResultDto<PackageManagementSummaryDto> {
+  return {
+    contractVersion: 1,
+    domain: "package-management",
+    operation: "package-management.summary",
+    kind: "query",
+    status: "ok",
+    data: packageManagementForEnvironment(environmentId),
+    metadata: packageManagementMetadata(environmentId)
+  };
+}
+
+function packageManagementCommandResult(
+  environmentId: string,
+  operation: string,
+  data: PackageManagementCommandResultDto
+): CommandResultDto<PackageManagementCommandResultDto> {
+  return {
+    contractVersion: 1,
+    domain: "package-management",
+    operation,
+    kind: "command",
+    status: "ok",
+    data,
+    metadata: packageManagementMetadata(environmentId)
+  };
+}
+
+export function commandInstallQuicklispPackage(input: {
+  environmentId: string;
+  systemName: string;
+}): CommandResultDto<PackageManagementCommandResultDto> {
+  const summary = packageManagementForEnvironment(input.environmentId);
+  const result: PackageManagementCommandResultDto = {
+    summary: `Quicklisp loaded ${input.systemName}.`,
+    systemName: input.systemName,
+    packageManagement: summary
+  };
+  return packageManagementCommandResult(input.environmentId, "package-management.install-quicklisp", result);
+}
+
+export function commandRunQlotCommand(input: {
+  environmentId: string;
+  args: string[];
+}): CommandResultDto<PackageManagementCommandResultDto> {
+  const summary = packageManagementForEnvironment(input.environmentId);
+  const argv = ["qlot", ...input.args];
+  const result: PackageManagementCommandResultDto = {
+    summary: `Ran ${argv.join(" ")}.`,
+    argv,
+    stdout: "Mock qlot command output.",
+    stderr: "",
+    exitCode: 0,
+    packageManagement: summary
+  };
+  return packageManagementCommandResult(input.environmentId, "package-management.run-qlot", result);
+}
+
+export function commandAddSourceRegistryEntry(input: {
+  environmentId: string;
+  path: string;
+}): CommandResultDto<PackageManagementCommandResultDto> {
+  const summary = packageManagementForEnvironment(input.environmentId);
+  summary.managedSourceRegistryEntries = [
+    ...summary.managedSourceRegistryEntries.filter((entry) => entry.path !== input.path),
+    {
+      entryId: input.path,
+      path: input.path,
+      existsP: true,
+      managedP: true
+    }
+  ];
+  summary.managedSourceRegistryEntryCount = summary.managedSourceRegistryEntries.length;
+  const result: PackageManagementCommandResultDto = {
+    summary: `Added source registry entry ${input.path}.`,
+    path: input.path,
+    packageManagement: summary
+  };
+  return packageManagementCommandResult(input.environmentId, "package-management.add-source-registry-entry", result);
+}
+
+export function commandUpdateSourceRegistryEntry(input: {
+  environmentId: string;
+  oldPath: string;
+  newPath: string;
+}): CommandResultDto<PackageManagementCommandResultDto> {
+  const summary = packageManagementForEnvironment(input.environmentId);
+  summary.managedSourceRegistryEntries = summary.managedSourceRegistryEntries.map((entry) =>
+    entry.path === input.oldPath
+      ? { ...entry, entryId: input.newPath, path: input.newPath }
+      : entry
+  );
+  const result: PackageManagementCommandResultDto = {
+    summary: `Updated source registry entry ${input.oldPath} -> ${input.newPath}.`,
+    oldPath: input.oldPath,
+    newPath: input.newPath,
+    packageManagement: summary
+  };
+  return packageManagementCommandResult(input.environmentId, "package-management.update-source-registry-entry", result);
+}
+
+export function commandRemoveSourceRegistryEntry(input: {
+  environmentId: string;
+  path: string;
+}): CommandResultDto<PackageManagementCommandResultDto> {
+  const summary = packageManagementForEnvironment(input.environmentId);
+  summary.managedSourceRegistryEntries = summary.managedSourceRegistryEntries.filter((entry) => entry.path !== input.path);
+  summary.managedSourceRegistryEntryCount = summary.managedSourceRegistryEntries.length;
+  const result: PackageManagementCommandResultDto = {
+    summary: `Removed source registry entry ${input.path}.`,
+    path: input.path,
+    packageManagement: summary
+  };
+  return packageManagementCommandResult(input.environmentId, "package-management.remove-source-registry-entry", result);
+}
+
+export function commandAddLocalProject(input: {
+  environmentId: string;
+  path: string;
+  name?: string;
+}): CommandResultDto<PackageManagementCommandResultDto> {
+  const summary = packageManagementForEnvironment(input.environmentId);
+  const name = input.name ?? input.path.split("/").filter(Boolean).pop() ?? "project";
+  summary.localProjects = [
+    ...summary.localProjects.filter((project) => project.name !== name),
+    {
+      projectId: name,
+      name,
+      path: input.path,
+      linkPath: `${summary.localProjectsRoot}/${name}`,
+      existsP: true,
+      managedP: true
+    }
+  ];
+  summary.localProjectCount = summary.localProjects.length;
+  const result: PackageManagementCommandResultDto = {
+    summary: `Added local project ${name}.`,
+    name,
+    path: input.path,
+    packageManagement: summary
+  };
+  return packageManagementCommandResult(input.environmentId, "package-management.add-local-project", result);
+}
+
+export function commandRemoveLocalProject(input: {
+  environmentId: string;
+  name: string;
+}): CommandResultDto<PackageManagementCommandResultDto> {
+  const summary = packageManagementForEnvironment(input.environmentId);
+  summary.localProjects = summary.localProjects.filter((project) => project.name !== input.name);
+  summary.localProjectCount = summary.localProjects.length;
+  const result: PackageManagementCommandResultDto = {
+    summary: `Removed local project ${input.name}.`,
+    name: input.name,
+    packageManagement: summary
+  };
+  return packageManagementCommandResult(input.environmentId, "package-management.remove-local-project", result);
 }
 
 export function queryRuntimeTelemetrySnapshot(

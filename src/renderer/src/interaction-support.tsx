@@ -1,5 +1,8 @@
-import type { LinkedEntityRefDto, MessageDto } from "../../shared/contracts";
+import type { ConversationAttachmentDto, LinkedEntityRefDto, MessageDto } from "../../shared/contracts";
 import { Badge } from "./surface-support";
+
+const CONVERSATION_ATTACHMENT_PREVIEW_LIMIT = 4000;
+const CONVERSATION_MESSAGE_PREVIEW_LIMIT = 8000;
 
 export type SignalPriority = "red" | "yellow" | "blue";
 export interface SignalCounts {
@@ -32,6 +35,11 @@ export function MessageBubble({
   isSelected: boolean;
   onSelect: () => void;
 }) {
+  const messagePreview =
+    message.content.length > CONVERSATION_MESSAGE_PREVIEW_LIMIT
+      ? `${message.content.slice(0, CONVERSATION_MESSAGE_PREVIEW_LIMIT)}\n\n[message truncated]`
+      : message.content;
+
   return (
     <div
       aria-pressed={isSelected}
@@ -46,7 +54,46 @@ export function MessageBubble({
       role="button"
       tabIndex={0}
     >
-      <p>{message.content}</p>
+      {messagePreview.trim().length > 0 ? <p>{messagePreview}</p> : null}
+      {message.attachments && message.attachments.length > 0 ? (
+        <div className="conversation-attachment-list">
+          {message.attachments.map((attachment) => (
+            <ConversationAttachmentView attachment={attachment} key={attachment.attachmentId} />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ConversationAttachmentView({ attachment }: { attachment: ConversationAttachmentDto }) {
+  const textPreview =
+    attachment.kind === "text" && attachment.textContent
+      ? attachment.textContent.length > CONVERSATION_ATTACHMENT_PREVIEW_LIMIT
+        ? `${attachment.textContent.slice(0, CONVERSATION_ATTACHMENT_PREVIEW_LIMIT)}\n\n[preview truncated]`
+        : attachment.textContent
+      : null;
+
+  return (
+    <div className="conversation-attachment-card">
+      <div className="conversation-attachment-meta">
+        <strong>{attachment.name}</strong>
+        <span>{attachment.summary}</span>
+      </div>
+      <div className="conversation-attachment-flags">
+        <Badge tone="steady">{attachment.kind}</Badge>
+        <Badge tone="steady">{attachment.source}</Badge>
+      </div>
+      {attachment.kind === "image" && attachment.dataUrl ? (
+        <img
+          alt={attachment.name}
+          className="conversation-attachment-image"
+          src={attachment.dataUrl}
+        />
+      ) : null}
+      {attachment.kind === "text" && textPreview ? (
+        <pre className="conversation-attachment-text">{textPreview}</pre>
+      ) : null}
     </div>
   );
 }

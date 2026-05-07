@@ -23,6 +23,13 @@ export type ConversationsWorkspaceProps = {
   activateConversationInspectorSection: (section: ConversationSection) => void;
   threads: ThreadSummaryDto[];
   conversationDraft: string;
+  environmentFocusLabel: string;
+  environmentFocusTitle: string;
+  environmentFocusSummary: string;
+  draftFocusActions: Array<{
+    label: string;
+    onSelect: () => Promise<void> | void;
+  }>;
   selectedSection: ConversationSection;
   pageSignalCounts: SignalCounts;
   currentReplSessionId: string | null;
@@ -70,6 +77,10 @@ export function ConversationsWorkspace({
   activateConversationInspectorSection,
   threads,
   conversationDraft,
+  environmentFocusLabel,
+  environmentFocusTitle,
+  environmentFocusSummary,
+  draftFocusActions,
   selectedSection,
   pageSignalCounts,
   currentReplSessionId,
@@ -484,6 +495,23 @@ export function ConversationsWorkspace({
             {selectedThreadSubview === "draft" ? (
               selectedThread ? (
                 <div className="conversation-subview-stack">
+                  <div className="browser-focus-card">
+                    <div>
+                      <p className="context-label">{environmentFocusLabel}</p>
+                      <strong>{environmentFocusTitle}</strong>
+                      <p>{environmentFocusSummary}</p>
+                    </div>
+                    <Badge tone="steady">draft focus</Badge>
+                  </div>
+                  {draftFocusActions.length > 0 ? (
+                    <div className="browser-action-strip">
+                      {draftFocusActions.map((action) => (
+                        <button className="starter-chip" key={action.label} onClick={() => void action.onSelect()} type="button">
+                          {action.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
                   <textarea
                     className="runtime-editor conversation-draft-editor"
                     onChange={(event) => setConversationDraft(event.target.value)}

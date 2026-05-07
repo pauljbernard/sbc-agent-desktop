@@ -33,6 +33,14 @@
 (defun script-arguments ()
   (cdr sb-ext:*posix-argv*))
 
+(defun read-stdin-string ()
+  (with-output-to-string (out)
+    (loop for line = (read-line *standard-input* nil nil)
+          while line
+          do (progn
+               (write-string line out)
+               (terpri out)))))
+
 (defun project-directory-pathname (project-dir)
   (let ((pathname (pathname project-dir)))
     (if (pathname-name pathname)
@@ -418,6 +426,14 @@
     (and object
          (sbcl-agent-call "JSON-OBJECT-VALUE" object key))))
 
+(defun request-attachment-plists (request-json key)
+  (let ((attachments (request-object-value request-json key)))
+    (mapcar (lambda (entry)
+              (if (listp entry)
+                  (sbcl-agent-call "JSON-OBJECT->KEYWORD-PLIST" entry)
+                  entry))
+            (if (listp attachments) attachments '()))))
+
 (defun emit-json-line (object)
   (write-line (sbcl-agent-call "EMIT-JSON" (json-friendly object)))
   (finish-output))
@@ -520,10 +536,12 @@
 
 (defun conversation-say-service-response (environment session thread-id prompt options)
   (let* ((provider (current-provider-for-prompt environment session prompt options))
+         (attachments (or (sbcl-agent-call "PLIST-VALUE" options :attachments nil) '()))
          (result (sbcl-agent-call "RUN-CONVERSATION-TURN"
                                   provider
                                   session
                                   prompt
+                                  :attachments attachments
                                   :stream-p (and (sbcl-agent-call "OPTION-PRESENT-P" options :stream)
                                                  (sbcl-agent-call "PLIST-VALUE" options :stream nil))
                                   :source :say
@@ -767,6 +785,36 @@
          (sbcl-agent-call "COMMAND-ENVIRONMENT-SET-DESKTOP-PREFERENCES-SERVICE"
                           desktop-preferences
                           environment)))
+      ((string= operation "environment.provider.get")
+       (sbcl-agent-call "QUERY-ENVIRONMENT-PROVIDER-SERVICE" environment))
+      ((string= operation "environment.provider.configure")
+       (let* ((request-object (request-object request-json))
+              (payload (if (and (listp request-object)
+                                (every #'consp request-object))
+                           (sbcl-agent-call "JSON-OBJECT->KEYWORD-PLIST" request-object)
+                           '())))
+         (sbcl-agent-call "COMMAND-ENVIRONMENT-PROVIDER-CONFIGURE-SERVICE"
+                          (or (getf payload :profile-name) "")
+                          payload
+                          environment)))
+      ((string= operation "environment.provider.use")
+       (let* ((request-object (request-object request-json))
+              (payload (if (and (listp request-object)
+                                (every #'consp request-object))
+                           (sbcl-agent-call "JSON-OBJECT->KEYWORD-PLIST" request-object)
+                           '())))
+         (sbcl-agent-call "COMMAND-ENVIRONMENT-PROVIDER-USE-SERVICE"
+                          (or (getf payload :profile-name) "")
+                          environment)))
+      ((string= operation "environment.provider.routing")
+       (let* ((request-object (request-object request-json))
+              (payload (if (and (listp request-object)
+                                (every #'consp request-object))
+                           (sbcl-agent-call "JSON-OBJECT->KEYWORD-PLIST" request-object)
+                           '())))
+         (sbcl-agent-call "COMMAND-ENVIRONMENT-PROVIDER-ROUTING-SERVICE"
+                          (getf payload :mode)
+                          environment)))
       ((string= operation "environment.image-registry")
        (sbcl-agent-call "QUERY-ENVIRONMENT-IMAGE-REGISTRY-SERVICE" environment))
       ((string= operation "environment.save-image")
@@ -820,6 +868,69 @@
       ((string= operation "runtime.telemetry")
        (let ((session (bridge-session environment)))
          (sbcl-agent-call "QUERY-RUNTIME-TELEMETRY-SERVICE" session)))
+      ((string= operation "package-management.summary")
+       (let ((session (bridge-session environment)))
+         (sbcl-agent-call "QUERY-PACKAGE-MANAGEMENT-SUMMARY-SERVICE" session)))
+      ((string= operation "package-management.install-quicklisp")
+       (let* ((session (bridge-session environment))
+              (system-name (request-object-value request-json "systemName")))
+         (unless system-name
+           (error "package-management.install-quicklisp requires a systemName payload"))
+         (sbcl-agent-call "COMMAND-PACKAGE-MANAGEMENT-INSTALL-QUICKLISP-SERVICE"
+                          session
+                          system-name)))
+      ((string= operation "package-management.run-qlot")
+       (let* ((session (bridge-session environment))
+              (arguments (request-object-value request-json "args")))
+         (sbcl-agent-call "COMMAND-PACKAGE-MANAGEMENT-RUN-QLOT-SERVICE"
+                          session
+                          (if (listp arguments) arguments '()))))
+      ((string= operation "package-management.add-source-registry-entry")
+       (let* ((session (bridge-session environment))
+              (path (request-object-value request-json "path")))
+         (unless path
+           (error "package-management.add-source-registry-entry requires a path payload"))
+         (sbcl-agent-call "COMMAND-PACKAGE-MANAGEMENT-ADD-SOURCE-REGISTRY-ENTRY-SERVICE"
+                          session
+                          path)))
+      ((string= operation "package-management.update-source-registry-entry")
+       (let* ((session (bridge-session environment))
+              (old-path (request-object-value request-json "oldPath"))
+              (new-path (request-object-value request-json "newPath")))
+         (unless old-path
+           (error "package-management.update-source-registry-entry requires an oldPath payload"))
+         (unless new-path
+           (error "package-management.update-source-registry-entry requires a newPath payload"))
+         (sbcl-agent-call "COMMAND-PACKAGE-MANAGEMENT-UPDATE-SOURCE-REGISTRY-ENTRY-SERVICE"
+                          session
+                          old-path
+                          new-path)))
+      ((string= operation "package-management.remove-source-registry-entry")
+       (let* ((session (bridge-session environment))
+              (path (request-object-value request-json "path")))
+         (unless path
+           (error "package-management.remove-source-registry-entry requires a path payload"))
+         (sbcl-agent-call "COMMAND-PACKAGE-MANAGEMENT-REMOVE-SOURCE-REGISTRY-ENTRY-SERVICE"
+                          session
+                          path)))
+      ((string= operation "package-management.add-local-project")
+       (let* ((session (bridge-session environment))
+              (path (request-object-value request-json "path"))
+              (name (request-object-value request-json "name")))
+         (unless path
+           (error "package-management.add-local-project requires a path payload"))
+         (sbcl-agent-call "COMMAND-PACKAGE-MANAGEMENT-ADD-LOCAL-PROJECT-SERVICE"
+                          session
+                          path
+                          :name name)))
+      ((string= operation "package-management.remove-local-project")
+       (let* ((session (bridge-session environment))
+              (name (request-object-value request-json "name")))
+         (unless name
+           (error "package-management.remove-local-project requires a name payload"))
+         (sbcl-agent-call "COMMAND-PACKAGE-MANAGEMENT-REMOVE-LOCAL-PROJECT-SERVICE"
+                          session
+                          name)))
       ((string= operation "console.stream")
        (sbcl-agent-call "QUERY-CONSOLE-LOG-STREAM-SERVICE"
                         :environment environment
@@ -1022,7 +1133,10 @@
        (let* ((session (bridge-session environment))
               (thread-id (request-object-value request-json "threadId"))
               (prompt (request-object-value request-json "prompt"))
-              (options '()))
+              (attachments (request-attachment-plists request-json "attachments"))
+              (options (if attachments
+                           (list :attachments attachments)
+                           '())))
          (unless thread-id
            (error "conversation.send-message requires a threadId payload"))
          (unless prompt
@@ -1047,7 +1161,11 @@
        (let* ((session (bridge-session environment))
               (thread-id (request-object-value request-json "threadId"))
               (prompt (request-object-value request-json "prompt"))
-              (options '(:stream t)))
+              (attachments (request-attachment-plists request-json "attachments"))
+              (options (append '(:stream t)
+                               (if attachments
+                                   (list :attachments attachments)
+                                   '()))))
          (unless thread-id
            (error "conversation.send-message-stream requires a threadId payload"))
          (unless prompt
@@ -1616,13 +1734,28 @@
          (state-path-argument (second arguments))
          (operation (third arguments))
          (environment-id (fourth arguments))
-         (request-json (fifth arguments))
+         (request-json-argument (fifth arguments))
+         (request-json (cond
+                         ((and request-json-argument
+                               (not (string= request-json-argument "-")))
+                          request-json-argument)
+                         (request-json-argument
+                          (read-stdin-string))
+                         (t
+                          nil)))
          (project-root (project-directory-pathname project-dir))
          (state-path (file-pathname state-path-argument)))
     (unless (and project-dir state-path-argument operation)
       (error "Usage: live-service-bridge.lisp <sbcl-agent-project-dir> <state-path> <operation> [environment-id]"))
     (require :asdf)
     (setf *project-root* project-root)
+    (load (merge-pathnames #P"src/bootstrap-runtime.lisp" project-root))
+    (funcall (symbol-function
+              (or (find-symbol "BOOTSTRAP-COMMON-LISP-PACKAGE-MANAGEMENT"
+                               "SBCL-AGENT.BOOTSTRAP")
+                  (error "Unable to resolve sbcl-agent bootstrap function.")))
+             :project-dir project-root
+             :working-directory project-root)
     (load (merge-pathnames #P"sbcl-agent.asd" project-root))
     (asdf-call "LOAD-SYSTEM" :sbcl-agent)
     (let* ((environment (load-or-create-bridge-environment project-root state-path environment-id))

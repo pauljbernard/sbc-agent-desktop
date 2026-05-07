@@ -1,5 +1,8 @@
-import { readdir, stat, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { readdir, stat, unlink, writeFile } from "node:fs/promises";
+import os from "node:os";
 import { dirname, resolve } from "node:path";
+import { promisify } from "node:util";
 import type {
   AppendProjectArchitectureDecisionInput,
   AppendProjectFeatureSpecificationInput,
@@ -12,6 +15,7 @@ import type {
   BindingDto,
   BindProjectTestingHarnessInput,
   CommandResultDto,
+  ConfigureProviderProfileInput,
   ConsoleLogQueryInput,
   ConsoleLogStreamDto,
   CreateIntentInput,
@@ -45,10 +49,13 @@ import type {
   ProjectListDto,
   ProjectQualityGateDto,
   ProjectTestingHarnessDto,
+  ProviderProfileSummaryDto,
   CompleteWorkItemValidationsInput,
   ThreadSummaryDto,
   QueryResultDto,
   PackageBrowserDto,
+  PackageManagementCommandResultDto,
+  PackageManagementSummaryDto,
   QuarantineWorkItemInput,
   ResumeWorkItemInput,
   RuntimeTelemetrySnapshotDto,
@@ -68,6 +75,8 @@ import type {
   UpdateProjectStyleGuideInput,
   UpdateProjectTestingStrategyInput,
   UpdateProjectReleaseReadinessInput,
+  UpdateProviderRoutingInput,
+  UseProviderProfileInput,
   WorkflowRecordDto,
   WorkItemDetailDto,
   WorkItemPlanDto,
@@ -76,13 +85,20 @@ import type {
 } from "../shared/contracts";
 import {
   commandApproveRequest,
+  commandAddLocalProject,
+  commandAddSourceRegistryEntry,
   commandCreateConversationThread,
   commandUpdateConversationThread,
   commandSendConversationMessage,
   commandDenyRequest,
   commandEvaluateInContext,
+  commandInstallQuicklispPackage,
+  commandRemoveLocalProject,
+  commandRemoveSourceRegistryEntry,
   commandReloadSourceFile,
+  commandRunQlotCommand,
   commandStageSourceChange,
+  commandUpdateSourceRegistryEntry,
   createMockHostStatus,
   defaultEnvironmentId,
   hasEnvironment,
@@ -103,6 +119,7 @@ import {
   queryProjectDetail,
   queryProjectList,
   queryProjectTestingHarnessInventory,
+  queryPackageManagementSummary,
   queryRuntimeEntityDetail,
   queryRuntimeInspectSymbol,
   queryRuntimeSummary,
@@ -116,6 +133,43 @@ import {
   queryWorkItemList
 } from "../shared/mock-environments";
 import type { SbclAgentHostAdapter } from "./adapter-contract";
+
+const execFileAsync = promisify(execFile);
+
+function conversationAttachmentTempExtension(name: string, mediaType: string): string {
+  const lowerName = name.toLowerCase();
+  if (lowerName.endsWith(".docx")) {
+    return ".docx";
+  }
+  if (lowerName.endsWith(".doc")) {
+    return ".doc";
+  }
+  if (lowerName.endsWith(".rtf")) {
+    return ".rtf";
+  }
+  if (mediaType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+    return ".docx";
+  }
+  if (mediaType === "application/msword") {
+    return ".doc";
+  }
+  if (mediaType === "application/rtf" || mediaType === "text/rtf") {
+    return ".rtf";
+  }
+  return ".bin";
+}
+
+function parseAttachmentDataUrl(dataUrl: string): Buffer | null {
+  const match = /^data:([^;,]+)?(?:;charset=[^;,]+)?;base64,(.+)$/i.exec(dataUrl);
+  if (!match) {
+    return null;
+  }
+  try {
+    return Buffer.from(match[2], "base64");
+  } catch {
+    return null;
+  }
+}
 
 export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
   private currentBinding: BindingDto | null = {
@@ -204,6 +258,60 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
     }
   };
 
+  private providerSummary: ProviderProfileSummaryDto = {
+    activeProfileName: "default",
+    profileCount: 2,
+    profiles: [
+      {
+        name: "default",
+        provider: "openai-compatible",
+        model: "gpt-5",
+        fastModel: "gpt-4.1-mini",
+        apiBase: "https://api.openai.com/v1",
+        apiKeyPresent: false,
+        intents: [],
+        latencyTier: "balanced",
+        reviewBias: "neutral",
+        executionBias: "balanced",
+        locality: "network"
+      },
+      {
+        name: "local-fast",
+        provider: "lm-studio",
+        model: "local-model",
+        fastModel: "local-model",
+        apiBase: "http://localhost:1234/v1",
+        apiKeyPresent: true,
+        intents: ["quick-turn", "local-development", "code-execution"],
+        latencyTier: "fast",
+        reviewBias: "neutral",
+        executionBias: "high",
+        locality: "local"
+      }
+    ],
+    activeProfile: {
+      name: "default",
+      provider: "openai-compatible",
+      model: "gpt-5",
+      fastModel: "gpt-4.1-mini",
+      apiBase: "https://api.openai.com/v1",
+      apiKeyPresent: false,
+      intents: [],
+      latencyTier: "balanced",
+      reviewBias: "neutral",
+      executionBias: "balanced",
+      locality: "network"
+    },
+    routingMode: "auto",
+    routingPolicy: {
+      mode: "auto",
+      availableModes: ["auto", "manual"],
+      profileCount: 2,
+      lastRoutePresent: false
+    },
+    lastRoute: null
+  };
+
   private localProjects = new Map<string, ProjectDetailDto>();
   private localWorkspaces = new Map<
     string,
@@ -218,6 +326,53 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
 
   private cloneValue<T>(value: T): T {
     return JSON.parse(JSON.stringify(value)) as T;
+  }
+
+  private syncProviderSummaryState(): void {
+    this.providerSummary.profileCount = this.providerSummary.profiles.length;
+    this.providerSummary.activeProfile =
+      this.providerSummary.profiles.find(
+        (profile) => profile.name === this.providerSummary.activeProfileName
+      ) ?? null;
+    this.providerSummary.routingPolicy = {
+      ...this.providerSummary.routingPolicy,
+      mode: this.providerSummary.routingMode,
+      profileCount: this.providerSummary.profiles.length
+    };
+  }
+
+  private providerCommandResult(): CommandResultDto<ProviderProfileSummaryDto> {
+    this.syncProviderSummaryState();
+    return {
+      contractVersion: 1,
+      domain: "environment",
+      operation: "provider-configure",
+      kind: "command",
+      status: "ok",
+      data: this.cloneValue(this.providerSummary),
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding,
+        commandModel: "environment-provider-command-v1"
+      }
+    };
+  }
+
+  private providerQueryResult(): QueryResultDto<ProviderProfileSummaryDto> {
+    this.syncProviderSummaryState();
+    return {
+      contractVersion: 1,
+      domain: "environment",
+      operation: "provider",
+      kind: "query",
+      status: "ok",
+      data: this.cloneValue(this.providerSummary),
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding,
+        readModel: "environment-provider-v1"
+      }
+    };
   }
 
   private buildLocalProjectSummary(project: ProjectDetailDto) {
@@ -762,8 +917,40 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
     });
   }
 
+  async extractConversationAttachmentText(input: {
+    name: string;
+    mediaType: string;
+    dataUrl: string;
+  }): Promise<string | null> {
+    const buffer = parseAttachmentDataUrl(input.dataUrl);
+    if (!buffer) {
+      return null;
+    }
+    const extension = conversationAttachmentTempExtension(input.name, input.mediaType);
+    const tempPath = resolve(
+      os.tmpdir(),
+      `sbcl-agent-attachment-${Date.now()}-${Math.random().toString(36).slice(2)}${extension}`
+    );
+    try {
+      await writeFile(tempPath, buffer);
+      const { stdout } = await execFileAsync("textutil", ["-convert", "txt", "-stdout", tempPath]);
+      const text = stdout.trim();
+      return text.length > 0 ? text : null;
+    } catch {
+      return null;
+    } finally {
+      void unlink(tempPath).catch(() => undefined);
+    }
+  }
+
   async runtimeSummary(environmentId?: string) {
     return queryRuntimeSummary(this.resolveEnvironmentId(environmentId));
+  }
+
+  async packageManagementSummary(
+    environmentId?: string
+  ): Promise<QueryResultDto<PackageManagementSummaryDto>> {
+    return queryPackageManagementSummary(this.resolveEnvironmentId(environmentId));
   }
 
   async runtimeTelemetrySnapshot(
@@ -1693,6 +1880,10 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
     };
   }
 
+  async providerProfiles(_environmentId?: string): Promise<QueryResultDto<ProviderProfileSummaryDto>> {
+    return this.providerQueryResult();
+  }
+
   async focusWorkspace(workspace: WorkspaceId): Promise<void> {
     this.preferences.lastWorkspace = workspace;
   }
@@ -1713,6 +1904,121 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
       }
     };
     return this.preferences;
+  }
+
+  async configureProviderProfile(
+    input: ConfigureProviderProfileInput
+  ): Promise<CommandResultDto<ProviderProfileSummaryDto>> {
+    const existingProfile =
+      this.providerSummary.profiles.find((profile) => profile.name === input.profileName) ?? null;
+    const nextProfile = {
+      name: input.profileName,
+      provider: input.provider,
+      model: input.model,
+      fastModel: input.fastModel ?? input.model,
+      apiBase: input.apiBase ?? null,
+      apiKeyPresent:
+        input.clearApiKey ? false : input.apiKey ? true : (existingProfile?.apiKeyPresent ?? false),
+      intents: input.intents ?? [],
+      latencyTier: input.latencyTier ?? "balanced",
+      reviewBias: input.reviewBias ?? "neutral",
+      executionBias: input.executionBias ?? "balanced",
+      locality: input.locality ?? (input.provider === "lm-studio" ? "local" : "network")
+    };
+    this.providerSummary.profiles = [
+      ...this.providerSummary.profiles.filter((profile) => profile.name !== input.profileName),
+      nextProfile
+    ];
+    if (input.activate || !this.providerSummary.activeProfileName) {
+      this.providerSummary.activeProfileName = input.profileName;
+    }
+    return this.providerCommandResult();
+  }
+
+  async useProviderProfile(
+    input: UseProviderProfileInput
+  ): Promise<CommandResultDto<ProviderProfileSummaryDto>> {
+    this.providerSummary.activeProfileName = input.profileName;
+    return this.providerCommandResult();
+  }
+
+  async updateProviderRouting(
+    input: UpdateProviderRoutingInput
+  ): Promise<CommandResultDto<ProviderProfileSummaryDto>> {
+    this.providerSummary.routingMode = input.mode;
+    return this.providerCommandResult();
+  }
+
+  async installQuicklispPackage(input: {
+    environmentId: string;
+    systemName: string;
+  }): Promise<CommandResultDto<PackageManagementCommandResultDto>> {
+    return commandInstallQuicklispPackage({
+      ...input,
+      environmentId: this.resolveEnvironmentId(input.environmentId)
+    });
+  }
+
+  async runQlotCommand(input: {
+    environmentId: string;
+    args: string[];
+  }): Promise<CommandResultDto<PackageManagementCommandResultDto>> {
+    return commandRunQlotCommand({
+      ...input,
+      environmentId: this.resolveEnvironmentId(input.environmentId)
+    });
+  }
+
+  async addSourceRegistryEntry(input: {
+    environmentId: string;
+    path: string;
+  }): Promise<CommandResultDto<PackageManagementCommandResultDto>> {
+    return commandAddSourceRegistryEntry({
+      ...input,
+      environmentId: this.resolveEnvironmentId(input.environmentId)
+    });
+  }
+
+  async updateSourceRegistryEntry(input: {
+    environmentId: string;
+    oldPath: string;
+    newPath: string;
+  }): Promise<CommandResultDto<PackageManagementCommandResultDto>> {
+    return commandUpdateSourceRegistryEntry({
+      ...input,
+      environmentId: this.resolveEnvironmentId(input.environmentId)
+    });
+  }
+
+  async removeSourceRegistryEntry(input: {
+    environmentId: string;
+    path: string;
+  }): Promise<CommandResultDto<PackageManagementCommandResultDto>> {
+    return commandRemoveSourceRegistryEntry({
+      ...input,
+      environmentId: this.resolveEnvironmentId(input.environmentId)
+    });
+  }
+
+  async addLocalProject(input: {
+    environmentId: string;
+    path: string;
+    name?: string;
+  }): Promise<CommandResultDto<PackageManagementCommandResultDto>> {
+    return commandAddLocalProject({
+      ...input,
+      environmentId: this.resolveEnvironmentId(input.environmentId)
+    });
+  }
+
+  async removeLocalProject(input: {
+    environmentId: string;
+    name: string;
+  }): Promise<CommandResultDto<PackageManagementCommandResultDto>> {
+    return commandRemoveLocalProject({
+      ...input,
+      environmentId: this.resolveEnvironmentId(input.environmentId)
+    });
   }
 
   async quitApp(): Promise<void> {
