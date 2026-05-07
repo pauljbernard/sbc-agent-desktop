@@ -22,6 +22,9 @@ import type {
   ArtifactSummaryDto,
   BindingDto,
   BindProjectTestingHarnessInput,
+  CalculatorEvaluateInput,
+  CalculatorResultDto,
+  CalculatorSummaryDto,
   CommandResultDto,
   CompleteWorkItemValidationsInput,
   ConfigureProviderProfileInput,
@@ -3924,6 +3927,22 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
     return adaptRuntimeSummaryResponse(response);
   }
 
+  async calculatorSummary(environmentId?: string): Promise<QueryResultDto<CalculatorSummaryDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "calculator.summary",
+      environmentId
+    );
+    return {
+      contractVersion: response.contractVersion,
+      domain: "calculator",
+      operation: response.operation,
+      kind: "query",
+      status: response.status === "error" ? "error" : "ok",
+      data: camelizeKeys(response.data) as CalculatorSummaryDto,
+      metadata: normalizeMetadata(response.metadata)
+    };
+  }
+
   async runtimeTelemetrySnapshot(
     environmentId?: string
   ): Promise<QueryResultDto<RuntimeTelemetrySnapshotDto>> {
@@ -4133,6 +4152,26 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
     );
 
     return adaptRuntimeEvalResponse(response, input);
+  }
+
+  async evaluateCalculator(
+    input: CalculatorEvaluateInput
+  ): Promise<CommandResultDto<CalculatorResultDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "calculator.evaluate",
+      input.environmentId,
+      input as unknown as Record<string, unknown>
+    );
+
+    return {
+      contractVersion: response.contractVersion,
+      domain: "calculator",
+      operation: response.operation,
+      kind: "command",
+      status: normalizeCommandStatus(response.status),
+      data: camelizeKeys(response.data) as CalculatorResultDto,
+      metadata: normalizeMetadata(response.metadata)
+    };
   }
 
   async stageSourceChange(input: {

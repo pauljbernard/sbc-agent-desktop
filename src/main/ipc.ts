@@ -161,8 +161,14 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("query:package-management-summary", (_event, environmentId?: string) =>
     hostAdapter.packageManagementSummary(environmentId)
   );
+  ipcMain.handle("query:calculator-summary", (_event, environmentId?: string) =>
+    hostAdapter.calculatorSummary(environmentId)
+  );
   ipcMain.handle("command:evaluate-in-context", (_event, input) =>
     hostAdapter.evaluateInContext(input)
+  );
+  ipcMain.handle("command:evaluate-calculator", (_event, input) =>
+    hostAdapter.evaluateCalculator(input)
   );
   ipcMain.handle("command:write-source-file", (_event, input) =>
     hostAdapter.writeSourceFile(input)

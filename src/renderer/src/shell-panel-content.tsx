@@ -18,6 +18,7 @@ interface ShellNavigationPanelProps {
   executionSections: ShellNavigationSectionItem[];
   expandedWorkspaceMenus: Record<string, boolean>;
   navigateToBrowserDomain: (domainId: string) => void;
+  openCalculatorApplication: () => void;
   navigateToConfigurationSurface: () => void;
   navigateToConversationSection: (sectionId: string) => void;
   navigateToEditorSurface: () => void;
@@ -49,6 +50,7 @@ export function ShellNavigationPanel({
   executionSections,
   expandedWorkspaceMenus,
   navigateToBrowserDomain,
+  openCalculatorApplication,
   navigateToConfigurationSurface,
   navigateToConversationSection,
   navigateToEditorSurface,
@@ -277,6 +279,14 @@ export function ShellNavigationPanel({
               ) : null}
             </div>
           ))}
+        </section>
+        <section className="workspace-group">
+          <div className="workspace-child-section-label">Applications</div>
+          <div className="workspace-child-list">
+            <button className="workspace-child-link" onClick={openCalculatorApplication} type="button">
+              <span title="Open the Lisp-backed calculator resident.">Calculator</span>
+            </button>
+          </div>
         </section>
       </nav>
     </div>

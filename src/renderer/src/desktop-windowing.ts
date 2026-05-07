@@ -96,6 +96,12 @@ export const DEFAULT_DESKTOP_WINDOW_FRAMES: Record<string, DesktopWindowFrame> =
     width: 92,
     height: 74
   },
+  "window:calculator": {
+    x: 108,
+    y: 22,
+    width: 84,
+    height: 84
+  },
   "window:conversations-surface": {
     x: 82,
     y: 16,

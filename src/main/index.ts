@@ -91,6 +91,10 @@ function installApplicationMenu(): void {
       submenu: [{ role: "reload" as const }, { role: "forceReload" as const }, { role: "toggleDevTools" as const }, { type: "separator" }, { role: "resetZoom" as const }, { role: "zoomIn" as const }, { role: "zoomOut" as const }, { type: "separator" }, { role: "togglefullscreen" as const }]
     },
     {
+      label: "Applications",
+      submenu: [{ label: "Calculator", accelerator: "CmdOrCtrl+Shift+C", click: () => sendMenuAction("application:calculator") }]
+    },
+    {
       label: "Window",
       submenu: [{ role: "minimize" as const }, { role: "zoom" as const }, { type: "separator" }, { role: "front" as const }]
     }

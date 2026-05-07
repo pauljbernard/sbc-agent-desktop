@@ -1,6 +1,9 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
   ConfigureProviderProfileInput,
+  CalculatorResultDto,
+  CalculatorSummaryDto,
+  CommandResultDto,
   DesktopActionInput,
   DesktopRestoreInput,
   DesktopPreferencesDto,
@@ -118,7 +121,9 @@ const api: SbclAgentDesktopApi = {
     providerProfiles: (environmentId?: string): Promise<QueryResultDto<ProviderProfileSummaryDto>> =>
       ipcRenderer.invoke("query:provider-profiles", environmentId),
     packageManagementSummary: (environmentId?: string) =>
-      ipcRenderer.invoke("query:package-management-summary", environmentId)
+      ipcRenderer.invoke("query:package-management-summary", environmentId),
+    calculatorSummary: (environmentId?: string): Promise<QueryResultDto<CalculatorSummaryDto>> =>
+      ipcRenderer.invoke("query:calculator-summary", environmentId)
   },
   command: {
     createIntent: (input) => ipcRenderer.invoke("command:create-intent", input),
@@ -151,6 +156,8 @@ const api: SbclAgentDesktopApi = {
     extractConversationAttachmentText: (input) =>
       ipcRenderer.invoke("command:extract-conversation-attachment-text", input),
     evaluateInContext: (input) => ipcRenderer.invoke("command:evaluate-in-context", input),
+    evaluateCalculator: (input): Promise<CommandResultDto<CalculatorResultDto>> =>
+      ipcRenderer.invoke("command:evaluate-calculator", input),
     stageSourceChange: (input) => ipcRenderer.invoke("command:stage-source-change", input),
     writeSourceFile: (input) => ipcRenderer.invoke("command:write-source-file", input),
     reloadSourceFile: (input) => ipcRenderer.invoke("command:reload-source-file", input),

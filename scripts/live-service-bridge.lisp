@@ -865,6 +865,9 @@
       ((string= operation "runtime.summary")
        (let ((session (bridge-session environment)))
          (sbcl-agent-call "QUERY-RUNTIME-SUMMARY-SERVICE" session)))
+      ((string= operation "calculator.summary")
+       (let ((session (bridge-session environment)))
+         (sbcl-agent-call "QUERY-CALCULATOR-SUMMARY-SERVICE" session)))
       ((string= operation "runtime.telemetry")
        (let ((session (bridge-session environment)))
          (sbcl-agent-call "QUERY-RUNTIME-TELEMETRY-SERVICE" session)))
@@ -1058,13 +1061,29 @@
               (form (request-object-value request-json "form"))
               (package (request-object-value request-json "packageName"))
               (mutating (request-object-value request-json "mutating")))
-         (unless form
-           (error "runtime.eval requires a form payload"))
-         (sbcl-agent-call "COMMAND-RUNTIME-EVAL-SERVICE"
+        (unless form
+          (error "runtime.eval requires a form payload"))
+        (sbcl-agent-call "COMMAND-RUNTIME-EVAL-SERVICE"
+                         session
+                         form
+                         :package package
+                         :mutating mutating)))
+      ((string= operation "calculator.evaluate")
+       (let* ((session (bridge-session environment))
+              (expression (request-object-value request-json "expression"))
+              (mode (or (keywordish (request-object-value request-json "mode")) :basic))
+              (base (or (request-object-value request-json "base") 10))
+              (word-size (or (request-object-value request-json "wordSize") 64))
+              (angle-unit (or (keywordish (request-object-value request-json "angleUnit")) :radians)))
+         (unless expression
+           (error "calculator.evaluate requires an expression payload"))
+         (sbcl-agent-call "COMMAND-CALCULATOR-EVALUATE-SERVICE"
                           session
-                          form
-                          :package package
-                          :mutating mutating)))
+                          expression
+                          :mode mode
+                          :base base
+                          :word-size word-size
+                          :angle-unit angle-unit)))
       ((string= operation "source.stage-change")
        (let* ((session (bridge-session environment))
               (path (request-object-value request-json "path"))

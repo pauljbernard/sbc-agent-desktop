@@ -1667,6 +1667,47 @@ export interface DocumentationPageDto extends DocumentationPageSummaryDto {
   markdown: string;
 }
 
+export type CalculatorMode = "basic" | "scientific" | "programmer";
+export type CalculatorAngleUnit = "radians" | "degrees";
+
+export interface CalculatorSummaryDto {
+  availableModes: CalculatorMode[];
+  defaultMode: CalculatorMode;
+  availableBases: number[];
+  defaultBase: number;
+  availableWordSizes: number[];
+  defaultWordSize: number;
+  availableAngleUnits: CalculatorAngleUnit[];
+  defaultAngleUnit: CalculatorAngleUnit;
+  summary: string;
+}
+
+export interface CalculatorResultDto {
+  mode: CalculatorMode;
+  expression: string;
+  displayValue: string;
+  scientificNotation: string;
+  base: number;
+  wordSize: number;
+  angleUnit: CalculatorAngleUnit;
+  integerResultP: boolean;
+  decimalValue: string;
+  unsignedDecimalValue?: string | null;
+  hexadecimalValue?: string | null;
+  octalValue?: string | null;
+  binaryValue?: string | null;
+  summary: string;
+}
+
+export interface CalculatorEvaluateInput {
+  environmentId: string;
+  expression: string;
+  mode: CalculatorMode;
+  base?: number;
+  wordSize?: number;
+  angleUnit?: CalculatorAngleUnit;
+}
+
 export interface EntityRefDto {
   entityType: string;
   entityId: string;
@@ -1761,6 +1802,7 @@ export interface QueryApi {
   ): Promise<QueryResultDto<WorkflowRecordDto>>;
   providerProfiles(environmentId?: string): Promise<QueryResultDto<ProviderProfileSummaryDto>>;
   packageManagementSummary(environmentId?: string): Promise<QueryResultDto<PackageManagementSummaryDto>>;
+  calculatorSummary(environmentId?: string): Promise<QueryResultDto<CalculatorSummaryDto>>;
 }
 
 export interface CommandApi {
@@ -1882,6 +1924,7 @@ export interface CommandApi {
     environmentId: string;
     name: string;
   }): Promise<CommandResultDto<PackageManagementCommandResultDto>>;
+  evaluateCalculator(input: CalculatorEvaluateInput): Promise<CommandResultDto<CalculatorResultDto>>;
 }
 
 export interface EventApi {

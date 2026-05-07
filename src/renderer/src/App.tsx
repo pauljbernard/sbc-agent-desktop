@@ -139,6 +139,7 @@ import {
   type DesktopWindowRecord
 } from "./desktop-windowing";
 import { BrowserDataTable, type BrowserTableFilterOption } from "./browser-data-table";
+import { CalculatorSurface } from "./calculator-surface";
 import { Badge, PanelHeader, toneForCommandStatus, transcriptRecencyLabel } from "./surface-support";
 import {
   LinkedEntityList,
@@ -2873,6 +2874,11 @@ export function App() {
 
         if (action === "project:open") {
           setIsProjectOpenDialogOpen(true);
+          return;
+        }
+
+        if (action === "application:calculator") {
+          openCalculatorApplication();
           return;
         }
 
@@ -7798,6 +7804,10 @@ export function App() {
     restoreDesktopWindow(windowId);
   }
 
+  function openCalculatorApplication(): void {
+    openDesktopWindow("window:calculator");
+  }
+
   function closeDesktopWindow(windowId: string): void {
     updateActiveDesktopWindows((current) => updateWindowState(current, windowId, "closed"));
   }
@@ -7861,7 +7871,8 @@ export function App() {
         "window:workspace-surface",
         "window:transcript-surface",
         "window:configuration-surface",
-        "window:conversations-surface"
+        "window:conversations-surface",
+        "window:calculator"
       ]
     }));
     setActiveDesktopId(nextDesktopId);
@@ -8265,6 +8276,19 @@ export function App() {
         });
       }
 
+      if (!suppressedDesktopWindowIds.includes("window:calculator")) {
+        next = upsertDesktopWindow(next, {
+          id: "window:calculator",
+          kind: "utility",
+          title: "Calculator",
+          summary: "",
+          state: next.find((window) => window.id === "window:calculator")?.state ?? "minimized",
+          zIndex: next.find((window) => window.id === "window:calculator")?.zIndex ?? 16,
+          ...DEFAULT_DESKTOP_WINDOW_FRAMES["window:calculator"],
+          closable: true
+        });
+      }
+
       for (const panelId of shellLayout.undockedPanelIds) {
         const panelDefinition = SHELL_DOCK_PANEL_DEFINITIONS[panelId];
         if (!panelDefinition) {
@@ -8277,7 +8301,7 @@ export function App() {
           title: panelDefinition.label,
           summary: `${panelDefinition.label} is floating in the desktop stage until it is docked back into its owning rail.`,
           state: next.find((window) => window.id === undockedShellWindowId(panelId))?.state ?? "open",
-          zIndex: next.find((window) => window.id === undockedShellWindowId(panelId))?.zIndex ?? 16,
+          zIndex: next.find((window) => window.id === undockedShellWindowId(panelId))?.zIndex ?? 17,
           ...frame,
           closable: false
         });
@@ -8415,6 +8439,13 @@ export function App() {
           };
         }
 
+        if (window.id === "window:calculator") {
+          return {
+            ...window,
+            summary: ""
+          };
+        }
+
         return window;
       }),
     [activeHostedAppDescriptor.label, currentWorkspaceResult?.data.summary, desktopModel?.panels?.display?.selectedTitle, desktopWindows, runtimeSummary, selectedBrowserDomainDescriptor.label, selectedBrowserDomainDescriptor.summary, selectedConfigurationSection, selectedConversationSection, selectedOperateSurfaceDescriptor.label, selectedOperateSurfaceDescriptor.summary, selectedProjectDetail?.summary, selectedProjectSummary?.summary, shellCurrentSurfaceSummary.summary, shellProactiveLead?.summary, summary?.activeContext.focusSummary, transcriptEntries, workspaceDescriptor.summary]
@@ -8433,6 +8464,7 @@ export function App() {
         navigateToBrowserDomain={(domainId) => {
           void navigateToBrowserDomain(domainId as BrowserDomain);
         }}
+        openCalculatorApplication={openCalculatorApplication}
         navigateToConfigurationSurface={() => {
           void navigateToConfigurationSurface();
         }}
@@ -12515,7 +12547,8 @@ function DesktopWindowStage({
       "window:browser-surface",
       "window:editor-surface",
       "window:projects-surface",
-      "window:conversations-surface"
+      "window:conversations-surface",
+      "window:calculator"
     ].includes(window.id);
   }
 
@@ -12523,7 +12556,11 @@ function DesktopWindowStage({
     if (shellDockPanelIdFromUndockedWindowId(window.id)) {
       return false;
     }
-    if (window.id === "window:conversations-surface" || window.id === "window:editor-surface") {
+    if (
+      window.id === "window:conversations-surface" ||
+      window.id === "window:editor-surface" ||
+      window.id === "window:calculator"
+    ) {
       return false;
     }
     return window.summary.trim().length > 0;
@@ -13448,6 +13485,11 @@ function DesktopWindowStage({
               {window.id === "window:configuration-surface" ? (
                 <div className="desktop-window-browser-surface" onClick={(event) => event.stopPropagation()}>
                   <ConfigurationWorkspace {...configurationWorkspaceProps} />
+                </div>
+              ) : null}
+              {window.id === "window:calculator" ? (
+                <div className="desktop-window-browser-surface" onClick={(event) => event.stopPropagation()}>
+                  <CalculatorSurface environmentId={bindingId || null} />
                 </div>
               ) : null}
               {window.id === "window:listener-workbench" ? (

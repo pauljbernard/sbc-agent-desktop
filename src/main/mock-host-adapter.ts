@@ -14,6 +14,9 @@ import type {
   ArtifactSummaryDto,
   BindingDto,
   BindProjectTestingHarnessInput,
+  CalculatorEvaluateInput,
+  CalculatorResultDto,
+  CalculatorSummaryDto,
   CommandResultDto,
   ConfigureProviderProfileInput,
   ConsoleLogQueryInput,
@@ -135,6 +138,79 @@ import {
 import type { SbclAgentHostAdapter } from "./adapter-contract";
 
 const execFileAsync = promisify(execFile);
+
+function evaluateMockCalculatorExpression(input: CalculatorEvaluateInput): CalculatorResultDto {
+  const mode = input.mode;
+  const base = input.base ?? 10;
+  const wordSize = input.wordSize ?? 64;
+  const angleUnit = input.angleUnit ?? "radians";
+  const trimmed = input.expression.trim();
+  if (trimmed.length === 0) {
+    throw new Error("Calculator expression cannot be empty.");
+  }
+
+  if (mode === "programmer") {
+    const normalized = trimmed
+      .replaceAll("xor", "^")
+      .replaceAll("<<", "<<")
+      .replaceAll(">>", ">>");
+    const rawValue = Function(`return (${normalized});`)() as number;
+    const mask = wordSize >= 32 ? 0xffffffff : (1 << wordSize) - 1;
+    const unsignedValue = rawValue & mask;
+    const signBit = wordSize >= 32 ? 0x80000000 : 1 << (wordSize - 1);
+    const signedValue = unsignedValue & signBit ? unsignedValue - (wordSize >= 32 ? 0x100000000 : 1 << wordSize) : unsignedValue;
+    return {
+      mode,
+      expression: trimmed,
+      displayValue: String(signedValue),
+      scientificNotation: Number(signedValue).toExponential(12),
+      base,
+      wordSize,
+      angleUnit,
+      integerResultP: true,
+      decimalValue: String(signedValue),
+      unsignedDecimalValue: String(unsignedValue >>> 0),
+      hexadecimalValue: `0x${(unsignedValue >>> 0).toString(16).toUpperCase()}`,
+      octalValue: `0o${(unsignedValue >>> 0).toString(8)}`,
+      binaryValue: `0b${(unsignedValue >>> 0).toString(2)}`,
+      summary: `Mock programmer evaluation produced ${signedValue}.`
+    };
+  }
+
+  const degreesToRadians = (value: number) => (value * Math.PI) / 180;
+  const sin = (value: number) => Math.sin(angleUnit === "degrees" ? degreesToRadians(value) : value);
+  const cos = (value: number) => Math.cos(angleUnit === "degrees" ? degreesToRadians(value) : value);
+  const tan = (value: number) => Math.tan(angleUnit === "degrees" ? degreesToRadians(value) : value);
+  const ln = (value: number) => Math.log(value);
+  const log10 = (value: number) => Math.log10(value);
+  const normalized = trimmed
+    .replaceAll("^", "**")
+    .replaceAll("pi", "Math.PI")
+    .replaceAll(/\be\b/g, "Math.E");
+  const value = Number(
+    Function("sin", "cos", "tan", "sqrt", "ln", "log10", "exp", `return (${normalized});`)(
+      sin,
+      cos,
+      tan,
+      Math.sqrt,
+      ln,
+      log10,
+      Math.exp
+    )
+  );
+  return {
+    mode,
+    expression: trimmed,
+    displayValue: String(value),
+    scientificNotation: value.toExponential(12),
+    base,
+    wordSize,
+    angleUnit,
+    integerResultP: Number.isInteger(value),
+    decimalValue: String(value),
+    summary: `Mock ${mode} evaluation produced ${value}.`
+  };
+}
 
 function conversationAttachmentTempExtension(name: string, mediaType: string): string {
   const lowerName = name.toLowerCase();
@@ -947,6 +1023,33 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
     return queryRuntimeSummary(this.resolveEnvironmentId(environmentId));
   }
 
+  async calculatorSummary(
+    environmentId?: string
+  ): Promise<QueryResultDto<CalculatorSummaryDto>> {
+    return {
+      contractVersion: 1,
+      domain: "calculator",
+      operation: "calculator.summary",
+      kind: "query",
+      status: "ok",
+      data: {
+        availableModes: ["basic", "scientific", "programmer"],
+        defaultMode: "basic",
+        availableBases: [2, 8, 10, 16],
+        defaultBase: 10,
+        availableWordSizes: [8, 16, 32, 64],
+        defaultWordSize: 64,
+        availableAngleUnits: ["radians", "degrees"],
+        defaultAngleUnit: "radians",
+        summary: `Mock calculator summary for ${this.resolveEnvironmentId(environmentId)}.`
+      },
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding
+      }
+    };
+  }
+
   async packageManagementSummary(
     environmentId?: string
   ): Promise<QueryResultDto<PackageManagementSummaryDto>> {
@@ -1102,6 +1205,23 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
     packageName?: string;
   }) {
     return commandEvaluateInContext(input);
+  }
+
+  async evaluateCalculator(
+    input: CalculatorEvaluateInput
+  ): Promise<CommandResultDto<CalculatorResultDto>> {
+    return {
+      contractVersion: 1,
+      domain: "calculator",
+      operation: "calculator.evaluate",
+      kind: "command",
+      status: "ok",
+      data: evaluateMockCalculatorExpression(input),
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding
+      }
+    };
   }
 
   async stageSourceChange(input: {

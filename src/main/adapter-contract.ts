@@ -5,6 +5,9 @@ import type {
   ApprovalRequestSummaryDto,
   ArtifactDetailDto,
   ArtifactSummaryDto,
+  CalculatorEvaluateInput,
+  CalculatorResultDto,
+  CalculatorSummaryDto,
   BindingDto,
   BindProjectTestingHarnessInput,
   CommandResultDto,
@@ -184,6 +187,7 @@ export interface SbclAgentHostAdapter {
     dataUrl: string;
   }): Promise<string | null>;
   runtimeSummary(environmentId?: string): Promise<QueryResultDto<RuntimeSummaryDto>>;
+  calculatorSummary(environmentId?: string): Promise<QueryResultDto<CalculatorSummaryDto>>;
   runtimeTelemetrySnapshot(environmentId?: string): Promise<QueryResultDto<RuntimeTelemetrySnapshotDto>>;
   runtimeInspectSymbol(input: {
     environmentId: string;
@@ -219,6 +223,9 @@ export interface SbclAgentHostAdapter {
     form: string;
     packageName?: string;
   }): Promise<CommandResultDto<RuntimeEvalResultDto>>;
+  evaluateCalculator(
+    input: CalculatorEvaluateInput
+  ): Promise<CommandResultDto<CalculatorResultDto>>;
   stageSourceChange(input: {
     environmentId: string;
     path: string;
