@@ -55,7 +55,7 @@ async function launchDesktop(
     await page.waitForFunction(() => document.body?.innerText?.trim().length > 0, undefined, {
       timeout: 30000
     });
-    await expect(page.locator("body")).toContainText("IntentOS Shell", { timeout: 30000 });
+    await expect(page.locator("body")).toContainText("Surface", { timeout: 30000 });
     const chooser = page.getByRole("dialog", { name: "Open Environment Image" });
     await chooser.waitFor({ state: "visible", timeout: 5000 }).catch(() => undefined);
     if (await chooser.isVisible().catch(() => false)) {

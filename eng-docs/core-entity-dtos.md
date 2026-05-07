@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document defines the first normalized DTO set for the core entities the desktop application needs to render the P0 workspaces.
+This document defines the first normalized DTO set for the core entities Surface needs to render the P0 workspaces.
 
 The goal is not to freeze every entity in the system immediately. The goal is to define stable, implementation-ready read models for the highest-value desktop surfaces.
 
@@ -22,7 +22,7 @@ Important cross-entity relationships should be represented explicitly by id.
 
 ### Rule 4: Status Must Be Legible
 
-Statuses should be normalized enough for the desktop app to render them consistently.
+Statuses should be normalized enough for Surface to render them consistently.
 
 ## Environment DTOs
 

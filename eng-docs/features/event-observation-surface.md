@@ -17,7 +17,7 @@ Without a real event observation surface:
 - live system behavior is harder to supervise
 - concurrent work becomes harder to understand
 - event evidence stays too abstract
-- the desktop app risks reconstructing state indirectly instead of observing it directly
+- Surface risks reconstructing state indirectly instead of observing it directly
 
 ## User Outcome
 

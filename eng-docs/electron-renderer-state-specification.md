@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document specifies the renderer-state architecture for the `sbcl-agent` Electron desktop application.
+This document specifies the renderer-state architecture for the `sbcl-agent` Electron application for `Surface`.
 
 The renderer is responsible for presenting workspaces, entity views, and inspectors. It must do this without becoming the hidden authority for domain truth or the hidden owner of desktop transport behavior.
 

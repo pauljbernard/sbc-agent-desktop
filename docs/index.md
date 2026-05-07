@@ -2,13 +2,13 @@
 title: Home
 ---
 
-# sbcl-agent Desktop
+# Surface
 
-`sbcl-agent-ux` is a macOS desktop application for developers and engineers working inside an `sbcl-agent` environment.
+`Surface` is the macOS application for developers and engineers working inside an `sbcl-agent` environment.
 
 This site is the user-facing documentation for operating the desktop.
 
-It is not the engineering specification set for building the application itself. The engineering design documents live in the repository under `eng-docs/` and are best read from GitHub:
+It is not the engineering specification set for building Surface itself. The engineering design documents live in the repository under `eng-docs/` and are best read from GitHub:
 
 - [Engineering Constitution](https://github.com/pauljbernard/sbcl-agent-desktop/blob/master/eng-docs/constitution.md)
 - [Desktop Shell And Control-Panel Model](https://github.com/pauljbernard/sbcl-agent-desktop/blob/master/eng-docs/desktop-shell-and-control-panel-model.md)
@@ -36,7 +36,7 @@ The desktop now supports a stronger shell model than the older documentation imp
 - panels can be undocked into floating windows in the central stage
 - floating panels can be docked back to either the left or right rail
 
-If a page elsewhere in the site still describes the older shell too loosely, prefer the current behavior of the running application.
+If a page elsewhere in the site still describes the older shell too loosely, prefer the current behavior of the running `Surface` application.
 
 ## Start Here
 

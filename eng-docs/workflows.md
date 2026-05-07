@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document defines the critical governed workflows the macOS desktop application must support clearly from the start.
+This document defines the critical governed workflows the macOS application `Surface` must support clearly from the start.
 
 These workflows are important because they are where `sbcl-agent` most clearly differs from transcript-first assistants, ordinary shells, and conventional IDEs.
 

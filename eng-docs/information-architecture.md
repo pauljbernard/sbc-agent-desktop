@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document defines the detailed information architecture for the `sbcl-agent` desktop application.
+This document defines the detailed information architecture for the `Surface` application.
 
 It extends the higher-level [Desktop Information Architecture](desktop-ia.md) document into a more implementation-oriented structure for navigation, workspace composition, entity access, and cross-workspace consistency.
 
@@ -320,7 +320,7 @@ Attention should also be aggregatable by thread, actor, and work type so users c
 
 ## State Persistence
 
-The desktop app should persist, where appropriate:
+Surface should persist, where appropriate:
 
 - current environment selection
 - last-open workspace

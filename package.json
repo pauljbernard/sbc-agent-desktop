@@ -1,6 +1,6 @@
 {
   "name": "sbcl-agent-ux",
-  "productName": "IntentOS Shell",
+  "productName": "Surface",
   "version": "0.1.0",
   "private": true,
   "description": "An environment based agentic first development enviornment",
@@ -72,7 +72,7 @@
   },
   "build": {
     "appId": "com.paulbernard.agentdesktop",
-    "productName": "IntentOS Shell",
+    "productName": "Surface",
     "directories": {
       "output": "release"
     },
@@ -83,7 +83,7 @@
       "package.json"
     ],
     "mac": {
-      "artifactName": "IntentOS Shell.${ext}",
+      "artifactName": "Surface.${ext}",
       "category": "public.app-category.developer-tools",
       "target": [
         {

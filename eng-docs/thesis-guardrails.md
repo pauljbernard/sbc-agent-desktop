@@ -2,11 +2,11 @@
 
 ## Purpose
 
-This document exists to prevent the `sbcl-agent` macOS desktop application from regressing into the older style of software development lifecycle that `sbcl-agent` was created to move beyond.
+This document exists to prevent the `Surface` macOS application from regressing into the older style of software development lifecycle that `sbcl-agent` was created to move beyond.
 
 The risk is real.
 
-A desktop app can accidentally preserve the language of the new model while reintroducing the mechanics of the old one:
+`Surface` can accidentally preserve the language of the new model while reintroducing the mechanics of the old one:
 
 - source files become the real truth again
 - runtime becomes secondary or hidden
@@ -18,7 +18,7 @@ If that happens, the product fails its thesis even if the UI looks polished.
 
 ## The Thesis To Protect
 
-The desktop app must protect the core `sbcl-agent` thesis:
+Surface must protect the core `sbcl-agent` thesis:
 
 - software development should not be modeled only as file editing plus delayed reconstruction
 - the running environment is part of the truth of the system
@@ -281,7 +281,7 @@ These proposals should be rejected.
 
 ## Acceptance Test
 
-The desktop application is respecting the `sbcl-agent` thesis when:
+Surface is respecting the `sbcl-agent` thesis when:
 
 1. the environment remains the visible root object
 2. runtime truth is easier to inspect, not easier to ignore

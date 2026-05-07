@@ -6,13 +6,13 @@ Direct Evaluation Surface
 
 ## Summary
 
-Create a first-class expert execution surface in the macOS desktop application for evaluating Lisp forms and invoking governed runtime actions with minimal friction.
+Create a first-class expert execution surface in the macOS application `Surface` for evaluating Lisp forms and invoking governed runtime actions with minimal friction.
 
 This feature preserves one of the deepest strengths of serious Common Lisp environments while keeping the result aligned with `sbcl-agent`’s governed, evidence-aware, environment-first model.
 
 ## Problem
 
-If direct evaluation is hidden behind conversation, buried in the runtime workspace, or made overly ceremonial, the desktop app will fall below the usability bar set by mature Lisp environments.
+If direct evaluation is hidden behind conversation, buried in the runtime workspace, or made overly ceremonial, Surface will fall below the usability bar set by mature Lisp environments.
 
 If direct evaluation is completely unconstrained, the product loses one of its most important architectural strengths: governed execution with visible policy, evidence, and workflow consequences.
 
@@ -78,7 +78,7 @@ Primary risks:
 
 - the feature becomes just a desktop wrapper around the shell prompt
 - governed actions feel indistinguishable from low-risk direct evaluation
-- execution becomes so slowed by UI ceremony that users avoid the desktop app
+- execution becomes so slowed by UI ceremony that users avoid Surface
 - result presentation collapses into raw transcript-style output
 
 Mitigation:
@@ -173,7 +173,7 @@ The surface must clearly distinguish:
 
 ## Acceptance Criteria
 
-- The desktop app provides a first-class, keyboard-efficient direct evaluation surface.
+- Surface provides a first-class, keyboard-efficient direct evaluation surface.
 - Users can evaluate forms without routing through conversation-first UI.
 - Governed consequences are surfaced explicitly when relevant and do not masquerade as ordinary completion.
 - Results are linked to operations, approvals, artifacts, or incidents when those entities exist.

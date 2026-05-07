@@ -103,7 +103,7 @@ async function waitForShellReady(page: Page): Promise<void> {
   await page.waitForFunction(() => document.body?.innerText?.trim().length > 0, undefined, {
     timeout: 30000
   });
-  await expect(page.locator("body")).toContainText("IntentOS Shell", { timeout: 30000 });
+  await expect(page.locator("body")).toContainText("Surface", { timeout: 30000 });
 
   const chooser = page.getByRole("dialog", { name: "Open Environment Image" });
   if (await chooser.isVisible().catch(() => false)) {
@@ -181,8 +181,8 @@ async function openExitDialog(page: Page): Promise<void> {
   if (await utilitiesTab.count()) {
     await utilitiesTab.click();
   }
-  await page.getByRole("button", { name: "Exit IntentOS Shell", exact: true }).first().click();
-  await expect(page.getByRole("dialog", { name: "Exit IntentOS Shell" })).toBeVisible({ timeout: 15000 });
+  await page.getByRole("button", { name: "Exit Surface", exact: true }).first().click();
+  await expect(page.getByRole("dialog", { name: "Exit Surface" })).toBeVisible({ timeout: 15000 });
 }
 
 async function openWorkspace(page: Page, name: string): Promise<void> {
@@ -230,7 +230,7 @@ test.describe("live SDLC journey", () => {
       invokeBridge(environmentStatePath, "project.set-constitution", {
         projectId,
         constitution: {
-          purpose: "Validate the full SDLC journey inside IntentOS Shell.",
+          purpose: "Validate the full SDLC journey inside Surface.",
           principles: ["governed mutation", "traceable closure", "persistent evidence"]
         }
       });
@@ -532,7 +532,7 @@ test.describe("live SDLC journey", () => {
       });
 
       await openExitDialog(page);
-      const dialog = page.getByRole("dialog", { name: "Exit IntentOS Shell" });
+      const dialog = page.getByRole("dialog", { name: "Exit Surface" });
       await dialog.locator("input").fill(imageName);
       await dialog.getByRole("button", { name: "Save As New", exact: true }).click();
 
@@ -788,7 +788,7 @@ test.describe("live SDLC journey", () => {
       });
 
       await openExitDialog(page);
-      const dialog = page.getByRole("dialog", { name: "Exit IntentOS Shell" });
+      const dialog = page.getByRole("dialog", { name: "Exit Surface" });
       await dialog.getByRole("button", { name: "Discard", exact: true }).click();
 
       await app.close().catch(() => undefined);

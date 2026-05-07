@@ -15,7 +15,7 @@ This capability model assumes the UX is the frontend for `sbcl-agent`.
 
 The frontend does not define the product's core truth. It exposes, navigates, and governs access to the truth already owned by the `sbcl-agent` environment kernel and its service interfaces.
 
-The primary presentation target is a native macOS desktop application.
+The primary presentation target is the native macOS application `Surface`.
 
 ## Design Rule
 
@@ -56,7 +56,7 @@ The capabilities fall into eight primary domains.
 
 ## Desktop Product Consequences
 
-Because the target is a macOS desktop application, the capability model should assume:
+Because the target is the macOS application `Surface`, the capability model should assume:
 
 - persistent long-lived sessions
 - high information density where it improves comprehension

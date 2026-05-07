@@ -4,7 +4,7 @@ title: Desktop Tour
 
 # Desktop Tour
 
-The desktop shell is organized around a stable frame:
+The `Surface` shell is organized around a stable frame:
 
 - a full-width shell header
 - a left rail
@@ -60,14 +60,14 @@ The current information architecture follows one main rule:
 
 This keeps the main working surface at the top of the page instead of burying it under dashboard panels.
 
-The shell is designed to support one working sequence:
+`Surface` is designed to support one working sequence:
 
 1. orient to the environment
 2. inspect the live system or conversation state
 3. act through browser, listener, or governed workflow
 4. review evidence, incidents, or closure posture
 
-That sequence is intentional. The desktop is trying to reduce the gap between inspection, action, and proof.
+That sequence is intentional. `Surface` is trying to reduce the gap between inspection, action, and proof.
 
 ## Right Rail
 
@@ -90,7 +90,7 @@ The right rail should help you keep orientation, but it should not replace the m
 
 ## Floating Panels
 
-Undocked rail panels no longer fall into a dock at the bottom of the application.
+Undocked rail panels no longer fall into a dock at the bottom of `Surface`.
 
 When you undock a panel, it becomes a floating window in the central desktop stage. That window keeps explicit actions for docking back into:
 

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document defines the implementation plan for the `sbcl-agent` service host required by the Electron desktop application.
+This document defines the implementation plan for the `sbcl-agent` service host required by the Electron application for `Surface`.
 
 It translates the service-host and protocol architecture into a staged execution plan for the `sbcl-agent` codebase.
 
@@ -13,13 +13,13 @@ Deliver a local long-lived `sbcl-agent` service host that:
 - exposes the public service interface layer
 - supports control-plane request/response interaction
 - supports event-plane replay and live delivery
-- can be consumed by the Electron desktop application without shell coupling
+- can be consumed by the Electron application for `Surface` without shell coupling
 
 ## Guiding Rules
 
 - environment authority remains inside `sbcl-agent`
 - external access happens only through stable service contracts
-- event semantics are canonicalized in `sbcl-agent`, not in the desktop app
+- event semantics are canonicalized in `sbcl-agent`, not in Surface
 - compatibility-session internals do not become the external API
 
 ## Workstreams
@@ -111,7 +111,7 @@ Ensure external payloads are stable JSON DTOs rather than internal Lisp shapes.
 
 ### Objective
 
-Make canonical environment events available to the desktop app through replayable and live mechanisms.
+Make canonical environment events available to Surface through replayable and live mechanisms.
 
 ### Deliverables
 
@@ -185,7 +185,7 @@ Deliver:
 
 Purpose:
 
-- support live supervision in the desktop app
+- support live supervision in Surface
 
 ### Phase 4: P0 Coverage Expansion
 
@@ -201,7 +201,7 @@ Purpose:
 
 ## Dependency Notes
 
-The desktop app can begin before every service is complete, but its first useful milestone depends on:
+Surface can begin before every service is complete, but its first useful milestone depends on:
 
 - host runtime
 - environment summary/status

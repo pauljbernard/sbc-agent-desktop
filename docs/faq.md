@@ -6,7 +6,7 @@ title: FAQ
 
 ## Is This A Web App?
 
-No. The intended product is a desktop application, initially on macOS.
+No. The intended product is `Surface`, initially on macOS.
 
 ## Is This Just A Chat Interface?
 
@@ -22,7 +22,7 @@ Because the product thesis assumes the running image is part of the truth of the
 
 ## Why Are Approvals, Incidents, And Evidence In The Same Product?
 
-Because they are part of real engineering work in this model. The desktop is meant to keep those obligations visible instead of scattering them across unrelated tools.
+Because they are part of real engineering work in this model. `Surface` is meant to keep those obligations visible instead of scattering them across unrelated tools.
 
 ## Where Did The Old Specs Go?
 
@@ -30,4 +30,4 @@ They were moved to [`../eng-docs/`](../eng-docs/constitution.md). Those are engi
 
 ## Where Should I Start If I Just Want To Use The Desktop?
 
-Start with [Getting Started](getting-started.md), then [Desktop Tour](desktop-tour.md), then go directly to the workspace you need.
+Start with [Getting Started](getting-started.md), then [Desktop Tour](desktop-tour.md), then go directly to the workspace you need in `Surface`.

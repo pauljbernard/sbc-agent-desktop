@@ -1381,8 +1381,9 @@ select {
 }
 
 .shell-column-splitter-left {
-  left: calc(var(--shell-padding-x, 14px) + var(--shell-sidebar-width, 248px) + (var(--shell-gap, 14px) / 2) - 24px);
+  left: calc(var(--shell-padding-x, 14px) + var(--shell-sidebar-width, 248px) + (var(--shell-gap, 14px) / 2) - 8px);
   right: auto;
+  width: 16px;
 }
 
 .shell-resize-capture-layer {

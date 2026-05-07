@@ -2,9 +2,9 @@
 
 ## Purpose
 
-This document defines the frontend-facing service contract model for the `sbcl-agent` macOS desktop application.
+This document defines the frontend-facing service contract model for the `Surface` macOS application.
 
-The point is not to finalize transport details. The point is to define stable service responsibilities and contract shapes so the desktop app does not couple itself to shell internals, compatibility-session helpers, or ad hoc struct reads.
+The point is not to finalize transport details. The point is to define stable service responsibilities and contract shapes so Surface does not couple itself to shell internals, compatibility-session helpers, or ad hoc struct reads.
 
 ## Service Architecture Rule
 
@@ -13,7 +13,7 @@ The service boundary sits between:
 1. the `sbcl-agent` environment kernel
 2. the desktop presentation layer
 
-The shell and the desktop app should both become clients of the same governed services.
+The shell and Surface should both become clients of the same governed services.
 
 ## Contract Rules
 
@@ -36,7 +36,7 @@ Mutation commands must:
 
 ### Rule 3: Events Are Canonical
 
-The desktop app should observe system change through canonical service events, not through transcript parsing or private runtime polling tricks.
+Surface should observe system change through canonical service events, not through transcript parsing or private runtime polling tricks.
 
 ### Rule 4: Environment Is The Context Root
 
@@ -75,7 +75,7 @@ Commands should return:
 - accepted, rejected, or awaiting-approval result
 - created or affected entity references
 - operation identifiers
-- next-action hints for the desktop app
+- next-action hints for Surface
 
 ### Event Contract
 
@@ -368,7 +368,7 @@ DTOs should consistently include references to:
 
 ### Attention Semantics
 
-Each query model should make it possible for the desktop app to determine whether an item is:
+Each query model should make it possible for Surface to determine whether an item is:
 
 - active
 - waiting
@@ -379,7 +379,7 @@ Each query model should make it possible for the desktop app to determine whethe
 
 ### Explanation Fields
 
-Where the kernel already has governance reasoning, the service layer should expose concise explanatory fields rather than forcing the desktop app to synthesize them from raw payloads.
+Where the kernel already has governance reasoning, the service layer should expose concise explanatory fields rather than forcing Surface to synthesize them from raw payloads.
 
 Examples:
 
@@ -390,7 +390,7 @@ Examples:
 
 ## Event Subscription Contract
 
-The desktop app should consume a service-level event stream compatible with the current cursor-based environment event contract.
+Surface should consume a service-level event stream compatible with the current cursor-based environment event contract.
 
 Minimum contract:
 

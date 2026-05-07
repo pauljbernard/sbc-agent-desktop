@@ -8,7 +8,7 @@ Every requirement, architecture decision, workflow, and interface in this reposi
 
 `sbcl-agent-ux` is the frontend for `sbcl-agent`. This constitution therefore governs how the frontend represents and extends the environment model already established in the `sbcl-agent` repository.
 
-The primary frontend is a macOS desktop application. This constitution applies to that desktop application first.
+The primary frontend is the macOS application `Surface`. This constitution applies to `Surface` first.
 
 ## Preamble: Accept The Development Model Shift
 

@@ -4,7 +4,7 @@ title: Getting Started
 
 # Getting Started
 
-This guide is for developers and engineers using the desktop application.
+This guide is for developers and engineers using Surface.
 
 If you are new to environment-first or agentic development, do not start here.
 
@@ -24,7 +24,7 @@ Then come back to this page for practical setup.
 - Node.js and npm
 - an available `sbcl-agent` environment if you want live integration
 
-## Run The Desktop
+## Run Surface
 
 From the repository root:
 
@@ -41,7 +41,7 @@ npm run build
 
 ## Live Integration Basics
 
-If you want the desktop to connect to a real `sbcl-agent` environment, set the live adapter environment variables before launch.
+If you want `Surface` to connect to a real `sbcl-agent` environment, set the live adapter environment variables before launch.
 
 Typical pipe-backed launch:
 
@@ -60,18 +60,18 @@ For more detail, including socket-backed launch, see [Live Connection](live-conn
 
 On first launch, expect three things:
 
-1. the desktop frame appears with the navigation rail, header, workspace canvas, inspector, and footer
-2. the desktop may start in mock-backed mode if a live host is not configured
+1. the `Surface` frame appears with the navigation rail, header, workspace canvas, inspector, and footer
+2. `Surface` may start in mock-backed mode if a live host is not configured
 3. some workspaces will show placeholder or mock environment content until a live host is bound
 
 ## Mock Mode Vs Live Mode
 
-The desktop has two main host-adapter modes:
+`Surface` has two main host-adapter modes:
 
 - `mock`: useful for UI evaluation and UX iteration
 - `live`: intended to connect the desktop to a real `sbcl-agent` host
 
-If you are unsure which one you are in, check the footer and the visible host/binding posture in the desktop frame.
+If you are unsure which one you are in, check the footer and the visible host/binding posture in the `Surface` frame.
 
 ## Recommended Reading Order
 

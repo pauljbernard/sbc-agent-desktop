@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document defines how the `sbcl-agent` desktop application should model multi-threaded, multi-conversation, and multi-actor development.
+This document defines how the `Surface` application should model multi-threaded, multi-conversation, and multi-actor development.
 
 This is a foundational product concern, not an advanced add-on.
 
@@ -13,7 +13,7 @@ Modern development is increasingly concurrent:
 - humans, workers, tools, and agents contribute simultaneously
 - long-running work continues while the operator focuses elsewhere
 
-The desktop application must make that reality legible and governable.
+Surface must make that reality legible and governable.
 
 ## Why This Matters
 
@@ -26,7 +26,7 @@ The older SDLC model quietly assumes:
 
 That assumption is increasingly false.
 
-The `sbcl-agent` desktop app must therefore support:
+The `sbcl-agent` Surface must therefore support:
 
 - multiple active threads
 - multiple active turns
@@ -55,7 +55,7 @@ However, `sbcl-agent` must go further in a different direction:
 
 ## Core Model
 
-The desktop app must assume the user may have all of the following active at once:
+Surface must assume the user may have all of the following active at once:
 
 - one environment
 - many threads

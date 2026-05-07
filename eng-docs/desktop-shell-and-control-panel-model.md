@@ -4,7 +4,7 @@
 
 This document defines the next structural step for `sbcl-agent-ux`.
 
-The current product already does meaningful work as an environment-oriented operational UI. It should not be discarded. It should, however, stop pretending to be the entire desktop shell for IntentOS.
+The current product already does meaningful work as an environment-oriented operational UI. It should not be discarded. It should, however, stop pretending to be the entire desktop shell for Surface.
 
 The correct architectural move is:
 
@@ -34,7 +34,7 @@ The live UX now proves that the environment-oriented operational model is valuab
 
 ### Desktop Shell
 
-IntentOS desktop shell is the top-level environment.
+Surface is the top-level environment.
 
 It owns:
 
@@ -205,7 +205,7 @@ Those become the initial experience of the control panel app after it is launche
 
 The shell will likely need first-class read/command surfaces for:
 
-- desktop application registry
+- Surface application registry
 - launchable application descriptors
 - open surface inventory
 - display/window inventory

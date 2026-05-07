@@ -104,7 +104,7 @@ Common risks:
 
 ### Capability Benchmark Impact
 
-Does this feature help the desktop app:
+Does this feature help Surface:
 
 - match classic Lisp development power
 - exceed it in environment and governance terms

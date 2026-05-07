@@ -6,7 +6,7 @@ Use a **local long-lived `sbcl-agent` service process** with a **cross-platform 
 
 In practical terms:
 
-- `sbcl-agent` runs as a local service process or daemon for the desktop app
+- `sbcl-agent` runs as a local service process or daemon for Surface
 - control plane uses framed request/response messages over local IPC
 - event plane uses a long-lived event subscription stream over local IPC
 - messages are JSON-encoded service envelopes derived from the existing service response model
@@ -18,7 +18,7 @@ This approach best serves the existing `sbcl-agent` architecture because:
 
 - the service boundary is already the intended UX-facing abstraction
 - the event model already assumes canonical environment events and cursor-based replay
-- the desktop app is local-first and should not depend on shell parsing
+- Surface is local-first and should not depend on shell parsing
 - the app needs low-latency, high-concurrency supervision of many active threads and actors
 - future Windows support requires a transport that is not Unix-only or macOS-only
 
@@ -31,7 +31,7 @@ Use **local IPC**:
 - Unix domain socket on macOS
 - named pipe on Windows
 
-This should be hidden behind one transport abstraction in the desktop app and one listener abstraction in `sbcl-agent`.
+This should be hidden behind one transport abstraction in Surface and one listener abstraction in `sbcl-agent`.
 
 ### Why Local IPC Instead Of Localhost HTTP As The Primary Path
 
@@ -178,7 +178,7 @@ Recommended position:
 
 ## Client Architecture Recommendation
 
-The desktop app should have:
+Surface should have:
 
 ### Service Client Module
 
@@ -213,7 +213,7 @@ The service boundary should enforce:
 - command authorization
 - policy and approval behavior
 
-The desktop app must not be trusted to enforce the real rules.
+Surface must not be trusted to enforce the real rules.
 
 ## Portability Recommendation
 
@@ -242,7 +242,7 @@ Cons:
 
 - pushes the architecture toward web-service assumptions
 - introduces port and host concerns unnecessarily
-- weaker fit for a local-first desktop app
+- weaker fit for a local-first Surface
 
 Recommendation:
 
@@ -258,7 +258,7 @@ Pros:
 Cons:
 
 - violates the service-boundary rule
-- couples the desktop app to shell internals
+- couples Surface to shell internals
 - makes structured events and concurrency supervision brittle
 
 Recommendation:
@@ -281,7 +281,7 @@ This is the model that best fits both the current `sbcl-agent` architecture and 
 
 This recommendation should be considered accepted when:
 
-1. the desktop app can communicate with `sbcl-agent` without shell coupling
+1. Surface can communicate with `sbcl-agent` without shell coupling
 2. queries and commands map cleanly to service families
 3. event streaming supports replay and reconnect through cursors
 4. the transport works on macOS now and can be adapted to Windows without protocol redesign

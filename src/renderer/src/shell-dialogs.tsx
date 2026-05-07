@@ -2235,7 +2235,7 @@ export function EnvironmentExitDialog({
   return (
     <div className="project-dialog-overlay" role="presentation" onClick={onClose}>
       <section
-        aria-label="Exit IntentOS Shell"
+        aria-label="Exit Surface"
         aria-modal="true"
         className="project-dialog"
         role="dialog"

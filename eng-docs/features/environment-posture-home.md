@@ -6,13 +6,13 @@ Environment Posture Home
 
 ## Summary
 
-Create the default landing workspace for the macOS desktop application around environment posture rather than around chat, files, or a generic dashboard.
+Create the default landing workspace for the macOS application `Surface` around environment posture rather than around chat, files, or a generic dashboard.
 
 This feature gives the user immediate visibility into the current `sbcl-agent` environment across source truth, image truth, and workflow truth. Its purpose is to make the environment itself legible as the root object of the product.
 
 ## Problem
 
-Without a strong environment-oriented landing experience, the desktop app will drift toward one of three regressions:
+Without a strong environment-oriented landing experience, Surface will drift toward one of three regressions:
 
 - chat becomes the implicit root
 - source navigation becomes the implicit root

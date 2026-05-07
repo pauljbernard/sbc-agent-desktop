@@ -2846,7 +2846,7 @@ export function App() {
   }, [flushRichDesktopPreferences, persistShellDesktopPreferences]);
 
   useEffect(() => {
-    const title = currentProject?.title ?? summary?.environmentLabel ?? "IntentOS Shell";
+    const title = currentProject?.title ?? summary?.environmentLabel ?? "Surface";
     void window.sbclAgentDesktop.desktop.setWindowTitle(title);
   }, [currentProject?.title, summary?.environmentLabel]);
 
@@ -3178,12 +3178,13 @@ export function App() {
       const leftGapCenter = sidebarRect.right + (canvasRect.left - sidebarRect.right) / 2;
       const rightGapCenter = canvasRect.right + (inspectorRect.left - canvasRect.right) / 2;
 
-      const splitterHalfWidth = 24;
+      const leftSplitterHalfWidth = 8;
+      const rightSplitterHalfWidth = 24;
       setSplitterLayout({
         top: Math.max(0, top),
         bottom: Math.max(0, bottom),
-        left: leftGapCenter - shellRect.left - splitterHalfWidth,
-        right: shellRect.right - rightGapCenter - splitterHalfWidth
+        left: leftGapCenter - shellRect.left - leftSplitterHalfWidth,
+        right: shellRect.right - rightGapCenter - rightSplitterHalfWidth
       });
     }
 
@@ -4930,7 +4931,7 @@ export function App() {
       const createProject = window.sbclAgentDesktop.command.createProject;
       if (typeof createProject !== "function") {
         throw new Error(
-          "The desktop preload bridge does not expose createProject yet. Restart IntentOS Shell so the updated preload bundle is loaded."
+          "The desktop preload bridge does not expose createProject yet. Restart Surface so the updated preload bundle is loaded."
         );
       }
       const result = await createProject({
@@ -5027,7 +5028,7 @@ export function App() {
       const createConversationThread = window.sbclAgentDesktop.command.createConversationThread;
       if (typeof createConversationThread !== "function") {
         throw new Error(
-          "The desktop preload bridge does not expose createConversationThread yet. Restart IntentOS Shell so the updated preload bundle is loaded."
+          "The desktop preload bridge does not expose createConversationThread yet. Restart Surface so the updated preload bundle is loaded."
         );
       }
       const result = await createConversationThread({
@@ -5063,7 +5064,7 @@ export function App() {
       const updateConversationThread = window.sbclAgentDesktop.command.updateConversationThread;
       if (typeof updateConversationThread !== "function") {
         throw new Error(
-          "The desktop preload bridge does not expose updateConversationThread yet. Restart IntentOS Shell so the updated preload bundle is loaded."
+          "The desktop preload bridge does not expose updateConversationThread yet. Restart Surface so the updated preload bundle is loaded."
         );
       }
       await updateConversationThread({
@@ -5129,7 +5130,7 @@ export function App() {
       const sendConversationMessage = window.sbclAgentDesktop.command.sendConversationMessage;
       if (typeof sendConversationMessage !== "function") {
         throw new Error(
-          "The desktop preload bridge does not expose sendConversationMessage yet. Restart IntentOS Shell so the updated preload bundle is loaded."
+          "The desktop preload bridge does not expose sendConversationMessage yet. Restart Surface so the updated preload bundle is loaded."
         );
       }
 
@@ -8685,7 +8686,7 @@ export function App() {
         />
       ) : null}
       <div className="window-drag-strip" aria-hidden="true">
-        <div className="window-drag-label">IntentOS Shell</div>
+        <div className="window-drag-label">Surface</div>
       </div>
 
       <div className="shell-glow shell-glow-left" />
@@ -8695,7 +8696,7 @@ export function App() {
         <section className="shell-runtime-alert" role="alert">
           <div className="shell-runtime-alert-copy">
             <p className="shell-runtime-alert-eyebrow">Runtime Recovery</p>
-            <strong>IntentOS Shell encountered a host or startup fault.</strong>
+            <strong>Surface encountered a host or startup fault.</strong>
             <p>{errorMessage}</p>
           </div>
           <button
@@ -9160,9 +9161,9 @@ export function App() {
           <div className="shell-sidebar-dock shell-sidebar-dock-collapsed">
             <div className="desktop-window-dock-rail shell-sidebar-dock-rail" role="toolbar" aria-label="Shell actions">
               <button
-                aria-label="Exit IntentOS Shell"
+                aria-label="Exit Surface"
                 className="desktop-window-dock-item shell-sidebar-dock-item-collapsed"
-                data-tooltip="Exit IntentOS Shell"
+                data-tooltip="Exit Surface"
                 onClick={openEnvironmentExitDialog}
                 type="button"
               >

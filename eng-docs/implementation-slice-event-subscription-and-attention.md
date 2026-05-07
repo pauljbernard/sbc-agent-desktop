@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This slice defines the first live supervision path in the desktop app.
+This slice defines the first live supervision path in Surface.
 
 It proves that the application can:
 
@@ -20,7 +20,7 @@ This slice includes:
 - event subscription from main process
 - cursor replay support
 - forwarding of app-safe event updates through preload
-- minimal global attention aggregation in the desktop app
+- minimal global attention aggregation in Surface
 - visible attention updates in the desktop frame
 
 This slice does **not** include:
@@ -31,7 +31,7 @@ This slice does **not** include:
 
 ## User-Visible Outcome
 
-A user can keep the desktop app open and see attention state update live when:
+A user can keep Surface open and see attention state update live when:
 
 - approval is requested
 - incident is created

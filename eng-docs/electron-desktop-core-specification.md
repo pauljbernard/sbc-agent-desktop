@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document specifies the Electron application architecture for the `sbcl-agent` desktop application.
+This document specifies the Electron application architecture for the `Surface` application.
 
 It defines how the desktop product should be split across:
 

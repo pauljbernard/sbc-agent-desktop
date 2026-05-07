@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document defines the detailed user journeys for the `sbcl-agent` desktop application.
+This document defines the detailed user journeys for the `Surface` application.
 
 These journeys describe how developers and engineers should move through the product in ways that reinforce the `sbcl-agent` thesis instead of reverting to older software development assumptions.
 
@@ -32,7 +32,7 @@ App launch or environment switch
 
 ### Flow
 
-1. User opens the application.
+1. User opens Surface.
 2. Environment Posture Home appears.
 3. User identifies:
    - active thread or turn

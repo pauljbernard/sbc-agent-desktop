@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document defines the first implementation skeleton for the Electron desktop application.
+This document defines the first implementation skeleton for the Electron application for `Surface`.
 
 Its purpose is to establish a disciplined project structure that matches the architecture already specified:
 

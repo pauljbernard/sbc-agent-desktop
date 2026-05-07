@@ -18,7 +18,7 @@ That means the frontend must not invent a simpler product story than the one `sb
 
 The desktop is therefore a presentation adapter over the `sbcl-agent` environment kernel and public services. It is not a separate application model.
 
-The primary target is a native macOS desktop application for developers and engineers. The shell remains a peer adapter, but this repository is now implementing a desktop host over the shell workspace, governance, object-browser, inspector, and desktop action model.
+The primary target is the native macOS application `Surface` for developers and engineers. The shell remains a peer adapter, but this repository is now implementing a desktop host over the shell workspace, governance, object-browser, inspector, and desktop action model.
 
 ## Licensing
 
@@ -42,7 +42,7 @@ The desktop succeeds only if it helps users operate inside that shift without co
 
 This repository separates documentation into two domains:
 
-- [`docs/`](docs/index.md): user-facing GitHub Pages documentation for developers and engineers using the desktop application
+- [`docs/`](docs/index.md): user-facing GitHub Pages documentation for developers and engineers using Surface
 - [`eng-docs/`](eng-docs/constitution.md): engineering documentation for designing, implementing, and extending the application itself
 
 Use `docs/` when you want to understand how to operate the desktop product.
@@ -159,4 +159,4 @@ The immediate implementation priorities are:
 - preserve shell parity while moving more UX behavior onto stable service-backed workspace surfaces
 - keep the service tier distinct from direct shell execution paths while preserving the shell as a peer operator surface
 - continue tightening documentation, naming, and metadata consistency across both repositories
-- keep implementation passes aligned to the constitution, IntentOS guardrails, and feature specs
+- keep implementation passes aligned to the constitution, Surface guardrails, and feature specs

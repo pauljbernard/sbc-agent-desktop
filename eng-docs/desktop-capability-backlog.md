@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document turns the current spec set into a prioritized product backlog for the `sbcl-agent` macOS desktop application.
+This document turns the current spec set into a prioritized product backlog for the `Surface` macOS application.
 
 It is not a sprint board. It is a strategic capability backlog that keeps implementation aligned with the product thesis.
 
@@ -10,11 +10,11 @@ It is not a sprint board. It is a strategic capability backlog that keeps implem
 
 ### P0
 
-Foundational. Without these, the desktop app either fails the `sbcl-agent` thesis or is not credible as a serious Common Lisp development environment.
+Foundational. Without these, Surface either fails the `sbcl-agent` thesis or is not credible as a serious Common Lisp development environment.
 
 ### P1
 
-Core. These make the desktop app strong enough to be materially better than a thin frontend over the shell.
+Core. These make Surface strong enough to be materially better than a thin frontend over the shell.
 
 ### P2
 
@@ -132,7 +132,7 @@ Capability benchmark intent:
 
 Why it matters:
 
-- direct eval must remain first-class or the desktop app becomes weaker than serious Lisp environments
+- direct eval must remain first-class or Surface becomes weaker than serious Lisp environments
 
 Acceptance direction:
 
@@ -341,7 +341,7 @@ Capability benchmark intent:
 
 Why it matters:
 
-- the desktop app must observe canonical change, not infer it from rendered text
+- Surface must observe canonical change, not infer it from rendered text
 
 Acceptance direction:
 
@@ -662,7 +662,7 @@ Acceptance direction:
 
 ## Anti-Backlog
 
-The following are intentionally not valid primary goals for the desktop app:
+The following are intentionally not valid primary goals for Surface:
 
 - recreating a classic file-and-buffer IDE shell
 - making chat the default container for all engineering state

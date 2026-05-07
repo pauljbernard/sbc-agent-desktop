@@ -2,9 +2,9 @@
 
 ## Purpose
 
-This document defines the core domain language for the `sbcl-agent` macOS desktop application.
+This document defines the core domain language for the `Surface` macOS application.
 
-Its goal is to prevent frontend drift. The desktop app must use the same conceptual objects that the `sbcl-agent` kernel uses and intends to strengthen over time.
+Its goal is to prevent frontend drift. Surface must use the same conceptual objects that the `sbcl-agent` kernel uses and intends to strengthen over time.
 
 This is a product and architecture document, not a persistence schema.
 
@@ -14,7 +14,7 @@ This is a product and architecture document, not a persistence schema.
 
 The top-level object is the `Environment`.
 
-The desktop app should not treat project, window, workspace, or thread as the primary root object. Those are important views or subdomains, but the environment is the durable world the user is operating inside.
+Surface should not treat project, window, workspace, or thread as the primary root object. Those are important views or subdomains, but the environment is the durable world the user is operating inside.
 
 ### Rule 2: Truth Domains Stay Distinct
 
@@ -334,7 +334,7 @@ Primary user questions:
 
 ## Relationship Model
 
-The desktop app must make these relationships navigable:
+Surface must make these relationships navigable:
 
 - environment contains runtime, conversation, workflow, artifact, incident, task, and policy posture
 - thread contains messages and turns

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document compares the planned `sbcl-agent` macOS desktop application against the enduring capabilities associated with major Common Lisp development environments, especially:
+This document compares the planned `Surface` macOS application against the enduring capabilities associated with major Common Lisp development environments, especially:
 
 - LispWorks
 - SLIME
@@ -10,7 +10,7 @@ This document compares the planned `sbcl-agent` macOS desktop application agains
 
 The purpose is not to copy those systems.
 
-The purpose is to ensure the `sbcl-agent` desktop application delivers a world-class Common Lisp engineering capability set while remaining aligned with its actual architecture:
+The purpose is to ensure the `Surface` application delivers a world-class Common Lisp engineering capability set while remaining aligned with its actual architecture:
 
 - environment-first
 - image-native
@@ -26,7 +26,7 @@ We are benchmarking capabilities, not UI metaphors.
 
 The question is not:
 
-- how closely can the desktop app resemble LispWorks, SLIME, or Allegro?
+- how closely can Surface resemble LispWorks, SLIME, or Allegro?
 
 The question is:
 
@@ -143,7 +143,7 @@ Legacy strength:
 - support governed execution when mutation is risky
 - expose the result as operation and evidence where appropriate
 
-Implication for the desktop app:
+Implication for Surface:
 
 - the app needs a first-class execution surface
 - execution cannot be hidden behind chat-only workflows
@@ -161,7 +161,7 @@ Legacy strength:
 - represent inspection as part of an environment graph
 - connect inspected runtime state to turns, incidents, work-items, and artifacts where relevant
 
-Implication for the desktop app:
+Implication for Surface:
 
 - runtime workspace must be one of the strongest parts of the product
 - this cannot be treated as an advanced side panel feature
@@ -180,7 +180,7 @@ Legacy strength:
 - transform debugging into incident-centered governed recovery
 - preserve resumability, evidence, and policy context
 
-Implication for the desktop app:
+Implication for Surface:
 
 - incidents are not just logs
 - recovery must feel operational and precise
@@ -197,7 +197,7 @@ Legacy strength:
 - preserve symbolic navigation
 - extend it across source, image, conversation, artifacts, and workflow
 
-Implication for the desktop app:
+Implication for Surface:
 
 - navigation quality is strategic, not incidental
 - linked traversal must become a flagship capability
@@ -214,7 +214,7 @@ Legacy strength:
 - add approval, validation, and reconciliation when needed
 - distinguish warm runtime success from durable engineering closure
 
-Implication for the desktop app:
+Implication for Surface:
 
 - the app must not make mutation feel bureaucratic in the common case
 - but it must never make governed work invisible
@@ -232,7 +232,7 @@ Legacy strength:
 - move from notes-only feedback toward evidence-bearing feedback
 - show active operations, validation posture, incidents, and waiting states
 
-Implication for the desktop app:
+Implication for Surface:
 
 - activity and attention models are essential
 - users must see what is happening now and what still needs closure
@@ -252,13 +252,13 @@ Codex-app comparative strength:
 - support concurrent threads, turns, tasks, workers, and future agents as first-class environment behavior
 - preserve orientation, ownership, governance, and evidence across all of them
 
-Implication for the desktop app:
+Implication for Surface:
 
 - the app must act like a supervised concurrency environment, not like a single-thread assistant interface
 
 ## Current Planned Strengths
 
-Based on the current spec set, the desktop app is already aiming to exceed classic IDEs in these areas:
+Based on the current spec set, Surface is already aiming to exceed classic IDEs in these areas:
 
 - environment-level posture and orientation
 - explicit workflow governance
@@ -274,7 +274,7 @@ These are not small improvements. They are the strongest reasons the product sho
 
 ## Required Capability Commitments
 
-To remain world class for Common Lisp developers, the desktop app should explicitly commit to the following capability outcomes.
+To remain world class for Common Lisp developers, Surface should explicitly commit to the following capability outcomes.
 
 ### Commitment 1: World-Class Runtime Introspection
 
@@ -362,7 +362,7 @@ Older tools often stop at “the runtime now works.” `sbcl-agent` must make va
 
 ## Gap Checklist
 
-The desktop application should be considered underpowered if any of these remain weak:
+Surface should be considered underpowered if any of these remain weak:
 
 - runtime inspection is thinner than what serious Lisp users expect
 - symbolic navigation is shallow or file-only
@@ -375,7 +375,7 @@ The desktop application should be considered underpowered if any of these remain
 
 ## Product Rule
 
-When comparing the desktop app to LispWorks, SLIME, and Allegro, the correct product test is:
+When comparing Surface to LispWorks, SLIME, and Allegro, the correct product test is:
 
 1. Does the app preserve or exceed their best engineering powers?
 2. Does it transform those powers into an environment-native, workflow-governed, agentic-first form?

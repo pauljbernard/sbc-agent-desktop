@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This slice defines the first real conversation-domain implementation in the desktop app.
+This slice defines the first real conversation-domain implementation in Surface.
 
 It proves that conversation in the product is structured governed work rather than transcript-only chat.
 

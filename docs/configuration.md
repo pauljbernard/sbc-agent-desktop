@@ -4,7 +4,7 @@ title: Configuration
 
 # Configuration
 
-The Configuration workspace is for desktop preferences and presentation-level behavior.
+The Configuration workspace is where `Surface` exposes desktop preferences and presentation-level behavior.
 
 ## Preferences
 
@@ -20,7 +20,7 @@ Current preference areas include:
 
 ## Theme System
 
-The desktop supports:
+`Surface` supports:
 
 - `System`
 - `Light`
@@ -30,7 +30,7 @@ The desktop supports:
 
 ## Lisp Code View
 
-The desktop includes a configurable Lisp source view with:
+`Surface` includes a configurable Lisp source view with:
 
 - formatted source display
 - parenthesis depth colorization
@@ -40,7 +40,7 @@ This is useful when working with Browser source views and any other code-oriente
 
 ## Desktop Surface
 
-The desktop also exposes shell-surface preferences for how the application reads at a distance.
+`Surface` also exposes shell-surface preferences for how the application reads at a distance.
 
 Current desktop-surface controls include values such as:
 
@@ -50,8 +50,8 @@ Current desktop-surface controls include values such as:
 - conversation text scale
 - source-code text scale
 
-These settings matter because the application is now a denser shell with rails, floating panels, and multiple concurrent surfaces rather than a single narrow page view.
+These settings matter because `Surface` is now a denser shell with rails, floating panels, and multiple concurrent surfaces rather than a single narrow page view.
 
 ## Goal
 
-Configuration should make the desktop easier to operate without turning preferences into a second engineering domain.
+Configuration should make `Surface` easier to operate without turning preferences into a second engineering domain.

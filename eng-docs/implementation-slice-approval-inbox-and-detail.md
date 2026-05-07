@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This slice defines the first concrete governed-authorization implementation in the desktop app.
+This slice defines the first concrete governed-authorization implementation in Surface.
 
 It proves that approvals are first-class workflow state rather than renderer prompts or modal confirmations.
 

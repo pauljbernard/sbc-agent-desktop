@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document defines the technical architecture for the `sbcl-agent` desktop application.
+This document defines the technical architecture for the `Surface` application.
 
 It should now be read together with `desktop-shell-and-control-panel-model.md`, which distinguishes the future desktop shell from the currently implemented control-panel application.
 
@@ -30,7 +30,7 @@ The system should be organized into four layers:
 
 1. `sbcl-agent` environment kernel
 2. `sbcl-agent` public service interface layer
-3. Electron desktop application core
+3. Electron application for `Surface` core
 4. platform adaptation layer
 
 For the federated employee/contractor node model, the desktop is additionally locked to a strict boundary:
@@ -59,7 +59,7 @@ It owns:
 
 ## Layer 2: Public Service Interface Layer
 
-This is the required stable boundary between `sbcl-agent` and the desktop app.
+This is the required stable boundary between `sbcl-agent` and Surface.
 
 It should expose:
 
@@ -134,11 +134,11 @@ Visual tokens, semantic states, and component roles must be portable even if low
 
 ### Rule 4: Service Access Must Be Platform-Agnostic
 
-The desktop app’s connection to `sbcl-agent` must use a transport and protocol strategy that can work on both macOS and Windows.
+Surface’s connection to `sbcl-agent` must use a transport and protocol strategy that can work on both macOS and Windows.
 
 ## Recommended Application Shape
 
-The desktop application should have these internal modules:
+Surface should have these internal modules:
 
 - desktop shell module
 - hosted application module
@@ -210,7 +210,7 @@ Examples:
 
 ### Derived View State
 
-Built in the desktop app from service DTOs and event streams.
+Built in Surface from service DTOs and event streams.
 
 Examples:
 
@@ -233,7 +233,7 @@ Examples:
 
 ## Eventing Architecture
 
-The desktop app should be designed around the environment event stream contract already implied by `sbcl-agent`.
+Surface should be designed around the environment event stream contract already implied by `sbcl-agent`.
 
 Required capabilities:
 
@@ -254,7 +254,7 @@ In Electron, canonical event intake should terminate in the main process first, 
 
 ## Desktop Runtime Integration
 
-The desktop app will need a runtime integration strategy for talking to `sbcl-agent`.
+Surface will need a runtime integration strategy for talking to `sbcl-agent`.
 
 The architecture should support a local integration mode where the app communicates with a locally running `sbcl-agent` service boundary.
 
@@ -310,7 +310,7 @@ The technical architecture must avoid:
 The technical architecture is acceptable when:
 
 1. `sbcl-agent` remains the authority for durable domain state
-2. the desktop app can be implemented as a serious macOS application without violating service-boundary rules
+2. Surface can be implemented as a serious macOS application without violating service-boundary rules
 3. platform-specific code is isolated behind clear adaptation seams
 4. a future Windows port would mostly replace the platform layer rather than the product core
 5. the architecture preserves live event-driven behavior and governed execution semantics

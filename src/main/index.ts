@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { registerIpcHandlers, setQuitAppHandler } from "./ipc";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-app.setName("IntentOS Shell");
+app.setName("Surface");
 let mainWindow: BrowserWindow | null = null;
 let allowMainWindowClose = false;
 let terminalStreamWriteDisabled = false;
@@ -58,7 +58,7 @@ function sendMenuAction(action: string): void {
 function installApplicationMenu(): void {
   const template: MenuItemConstructorOptions[] = [
     {
-      label: "IntentOS Shell",
+      label: "Surface",
       submenu: [
         { role: "about" as const },
         { type: "separator" },
@@ -120,7 +120,7 @@ function createMainWindow(): BrowserWindow {
   });
 
   allowMainWindowClose = false;
-  window.setTitle("IntentOS Shell");
+  window.setTitle("Surface");
   window.on("close", (event) => {
     if (allowMainWindowClose) {
       return;

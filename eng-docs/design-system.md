@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document defines the design system principles for the `sbcl-agent` desktop application.
+This document defines the design system principles for the `Surface` application.
 
 The design system must produce consistency in look and feel while staying aligned with the product thesis:
 

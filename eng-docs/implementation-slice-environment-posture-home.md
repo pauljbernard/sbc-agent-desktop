@@ -128,6 +128,6 @@ At this stage, linked items may open placeholders if their detail slices are not
 
 This slice is complete when:
 
-1. the desktop app renders a real environment home from host-backed data
+1. Surface renders a real environment home from host-backed data
 2. environment posture is visible across the three truth domains
 3. the product’s center of gravity is visibly the environment

@@ -13,7 +13,7 @@ The frontend must faithfully expose the system that exists and the system it is 
 
 ## Platform Requirement
 
-The primary product defined by this repository is a macOS desktop application.
+The primary product defined by this repository is the macOS application `Surface`.
 
 This implies:
 
@@ -439,7 +439,7 @@ Each service family should expose:
 - governed commands for mutations
 - canonical event outputs for live updates
 
-The desktop application should consume these services directly through a dedicated application architecture rather than assuming browser-first API design constraints.
+Surface should consume these services directly through a dedicated application architecture rather than assuming browser-first API design constraints.
 
 ## Acceptance Criteria
 
@@ -452,7 +452,7 @@ The foundation is acceptable when a proposed UX architecture can demonstrate:
 5. Clear handling of live runtime state and source/image reconciliation.
 6. Event-driven updates for active work rather than passive static pages.
 7. A frontend architecture that is explicitly subordinate to `sbcl-agent` service authority.
-8. A desktop application interaction model appropriate for sustained engineering work on macOS.
+8. An interaction model for `Surface` appropriate to sustained engineering work on macOS.
 
 ## Out Of Scope For This Phase
 

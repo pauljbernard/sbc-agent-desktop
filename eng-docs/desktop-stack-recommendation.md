@@ -16,7 +16,7 @@ Recommended stack:
 
 This product has a specific set of constraints:
 
-- it must be a real desktop application, not a browser product
+- it must be a real application, `Surface`, not a browser product
 - it must support dense, custom, engineering-oriented interaction
 - it must remain portable to Windows
 - it must coordinate live event streams, many active contexts, and background work
@@ -55,7 +55,7 @@ The key architectural rule is:
 - less natural fit for a highly custom, multi-pane engineering environment
 - macOS support relies on Mac Catalyst, which is not the same as a true AppKit-native product model
 - weaker fit for the specific renderer flexibility this product needs
-- more likely to produce a conventional desktop app shape than the environment workspace we are defining
+- more likely to produce a conventional Surface shape than the environment workspace we are defining
 
 ## Recommendation Outcome
 

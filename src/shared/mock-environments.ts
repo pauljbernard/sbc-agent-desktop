@@ -108,7 +108,7 @@ const mockHostConsoleEntries: ConsoleLogEntryDto[] = [
     timestamp: now,
     type: "notice",
     category: "electron",
-    source: "IntentOS Shell",
+    source: "Surface",
     message: "Renderer reload completed and the preload bridge reattached successfully.",
     processName: "Electron",
     pid: 4127,

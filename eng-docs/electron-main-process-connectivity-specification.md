@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document specifies the Electron main-process connectivity architecture for the `sbcl-agent` desktop application.
+This document specifies the Electron main-process connectivity architecture for the `Surface` application.
 
 It defines how the Electron main process should own:
 

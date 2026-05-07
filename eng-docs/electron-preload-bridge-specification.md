@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document specifies the preload bridge for the `sbcl-agent` Electron desktop application.
+This document specifies the preload bridge for the `sbcl-agent` Electron application for `Surface`.
 
 The preload bridge is the only allowed direct interface between:
 
@@ -68,7 +68,7 @@ The preload bridge should expose five high-level API families.
 
 Purpose:
 
-- desktop app lifecycle and health
+- Surface lifecycle and health
 
 Examples:
 

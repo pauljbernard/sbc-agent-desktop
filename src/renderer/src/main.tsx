@@ -64,7 +64,7 @@ class RendererErrorBoundary extends React.Component<
         <main className="renderer-startup-failure" role="alert">
           <section className="renderer-startup-failure-card">
             <p className="renderer-startup-failure-eyebrow">Renderer Recovery</p>
-            <h1>IntentOS Shell could not finish starting.</h1>
+            <h1>Surface could not finish starting.</h1>
             <p className="renderer-startup-failure-copy">
               The Electron window stayed live, but the renderer hit a startup fault. Reload the
               window after the host stabilizes.
@@ -88,7 +88,7 @@ class RendererErrorBoundary extends React.Component<
 
 function RendererStartupFailure({
   detail,
-  title = "IntentOS Shell could not finish starting."
+  title = "Surface could not finish starting."
 }: {
   detail: string;
   title?: string;
@@ -151,7 +151,7 @@ function AppBootstrap(): React.ReactNode {
     return (
       <RendererStartupFailure
         detail={error.message}
-        title="IntentOS Shell could not load its renderer modules."
+        title="Surface could not load its renderer modules."
       />
     );
   }
@@ -161,7 +161,7 @@ function AppBootstrap(): React.ReactNode {
       <main className="renderer-startup-failure renderer-startup-pending" aria-busy="true">
         <section className="renderer-startup-failure-card">
           <p className="renderer-startup-failure-eyebrow">Renderer Startup</p>
-          <h1>IntentOS Shell is attaching to the live desktop host.</h1>
+          <h1>Surface is attaching to the live desktop host.</h1>
           <p className="renderer-startup-failure-copy">
             The renderer is loading its shell modules and establishing the Electron host boundary.
           </p>

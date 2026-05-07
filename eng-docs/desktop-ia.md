@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document defines the information architecture for the `sbcl-agent` macOS desktop application.
+This document defines the information architecture for the `Surface` macOS application.
 
 It should now be read alongside `desktop-shell-and-control-panel-model.md`.
 
@@ -233,7 +233,7 @@ Main regions:
 
 ## Cross-Cutting Inspectors
 
-The desktop app should use contextual inspectors that can appear from any workspace.
+Surface should use contextual inspectors that can appear from any workspace.
 
 Core inspectors:
 
@@ -300,6 +300,6 @@ The information architecture is acceptable when:
 
 1. A user can orient themselves from the Environment workspace in under a minute.
 2. A user can move from a turn to its operations, artifacts, work-item, and incident context without manual searching.
-3. A user can inspect runtime truth without leaving the desktop app’s governed context.
+3. A user can inspect runtime truth without leaving Surface’s governed context.
 4. A user can find all pending approvals, incidents, and blocked work from globally visible surfaces.
 5. The structure feels like a desktop engineering environment rather than a website or chat client.

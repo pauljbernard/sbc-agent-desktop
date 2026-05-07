@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This slice defines the first full workflow and closure-oriented surface in the desktop app.
+This slice defines the first full workflow and closure-oriented surface in Surface.
 
 It proves that the product distinguishes:
 

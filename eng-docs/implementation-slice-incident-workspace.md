@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This slice defines the first full recovery-oriented failure surface in the desktop app.
+This slice defines the first full recovery-oriented failure surface in Surface.
 
 It proves that failures and interruptions become governed recovery work rather than transient UI noise.
 

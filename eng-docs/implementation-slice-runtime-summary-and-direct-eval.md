@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This slice defines the first runtime-native implementation path in the desktop app.
+This slice defines the first runtime-native implementation path in Surface.
 
 It proves that the product preserves direct operator power while keeping execution inside the `sbcl-agent` governed service model.
 
@@ -138,5 +138,5 @@ If operation, artifact, or incident ids are present, they should be displayed as
 This slice is complete when:
 
 1. the Runtime workspace is backed by real host queries
-2. a user can run direct eval through the desktop app
+2. a user can run direct eval through Surface
 3. approval-required and failed outcomes are visibly distinct from normal success

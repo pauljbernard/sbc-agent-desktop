@@ -12,7 +12,7 @@ This feature is the most direct expression of the product thesis that runtime tr
 
 ## Problem
 
-If the runtime workspace is weak, secondary, or overly indirect, the desktop app will regress into a conventional SDLC tool where source is primary and the running system is only inferred after the fact.
+If the runtime workspace is weak, secondary, or overly indirect, Surface will regress into a conventional SDLC tool where source is primary and the running system is only inferred after the fact.
 
 That would undermine both the Common Lisp development benchmark and the core `sbcl-agent` thesis.
 

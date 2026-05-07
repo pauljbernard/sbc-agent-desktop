@@ -293,9 +293,9 @@ export function ShellUtilitiesPanel({ onExitIntentOsShell }: ShellUtilitiesPanel
       <div className="shell-sidebar-dock">
         <div className="desktop-window-dock-rail shell-sidebar-dock-rail" role="toolbar" aria-label="Shell actions">
           <button
-            aria-label="Exit IntentOS Shell"
+            aria-label="Exit Surface"
             className="desktop-window-dock-item"
-            data-tooltip="Exit IntentOS Shell"
+            data-tooltip="Exit Surface"
             onClick={onExitIntentOsShell}
             type="button"
           >
