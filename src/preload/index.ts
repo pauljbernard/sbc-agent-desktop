@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
+  ConfigureProviderProfileInput,
   DesktopActionInput,
   DesktopRestoreInput,
   DesktopPreferencesDto,
@@ -9,7 +10,11 @@ import type {
   EnvironmentEventDto,
   EventSubscriptionHandle,
   EventSubscriptionInput,
+  ProviderProfileSummaryDto,
+  QueryResultDto,
   SbclAgentDesktopApi,
+  UpdateProviderRoutingInput,
+  UseProviderProfileInput,
   WorkspaceId
 } from "../shared/contracts";
 
@@ -109,7 +114,11 @@ const api: SbclAgentDesktopApi = {
     workItemPlan: (workItemId: string, environmentId?: string) =>
       ipcRenderer.invoke("query:work-item-plan", workItemId, environmentId),
     workflowRecordDetail: (workflowRecordId: string, environmentId?: string) =>
-      ipcRenderer.invoke("query:workflow-record-detail", workflowRecordId, environmentId)
+      ipcRenderer.invoke("query:workflow-record-detail", workflowRecordId, environmentId),
+    providerProfiles: (environmentId?: string): Promise<QueryResultDto<ProviderProfileSummaryDto>> =>
+      ipcRenderer.invoke("query:provider-profiles", environmentId),
+    packageManagementSummary: (environmentId?: string) =>
+      ipcRenderer.invoke("query:package-management-summary", environmentId)
   },
   command: {
     createIntent: (input) => ipcRenderer.invoke("command:create-intent", input),
@@ -139,6 +148,8 @@ const api: SbclAgentDesktopApi = {
     createConversationThread: (input) => ipcRenderer.invoke("command:create-conversation-thread", input),
     updateConversationThread: (input) => ipcRenderer.invoke("command:update-conversation-thread", input),
     sendConversationMessage: (input) => ipcRenderer.invoke("command:send-conversation-message", input),
+    extractConversationAttachmentText: (input) =>
+      ipcRenderer.invoke("command:extract-conversation-attachment-text", input),
     evaluateInContext: (input) => ipcRenderer.invoke("command:evaluate-in-context", input),
     stageSourceChange: (input) => ipcRenderer.invoke("command:stage-source-change", input),
     writeSourceFile: (input) => ipcRenderer.invoke("command:write-source-file", input),
@@ -147,7 +158,20 @@ const api: SbclAgentDesktopApi = {
     desktopRestore: (input: DesktopRestoreInput) =>
       ipcRenderer.invoke("command:desktop-restore", input),
     approveRequest: (input) => ipcRenderer.invoke("command:approve-request", input),
-    denyRequest: (input) => ipcRenderer.invoke("command:deny-request", input)
+    denyRequest: (input) => ipcRenderer.invoke("command:deny-request", input),
+    configureProviderProfile: (input: ConfigureProviderProfileInput) =>
+      ipcRenderer.invoke("command:configure-provider-profile", input),
+    useProviderProfile: (input: UseProviderProfileInput) =>
+      ipcRenderer.invoke("command:use-provider-profile", input),
+    updateProviderRouting: (input: UpdateProviderRoutingInput) =>
+      ipcRenderer.invoke("command:update-provider-routing", input),
+    installQuicklispPackage: (input) => ipcRenderer.invoke("command:install-quicklisp-package", input),
+    runQlotCommand: (input) => ipcRenderer.invoke("command:run-qlot-command", input),
+    addSourceRegistryEntry: (input) => ipcRenderer.invoke("command:add-source-registry-entry", input),
+    updateSourceRegistryEntry: (input) => ipcRenderer.invoke("command:update-source-registry-entry", input),
+    removeSourceRegistryEntry: (input) => ipcRenderer.invoke("command:remove-source-registry-entry", input),
+    addLocalProject: (input) => ipcRenderer.invoke("command:add-local-project", input),
+    removeLocalProject: (input) => ipcRenderer.invoke("command:remove-local-project", input)
   },
   events: {
     subscribeEnvironmentEvents: async (

@@ -4634,6 +4634,108 @@ body.shell-inspector-resizing {
   background: rgba(255, 255, 255, 0.015);
 }
 
+.configuration-provider-profile-list {
+  display: grid;
+  gap: 10px;
+}
+
+.configuration-provider-profile-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.configuration-provider-profile-card.active {
+  border-color: rgba(78, 226, 209, 0.45);
+  background: rgba(78, 226, 209, 0.08);
+}
+
+.configuration-provider-profile-select {
+  display: grid;
+  justify-items: start;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.configuration-provider-profile-select span,
+.configuration-provider-profile-meta span,
+.configuration-text-control span {
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.configuration-provider-profile-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.configuration-provider-form {
+  display: grid;
+  gap: 12px;
+  padding-top: 6px;
+}
+
+.configuration-provider-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.configuration-text-control {
+  display: grid;
+  gap: 8px;
+}
+
+.configuration-text-input,
+.configuration-select-input {
+  width: 100%;
+  min-height: 40px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-primary);
+}
+
+.configuration-checkbox-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+}
+
+.configuration-provider-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.configuration-status-note {
+  margin: 0;
+  color: var(--accent-primary);
+  font-size: 0.88rem;
+}
+
+.configuration-error-note {
+  margin: 0;
+  color: #ff8f8f;
+  font-size: 0.88rem;
+}
+
 .configuration-preview-card strong {
   font-size: 0.92rem;
   font-weight: 650;
@@ -6740,6 +6842,10 @@ body.shell-inspector-resizing {
   gap: 12px;
 }
 
+.conversation-attachment-input {
+  display: none;
+}
+
 .conversation-composer-dock {
   align-self: end;
   width: 100%;
@@ -6747,7 +6853,12 @@ body.shell-inspector-resizing {
 
 .conversation-composer-actions {
   display: flex;
+  gap: 10px;
   justify-content: flex-end;
+}
+
+.conversation-attachment-button {
+  margin-right: auto;
 }
 
 .conversation-composer-actions .conversation-send-button {
@@ -6784,6 +6895,95 @@ body.shell-inspector-resizing {
   overflow-y: hidden;
   font-size: calc(0.84rem * var(--desktop-conversation-text-scale, 1));
   line-height: 1.38;
+}
+
+.conversation-composer-attachment-list,
+.conversation-attachment-list {
+  display: grid;
+  gap: 8px;
+}
+
+.conversation-composer-attachment-chip,
+.conversation-attachment-card {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.conversation-composer-attachment-chip {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.conversation-composer-attachment-chip-copy,
+.conversation-attachment-meta {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.conversation-composer-attachment-chip-copy strong,
+.conversation-attachment-meta strong {
+  font-size: 0.88rem;
+  line-height: 1.2;
+}
+
+.conversation-composer-attachment-chip-copy span,
+.conversation-attachment-meta span {
+  color: rgba(220, 224, 230, 0.74);
+  font-size: 0.76rem;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.conversation-composer-attachment-chip-actions,
+.conversation-attachment-flags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.conversation-composer-attachment-remove {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.78);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 2px 4px;
+}
+
+.conversation-composer-attachment-remove:hover {
+  color: rgba(255, 255, 255, 0.96);
+}
+
+.conversation-attachment-image {
+  display: block;
+  max-width: min(100%, 320px);
+  max-height: 240px;
+  object-fit: contain;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.conversation-attachment-text {
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .message-bubble {

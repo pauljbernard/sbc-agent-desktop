@@ -44,7 +44,7 @@ const CATEGORY_BY_SLUG: Record<string, string> = {
   faq: "Operations"
 };
 
-function documentationDirectory(): string {
+function documentationDirectory(): string | null {
   const candidates = [
     resolve(process.cwd(), "docs"),
     resolve(__dirname, "../../docs"),
@@ -57,7 +57,7 @@ function documentationDirectory(): string {
     }
   }
 
-  return candidates[0];
+  return null;
 }
 
 function stripFrontmatter(markdown: string): string {
@@ -151,6 +151,9 @@ function sortDocumentationPages(
 
 export async function listDocumentationPages(): Promise<DocumentationPageSummaryDto[]> {
   const docsDir = documentationDirectory();
+  if (!docsDir) {
+    return [];
+  }
   const entries = await readdir(docsDir, { withFileTypes: true });
 
   return entries
@@ -165,6 +168,9 @@ export async function listDocumentationPages(): Promise<DocumentationPageSummary
 
 export async function readDocumentationPageBySlug(slug: string): Promise<DocumentationPageDto> {
   const docsDir = documentationDirectory();
+  if (!docsDir) {
+    throw new Error("Documentation content is unavailable in this build.");
+  }
   const normalizedSlug = slug.trim().toLowerCase();
   const sourcePath = join(docsDir, `${normalizedSlug}.md`);
   const markdown = await readFile(sourcePath, "utf8");

@@ -155,6 +155,12 @@ export function registerIpcHandlers(): void {
     (_event, workflowRecordId: string, environmentId?: string) =>
       hostAdapter.workflowRecordDetail(workflowRecordId, environmentId)
   );
+  ipcMain.handle("query:provider-profiles", (_event, environmentId?: string) =>
+    hostAdapter.providerProfiles(environmentId)
+  );
+  ipcMain.handle("query:package-management-summary", (_event, environmentId?: string) =>
+    hostAdapter.packageManagementSummary(environmentId)
+  );
   ipcMain.handle("command:evaluate-in-context", (_event, input) =>
     hostAdapter.evaluateInContext(input)
   );
@@ -236,6 +242,9 @@ export function registerIpcHandlers(): void {
       _event.sender.send("conversation:stream-event", streamEvent);
     })
   );
+  ipcMain.handle("command:extract-conversation-attachment-text", (_event, input) =>
+    hostAdapter.extractConversationAttachmentText(input)
+  );
   ipcMain.handle("command:stage-source-change", (_event, input) =>
     hostAdapter.stageSourceChange(input)
   );
@@ -250,6 +259,36 @@ export function registerIpcHandlers(): void {
   );
   ipcMain.handle("command:approve-request", (_event, input) => hostAdapter.approveRequest(input));
   ipcMain.handle("command:deny-request", (_event, input) => hostAdapter.denyRequest(input));
+  ipcMain.handle("command:configure-provider-profile", (_event, input) =>
+    hostAdapter.configureProviderProfile(input)
+  );
+  ipcMain.handle("command:use-provider-profile", (_event, input) =>
+    hostAdapter.useProviderProfile(input)
+  );
+  ipcMain.handle("command:update-provider-routing", (_event, input) =>
+    hostAdapter.updateProviderRouting(input)
+  );
+  ipcMain.handle("command:install-quicklisp-package", (_event, input) =>
+    hostAdapter.installQuicklispPackage(input)
+  );
+  ipcMain.handle("command:run-qlot-command", (_event, input) =>
+    hostAdapter.runQlotCommand(input)
+  );
+  ipcMain.handle("command:add-source-registry-entry", (_event, input) =>
+    hostAdapter.addSourceRegistryEntry(input)
+  );
+  ipcMain.handle("command:update-source-registry-entry", (_event, input) =>
+    hostAdapter.updateSourceRegistryEntry(input)
+  );
+  ipcMain.handle("command:remove-source-registry-entry", (_event, input) =>
+    hostAdapter.removeSourceRegistryEntry(input)
+  );
+  ipcMain.handle("command:add-local-project", (_event, input) =>
+    hostAdapter.addLocalProject(input)
+  );
+  ipcMain.handle("command:remove-local-project", (_event, input) =>
+    hostAdapter.removeLocalProject(input)
+  );
 
   ipcMain.handle("desktop:focus-workspace", (_event, workspace: WorkspaceId) =>
     hostAdapter.focusWorkspace(workspace)

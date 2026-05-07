@@ -8,7 +8,9 @@ import type {
   ApprovalDecisionInput,
   BindingDto,
   CommandResultDto,
+  ConfigureProviderProfileInput,
   ConsoleLogEntryDto,
+  ConversationAttachmentDto,
   ConsoleLogStreamDto,
   DesktopPreferencesDto,
   DesktopModelDto,
@@ -34,6 +36,8 @@ import type {
   MessageDto,
   PackageBrowserDto,
   PackageBrowserSymbolDto,
+  PackageManagementCommandResultDto,
+  PackageManagementSummaryDto,
   QueryResultDto,
   RuntimeEvalResultDto,
   RuntimeEntityDetailDto,
@@ -51,6 +55,8 @@ import type {
   ProjectSummaryDto,
   ProjectTestingHarnessDto,
   ProjectTestingStrategyDto,
+  ProviderProfileSummaryDto,
+  ProviderRoutingMode,
   ReplSessionHistoryEntryDto,
   ReplSessionProfileDto,
   SourceMutationResultDto,
@@ -103,6 +109,16 @@ import {
   resolveActiveShellRailPanel
 } from "./shell-panel-registry";
 import { EditorSymbolRailPanel, ShellNavigationPanel, ShellUtilitiesPanel } from "./shell-panel-content";
+import {
+  createDefaultEnvironmentFocusState,
+  createEnvironmentFocusFromBrowserContext,
+  createEnvironmentFocusFromConversationContext,
+  createEnvironmentFocusFromEvidenceContext,
+  createEnvironmentFocusFromGovernanceContext,
+  formatEnvironmentFocusLabel,
+  mergeEnvironmentFocus,
+  type EnvironmentFocusState
+} from "./environment-focus";
 import {
   bringWindowToFront,
   cascadeDesktopWindows,
@@ -415,6 +431,154 @@ function joinDirectoryAndFileName(directoryPath: string, fileName: string): stri
   return `${trimmedDirectory}${separator}${normalizedFileName}`;
 }
 
+const CONVERSATION_ATTACHMENT_TEXT_LIMIT = 240_000;
+const CONVERSATION_ATTACHMENT_IMAGE_LIMIT = 6 * 1024 * 1024;
+const CONVERSATION_ATTACHMENT_DOCUMENT_LIMIT = 12 * 1024 * 1024;
+
+function fileExtension(fileName: string): string {
+  const trimmed = fileName.trim();
+  const dotIndex = trimmed.lastIndexOf(".");
+  return dotIndex >= 0 ? trimmed.slice(dotIndex + 1).toLowerCase() : "";
+}
+
+function isTextLikeAttachment(mediaType: string, fileName: string): boolean {
+  const normalizedMediaType = mediaType.toLowerCase();
+  if (normalizedMediaType.startsWith("text/")) {
+    return true;
+  }
+  return [
+    "json",
+    "md",
+    "markdown",
+    "lisp",
+    "cl",
+    "ts",
+    "tsx",
+    "js",
+    "jsx",
+    "css",
+    "html",
+    "xml",
+    "yaml",
+    "yml",
+    "txt",
+    "svg"
+  ].includes(fileExtension(fileName));
+}
+
+function isDocumentLikeAttachment(mediaType: string, fileName: string): boolean {
+  const normalizedMediaType = mediaType.toLowerCase();
+  const extension = fileExtension(fileName);
+  return (
+    normalizedMediaType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    normalizedMediaType === "application/msword" ||
+    normalizedMediaType === "application/rtf" ||
+    normalizedMediaType === "text/rtf" ||
+    extension === "docx" ||
+    extension === "doc" ||
+    extension === "rtf"
+  );
+}
+
+function readBrowserFileAsText(file: File): Promise<string> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const reader = new FileReader();
+    reader.onerror = () => rejectPromise(reader.error ?? new Error(`Failed to read ${file.name} as text.`));
+    reader.onload = () => resolvePromise(String(reader.result ?? ""));
+    reader.readAsText(file);
+  });
+}
+
+function readBrowserFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const reader = new FileReader();
+    reader.onerror = () => rejectPromise(reader.error ?? new Error(`Failed to read ${file.name} as data URL.`));
+    reader.onload = () => resolvePromise(String(reader.result ?? ""));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function conversationAttachmentFromFile(
+  file: File,
+  index: number
+): Promise<ConversationAttachmentDto> {
+  const mediaType = file.type || "application/octet-stream";
+  const imageAttachment = mediaType.startsWith("image/");
+  const textAttachment = isTextLikeAttachment(mediaType, file.name);
+  const documentAttachment = isDocumentLikeAttachment(mediaType, file.name);
+  const attachmentId = `attachment-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`;
+
+  if (imageAttachment && file.size <= CONVERSATION_ATTACHMENT_IMAGE_LIMIT) {
+    return {
+      attachmentId,
+      name: file.name,
+      mediaType,
+      kind: "image",
+      source: "input",
+      summary: `${file.name} (${mediaType}, ${file.size} bytes)`,
+      sizeBytes: file.size,
+      dataUrl: await readBrowserFileAsDataUrl(file),
+      textContent: null
+    };
+  }
+
+  if (textAttachment && file.size <= CONVERSATION_ATTACHMENT_TEXT_LIMIT) {
+    return {
+      attachmentId,
+      name: file.name,
+      mediaType,
+      kind: "text",
+      source: "input",
+      summary: `${file.name} (${mediaType}, ${file.size} bytes)`,
+      sizeBytes: file.size,
+      textContent: await readBrowserFileAsText(file),
+      dataUrl: null
+    };
+  }
+
+  if (documentAttachment && file.size <= CONVERSATION_ATTACHMENT_DOCUMENT_LIMIT) {
+    try {
+      const extractConversationAttachmentText =
+        window.sbclAgentDesktop.command.extractConversationAttachmentText;
+      if (typeof extractConversationAttachmentText === "function") {
+        const dataUrl = await readBrowserFileAsDataUrl(file);
+        const extractedText = await extractConversationAttachmentText({
+          name: file.name,
+          mediaType,
+          dataUrl
+        });
+        if (extractedText && extractedText.trim().length > 0) {
+          return {
+            attachmentId,
+            name: file.name,
+            mediaType,
+            kind: "text",
+            source: "input",
+            summary: `${file.name} (${mediaType}, ${file.size} bytes, extracted text)`,
+            sizeBytes: file.size,
+            textContent: extractedText,
+            dataUrl: null
+          };
+        }
+      }
+    } catch {
+      // Fall back to opaque binary attachment if host-side extraction fails.
+    }
+  }
+
+  return {
+    attachmentId,
+    name: file.name,
+    mediaType,
+    kind: imageAttachment ? "image" : "binary",
+    source: "input",
+    summary: `${file.name} (${mediaType}, ${file.size} bytes)`,
+    sizeBytes: file.size,
+    textContent: null,
+    dataUrl: null
+  };
+}
+
 function extractTopLevelEditorBufferForms(source: string): string[] {
   const forms: string[] = [];
   let index = 0;
@@ -511,7 +675,7 @@ function countChangedEditorBufferForms(baselineDraft: string, draft: string): nu
 
 type OperateSection = "orientation" | "journeys" | "evidence";
 type ConversationSection = "threads" | "turns" | "draft" | "repl";
-type ConfigurationSection = "theme" | "lisp-code-view" | "desktop-surface";
+type ConfigurationSection = "theme" | "lisp-code-view" | "desktop-surface" | "llm" | "package-management";
 type ExecutionSection = "listener" | "approvals" | "work";
 type RecoverySection = "incidents";
 type EvidenceSection = "artifacts" | "observation";
@@ -580,6 +744,123 @@ const configurationSections: Array<{
     label: "Desktop Surface",
     summary: "Tooltip text, control iconography, conversation text, and iconified application bar scale across the shell desktop.",
     family: "surface"
+  },
+  {
+    id: "llm",
+    label: "LLM",
+    summary: "Provider profiles, endpoint routing, secure tokens, and model selection for the integrated language-model runtime.",
+    family: "integration"
+  },
+  {
+    id: "package-management",
+    label: "Package Management",
+    summary: "Quicklisp installs, Qlot command execution, managed source-registry entries, and graphical local-project links.",
+    family: "runtime"
+  }
+];
+
+type LlmProviderPresetId =
+  | "openai"
+  | "anthropic"
+  | "google"
+  | "xai"
+  | "microsoft"
+  | "amazon"
+  | "meta"
+  | "lm-studio"
+  | "custom-openai-compatible";
+
+interface LlmProviderPreset {
+  id: LlmProviderPresetId;
+  label: string;
+  provider: string;
+  defaultModel: string;
+  defaultFastModel: string;
+  defaultApiBase?: string | null;
+  summary: string;
+}
+
+const LLM_PROVIDER_PRESETS: LlmProviderPreset[] = [
+  {
+    id: "openai",
+    label: "OpenAI",
+    provider: "openai-compatible",
+    defaultModel: "gpt-5",
+    defaultFastModel: "gpt-4.1-mini",
+    defaultApiBase: "https://api.openai.com/v1",
+    summary: "Direct OpenAI-compatible routing."
+  },
+  {
+    id: "anthropic",
+    label: "Anthropic",
+    provider: "anthropic",
+    defaultModel: "claude-sonnet-4-20250514",
+    defaultFastModel: "claude-3-5-haiku",
+    defaultApiBase: "https://api.anthropic.com",
+    summary: "Native Anthropic messages API routing."
+  },
+  {
+    id: "google",
+    label: "Google Gemini",
+    provider: "gemini",
+    defaultModel: "gemini-2.5-pro",
+    defaultFastModel: "gemini-2.5-flash",
+    defaultApiBase: "https://generativelanguage.googleapis.com/v1beta/openai",
+    summary: "Gemini through the OpenAI-compatible endpoint."
+  },
+  {
+    id: "xai",
+    label: "xAI",
+    provider: "openai-compatible",
+    defaultModel: "grok-3",
+    defaultFastModel: "grok-3-mini",
+    defaultApiBase: "https://api.x.ai/v1",
+    summary: "OpenAI-compatible xAI endpoint."
+  },
+  {
+    id: "microsoft",
+    label: "Microsoft Azure OpenAI",
+    provider: "openai-compatible",
+    defaultModel: "gpt-4.1",
+    defaultFastModel: "gpt-4.1-mini",
+    defaultApiBase: "",
+    summary: "Requires your Azure resource-specific endpoint."
+  },
+  {
+    id: "amazon",
+    label: "Amazon-compatible gateway",
+    provider: "openai-compatible",
+    defaultModel: "claude-sonnet",
+    defaultFastModel: "claude-haiku",
+    defaultApiBase: "",
+    summary: "Requires a compatible endpoint or gateway in front of the target model."
+  },
+  {
+    id: "meta",
+    label: "Meta-compatible",
+    provider: "meta-compatible",
+    defaultModel: "llama-3.1-70b-instruct",
+    defaultFastModel: "llama-3.1-8b-instruct",
+    defaultApiBase: "",
+    summary: "Meta-compatible endpoint with an explicit base URL."
+  },
+  {
+    id: "lm-studio",
+    label: "Local LM Studio",
+    provider: "lm-studio",
+    defaultModel: "local-model",
+    defaultFastModel: "local-model",
+    defaultApiBase: "http://localhost:1234/v1",
+    summary: "Local OpenAI-compatible model serving through LM Studio."
+  },
+  {
+    id: "custom-openai-compatible",
+    label: "Custom OpenAI-compatible",
+    provider: "openai-compatible",
+    defaultModel: "gpt-5",
+    defaultFastModel: "gpt-4.1-mini",
+    defaultApiBase: "",
+    summary: "Bring your own OpenAI-compatible endpoint and model family."
   }
 ];
 
@@ -595,6 +876,65 @@ function normalizeDesktopSurfaceScalePercent(value: number | null | undefined): 
   }
 
   return Math.min(160, Math.max(70, Math.round(value)));
+}
+
+function llmProviderPresetForProfile(profile: {
+  provider?: string | null;
+  apiBase?: string | null;
+} | null | undefined): LlmProviderPreset {
+  const fallbackPreset = LLM_PROVIDER_PRESETS[0]!;
+  const provider = profile?.provider?.toLowerCase() ?? "openai-compatible";
+  const apiBase = profile?.apiBase?.toLowerCase() ?? "";
+
+  if (provider === "anthropic") {
+    return LLM_PROVIDER_PRESETS.find((preset) => preset.id === "anthropic") ?? fallbackPreset;
+  }
+  if (provider === "gemini" || provider === "google") {
+    return LLM_PROVIDER_PRESETS.find((preset) => preset.id === "google") ?? fallbackPreset;
+  }
+  if (provider === "lm-studio" || provider === "lmstudio" || provider === "local-openai-compatible") {
+    return LLM_PROVIDER_PRESETS.find((preset) => preset.id === "lm-studio") ?? fallbackPreset;
+  }
+  if (provider === "meta-compatible" || provider === "meta-openai-compatible") {
+    return LLM_PROVIDER_PRESETS.find((preset) => preset.id === "meta") ?? fallbackPreset;
+  }
+  if (apiBase.includes("api.x.ai")) {
+    return LLM_PROVIDER_PRESETS.find((preset) => preset.id === "xai") ?? fallbackPreset;
+  }
+  if (apiBase.includes("generativelanguage.googleapis.com")) {
+    return LLM_PROVIDER_PRESETS.find((preset) => preset.id === "google") ?? fallbackPreset;
+  }
+  if (apiBase.includes("openai.azure.com")) {
+    return LLM_PROVIDER_PRESETS.find((preset) => preset.id === "microsoft") ?? fallbackPreset;
+  }
+  if (apiBase.includes("localhost:1234")) {
+    return LLM_PROVIDER_PRESETS.find((preset) => preset.id === "lm-studio") ?? fallbackPreset;
+  }
+  if (provider === "openai-compatible" && apiBase.length > 0 && !apiBase.includes("api.openai.com")) {
+    return LLM_PROVIDER_PRESETS.find((preset) => preset.id === "custom-openai-compatible") ?? fallbackPreset;
+  }
+  return LLM_PROVIDER_PRESETS.find((preset) => preset.id === "openai") ?? fallbackPreset;
+}
+
+function buildProviderProfileDraft(
+  profile?: Partial<ConfigureProviderProfileInput> | null
+): ConfigureProviderProfileInput {
+  const preset = llmProviderPresetForProfile(profile);
+  return {
+    profileName: profile?.profileName ?? "default",
+    provider: profile?.provider ?? preset.provider,
+    model: profile?.model ?? preset.defaultModel,
+    fastModel: profile?.fastModel ?? preset.defaultFastModel,
+    apiBase: profile?.apiBase ?? preset.defaultApiBase ?? "",
+    apiKey: profile?.apiKey ?? "",
+    clearApiKey: false,
+    intents: profile?.intents ?? [],
+    latencyTier: profile?.latencyTier ?? "balanced",
+    reviewBias: profile?.reviewBias ?? "neutral",
+    executionBias: profile?.executionBias ?? "balanced",
+    locality: profile?.locality ?? (preset.id === "lm-studio" ? "local" : "network"),
+    activate: false
+  };
 }
 
 const operateSections: Array<{
@@ -748,6 +1088,7 @@ function buildListenerForm(input: {
 }
 
 function buildConversationPrompt(input: {
+  focusKind?: EnvironmentFocusState["kind"];
   symbol?: string | null;
   packageName?: string | null;
   mode?: RuntimeInspectionMode | null;
@@ -756,6 +1097,11 @@ function buildConversationPrompt(input: {
   threadTitle?: string | null;
   threadState?: string | null;
   latestTurnState?: string | null;
+  approvalId?: string | null;
+  workItemId?: string | null;
+  incidentId?: string | null;
+  artifactId?: string | null;
+  eventCursor?: number | null;
 }): string {
   const focusLabel = input.symbol?.trim()
     ? `${input.packageName?.trim() ? `${input.packageName?.trim()}::` : ""}${input.symbol.trim()}`
@@ -768,8 +1114,43 @@ function buildConversationPrompt(input: {
       ? ` It is currently ${[input.threadState, input.latestTurnState].filter(Boolean).join(" / ")}.`
       : "";
   const threadContext = input.threadTitle?.trim()
-    ? `Continue the linked thread "${input.threadTitle?.trim()}" while keeping the browser focus explicit.${threadStateLabel}`
-    : "Start a new conversation continuation anchored in the current browser focus.";
+    ? `Continue the linked thread "${input.threadTitle?.trim()}" while keeping the current environment focus explicit.${threadStateLabel}`
+    : "Start a new conversation continuation anchored in the current environment focus.";
+
+  switch (input.focusKind) {
+    case "governance-approval":
+      return [
+        threadContext,
+        `Review approval ${input.approvalId ?? "current approval"} as the active governed focus.`,
+        "Explain the requested action, policy basis, linked work, likely consequence of approval or denial, and the best next governed step."
+      ].join("\n");
+    case "governance-work-item":
+      return [
+        threadContext,
+        `Review work item ${input.workItemId ?? "current work item"} as the active governed focus.`,
+        "Summarize current state, blockers, validation and reconciliation posture, linked evidence, and the next closure action."
+      ].join("\n");
+    case "governance-incident":
+      return [
+        threadContext,
+        `Review incident ${input.incidentId ?? "current incident"} as the active recovery focus.`,
+        "Summarize failure posture, linked runtime and workflow context, visible evidence, and the safest next governed recovery step."
+      ].join("\n");
+    case "evidence-artifact":
+      return [
+        threadContext,
+        `Inspect artifact ${input.artifactId ?? "current artifact"} as the active evidence focus.`,
+        "Explain what this evidence proves, what it links to in runtime or workflow state, and what action it suggests next."
+      ].join("\n");
+    case "evidence-event":
+      return [
+        threadContext,
+        `Inspect event ${input.eventCursor != null ? `#${input.eventCursor}` : "current event"} as the active evidence focus.`,
+        "Reconstruct what changed, which governed objects it touches, what evidence or recovery it implies, and the next best inspection target."
+      ].join("\n");
+    default:
+      break;
+  }
 
   if (input.sourcePath?.trim()) {
     return [
@@ -785,6 +1166,97 @@ function buildConversationPrompt(input: {
     `Inspect ${focusLabel} using the current browser mode "${modeLabel}".`,
     "Summarize what matters in the live environment, what source or runtime evidence is attached, and what to do next."
   ].join("\n");
+}
+
+function buildEnvironmentFocusPresentation(input: {
+  focus: EnvironmentFocusState;
+  focusLabel: string;
+  selectedThread: ThreadDetailDto | null;
+  selectedTurn: TurnDetailDto | null;
+  selectedApproval: ApprovalRequestDto | null;
+  selectedWorkItem: WorkItemDetailDto | null;
+  selectedIncident: IncidentDetailDto | null;
+  selectedArtifact: ArtifactDetailDto | null;
+  selectedEvent: EnvironmentEventDto | null;
+}): {
+  title: string;
+  summary: string;
+} {
+  switch (input.focus.kind) {
+    case "conversation-turn":
+      return {
+        title: input.selectedTurn?.title ?? input.focus.turnId ?? "Conversation turn",
+        summary: input.selectedTurn?.summary ?? "Continue from the actively selected conversation turn."
+      };
+    case "conversation-thread":
+    case "linked-conversation":
+      return {
+        title: input.selectedThread?.title ?? input.focus.threadId ?? "Conversation thread",
+        summary: input.selectedThread?.summary ?? "Continue from the actively selected conversation thread."
+      };
+    case "runtime-symbol":
+      return {
+        title: input.focus.runtimeSymbol ?? "Runtime symbol",
+        summary: `The draft is anchored to ${
+          input.focus.runtimePackage ? `${input.focus.runtimePackage}::` : ""
+        }${input.focus.runtimeSymbol ?? "the active symbol"} in the live runtime.`
+      };
+    case "source-artifact":
+      return {
+        title: input.focus.sourcePath ?? "Source artifact",
+        summary: input.focus.sourceLine
+          ? `The draft is anchored to ${input.focus.sourcePath ?? "the active source artifact"} at line ${input.focus.sourceLine}.`
+          : "The draft is anchored to the active source artifact."
+      };
+    case "governance-approval":
+      return {
+        title: input.selectedApproval?.title ?? input.focus.approvalId ?? "Approval",
+        summary:
+          input.selectedApproval?.summary ??
+          "Reason from the selected approval request, its policy posture, and its likely consequences."
+      };
+    case "governance-work-item":
+      return {
+        title: input.selectedWorkItem?.title ?? input.focus.workItemId ?? "Work item",
+        summary:
+          input.selectedWorkItem?.waitingReason ??
+          "Stay attached to the selected work item, its blockers, and its closure posture."
+      };
+    case "governance-incident":
+      return {
+        title: input.selectedIncident?.title ?? input.focus.incidentId ?? "Incident",
+        summary:
+          input.selectedIncident?.summary ??
+          "Stay attached to the selected incident, its recovery posture, and the next governed remediation step."
+      };
+    case "evidence-artifact":
+      return {
+        title: input.selectedArtifact?.title ?? input.focus.artifactId ?? "Artifact",
+        summary:
+          input.selectedArtifact?.summary ??
+          "Use the selected artifact as the active evidence focus for the draft."
+      };
+    case "evidence-event":
+      return {
+        title:
+          input.selectedEvent?.kind ??
+          (input.focus.eventCursor != null ? `Event #${input.focus.eventCursor}` : "Environment event"),
+        summary:
+          input.selectedEvent?.summary ??
+          "Reconstruct the selected event and use it as the active evidence focus."
+      };
+    case "runtime-scope":
+      return {
+        title: "Runtime scope",
+        summary: "Keep the draft anchored to the active runtime scope rather than a detached chat topic."
+      };
+    case "none":
+    default:
+      return {
+        title: "Current environment",
+        summary: `${input.focusLabel}. Continue from the active environment posture rather than an isolated thread.`
+      };
+  }
 }
 
 function buildEntityQuickForms(input: {
@@ -1006,6 +1478,8 @@ export function App() {
   const [selectedOperateSection, setSelectedOperateSection] = useState<OperateSection>("orientation");
   const [selectedConversationSection, setSelectedConversationSection] =
     useState<ConversationSection>("threads");
+  const [draftEntryFocusOverride, setDraftEntryFocusOverride] =
+    useState<EnvironmentFocusState | null>(null);
   const [selectedBrowserDomain, setSelectedBrowserDomain] = useState<BrowserDomain>("symbols");
   const [selectedConfigurationSection, setSelectedConfigurationSection] =
     useState<ConfigurationSection>("theme");
@@ -1035,6 +1509,27 @@ export function App() {
   const [shellTooltip, setShellTooltip] = useState<{ label: string; x: number; y: number } | null>(null);
   const [themePreference, setThemePreference] = useState<ThemePreference>("system");
   const [lispParenColors, setLispParenColors] = useState<string[]>(DEFAULT_LISP_PAREN_COLORS);
+  const [providerSummary, setProviderSummary] = useState<ProviderProfileSummaryDto | null>(null);
+  const [packageManagementSummary, setPackageManagementSummary] = useState<PackageManagementSummaryDto | null>(null);
+  const [selectedProviderProfileName, setSelectedProviderProfileName] = useState<string>("default");
+  const [providerProfileDraft, setProviderProfileDraft] = useState<ConfigureProviderProfileInput>(
+    buildProviderProfileDraft()
+  );
+  const [providerProfileStatusMessage, setProviderProfileStatusMessage] = useState<string | null>(null);
+  const [providerProfileError, setProviderProfileError] = useState<string | null>(null);
+  const [packageManagementStatusMessage, setPackageManagementStatusMessage] = useState<string | null>(null);
+  const [packageManagementError, setPackageManagementError] = useState<string | null>(null);
+  const [packageManagementCommandResult, setPackageManagementCommandResult] =
+    useState<PackageManagementCommandResultDto | null>(null);
+  const [quicklispSystemDraft, setQuicklispSystemDraft] = useState<string>("");
+  const [qlotCommandDraft, setQlotCommandDraft] = useState<string>("update");
+  const [sourceRegistryDraftPath, setSourceRegistryDraftPath] = useState<string>("");
+  const [sourceRegistryEditOriginalPath, setSourceRegistryEditOriginalPath] = useState<string | null>(null);
+  const [localProjectPathDraft, setLocalProjectPathDraft] = useState<string>("");
+  const [localProjectNameDraft, setLocalProjectNameDraft] = useState<string>("");
+  const [isPackageManagementBusy, setIsPackageManagementBusy] = useState(false);
+  const [isSavingProviderProfile, setIsSavingProviderProfile] = useState(false);
+  const [isUpdatingProviderRouting, setIsUpdatingProviderRouting] = useState(false);
   const [tooltipScalePercent, setTooltipScalePercent] = useState<number>(
     DEFAULT_DESKTOP_TOOLTIP_SCALE_PERCENT
   );
@@ -1196,6 +1691,7 @@ export function App() {
   const [conversationDraft, setConversationDraft] = useState(
     "Start from the live environment focus and keep runtime, source, and governance context attached."
   );
+  const [conversationAttachments, setConversationAttachments] = useState<ConversationAttachmentDto[]>([]);
   const [conversationSendError, setConversationSendError] = useState<string | null>(null);
   const [isSendingConversation, setIsSendingConversation] = useState(false);
   const [conversationStream, setConversationStream] = useState<{
@@ -1242,6 +1738,7 @@ export function App() {
   const runtimeInspectorPackageRef = useRef(runtimeInspectorPackage);
   const runtimeInspectionModeRef = useRef<RuntimeInspectionMode>(runtimeInspectionMode);
   const selectedThreadIdRef = useRef<string | null>(selectedThreadId);
+  const environmentFocusRef = useRef<EnvironmentFocusState>(createDefaultEnvironmentFocusState());
   const desktopPreferencesHydratedRef = useRef(false);
   const desktopPreferencesPersistTimeoutRef = useRef<number | null>(null);
   const shellPendingHydrationActionsRef = useRef<ShellLayoutAction[]>([]);
@@ -1420,6 +1917,30 @@ export function App() {
   }, [selectedThreadId]);
 
   useEffect(() => {
+    const selectedProfile =
+      providerSummary?.profiles.find((profile) => profile.name === selectedProviderProfileName) ??
+      providerSummary?.activeProfile ??
+      null;
+    if (!selectedProfile) {
+      return;
+    }
+    setProviderProfileDraft(
+      buildProviderProfileDraft({
+        profileName: selectedProfile.name,
+        provider: selectedProfile.provider,
+        model: selectedProfile.model,
+        fastModel: selectedProfile.fastModel,
+        apiBase: selectedProfile.apiBase ?? "",
+        intents: selectedProfile.intents,
+        latencyTier: selectedProfile.latencyTier,
+        reviewBias: selectedProfile.reviewBias,
+        executionBias: selectedProfile.executionBias,
+        locality: selectedProfile.locality
+      })
+    );
+  }, [providerSummary, selectedProviderProfileName]);
+
+  useEffect(() => {
     if (!effectiveEnvironmentId) {
       setConversationStream(null);
       return;
@@ -1524,6 +2045,237 @@ export function App() {
     (currentProjectId ? threads.find((thread) => thread.threadId === selectedConversationThreadByProject[currentProjectId]) : null) ??
     threads[0] ??
     null;
+  const environmentFocus = useMemo<EnvironmentFocusState>(() => {
+    const browserFocus = createEnvironmentFocusFromBrowserContext({
+      sourceWorkspace: activeWorkspace,
+      runtimeSymbol: runtimeInspection?.data.symbol ?? runtimeEntityDetail?.data.symbol ?? null,
+      runtimePackage:
+        runtimeInspection?.data.packageName ??
+        runtimeEntityDetail?.data.packageName ??
+        runtimeInspectorPackage ??
+        null,
+      runtimeInspectionMode: runtimeInspection?.data.mode ?? runtimeInspectionMode,
+      sourcePath: sourcePreview?.data.path ?? null,
+      sourceLine: sourcePreview?.data.focusLine ?? null,
+      linkedThreadId: selectedThreadId
+    });
+    const conversationFocus = createEnvironmentFocusFromConversationContext({
+      sourceWorkspace: activeWorkspace,
+      threadId: selectedThreadId,
+      turnId: selectedTurnId
+    });
+    const governanceFocus = createEnvironmentFocusFromGovernanceContext({
+      sourceWorkspace: activeWorkspace,
+      approvalId: selectedApprovalId,
+      workItemId: selectedWorkItemId,
+      incidentId: selectedIncidentId
+    });
+    const evidenceFocus = createEnvironmentFocusFromEvidenceContext({
+      sourceWorkspace: activeWorkspace,
+      artifactId: selectedArtifactId,
+      eventCursor: selectedEventCursor
+    });
+    const focusCandidates = [browserFocus, conversationFocus, governanceFocus, evidenceFocus];
+    const crossSurfaceDraftFocus =
+      canonicalWorkspace(activeWorkspace) === "conversations" && selectedConversationSection === "draft"
+        ? draftEntryFocusOverride
+        : null;
+    const preferredFocus =
+      crossSurfaceDraftFocus
+        ? crossSurfaceDraftFocus
+        : canonicalWorkspace(activeWorkspace) === "browser" || canonicalWorkspace(activeWorkspace) === "runtime"
+        ? browserFocus
+        : canonicalWorkspace(activeWorkspace) === "conversations"
+          ? conversationFocus
+          : canonicalWorkspace(activeWorkspace) === "approvals" ||
+              canonicalWorkspace(activeWorkspace) === "incidents" ||
+              canonicalWorkspace(activeWorkspace) === "work" ||
+              canonicalWorkspace(activeWorkspace) === "environment"
+            ? governanceFocus
+            : canonicalWorkspace(activeWorkspace) === "artifacts" || canonicalWorkspace(activeWorkspace) === "activity"
+              ? evidenceFocus
+              : createDefaultEnvironmentFocusState();
+    const baseFocus =
+      preferredFocus.kind !== "none"
+        ? preferredFocus
+        : focusCandidates.find((focus) => focus.kind !== "none") ?? createDefaultEnvironmentFocusState();
+
+    return focusCandidates.reduce((combined, focus) => {
+      if (focus === baseFocus || focus.kind === "none") {
+        return combined;
+      }
+      return mergeEnvironmentFocus(combined, focus);
+    }, baseFocus);
+  }, [
+    activeWorkspace,
+    draftEntryFocusOverride,
+    selectedConversationSection,
+    selectedApprovalId,
+    selectedArtifactId,
+    selectedEventCursor,
+    selectedIncidentId,
+    runtimeEntityDetail?.data.packageName,
+    runtimeEntityDetail?.data.symbol,
+    runtimeInspection?.data.mode,
+    runtimeInspection?.data.packageName,
+    runtimeInspection?.data.symbol,
+    runtimeInspectionMode,
+    runtimeInspectorPackage,
+    selectedThreadId,
+    selectedTurnId,
+    selectedWorkItemId,
+    sourcePreview?.data.focusLine,
+    sourcePreview?.data.path
+  ]);
+  environmentFocusRef.current = environmentFocus;
+  const environmentFocusLabel = useMemo(() => formatEnvironmentFocusLabel(environmentFocus), [environmentFocus]);
+  const environmentFocusPresentation = useMemo(
+    () =>
+      buildEnvironmentFocusPresentation({
+        focus: environmentFocus,
+        focusLabel: environmentFocusLabel,
+        selectedThread,
+        selectedTurn,
+        selectedApproval,
+        selectedWorkItem,
+        selectedIncident,
+        selectedArtifact,
+        selectedEvent: environmentEvents.find((event) => event.cursor === selectedEventCursor) ?? null
+      }),
+    [
+      environmentEvents,
+      environmentFocus,
+      environmentFocusLabel,
+      selectedApproval,
+      selectedArtifact,
+      selectedIncident,
+      selectedEventCursor,
+      selectedThread,
+      selectedTurn,
+      selectedWorkItem
+    ]
+  );
+  const conversationDraftFocusActions = useMemo(() => {
+    switch (environmentFocus.kind) {
+      case "governance-approval":
+        return [
+          ...(environmentFocus.approvalId ?? selectedApproval?.requestId
+            ? [{
+                label: "Review Approval",
+                onSelect: () => openApprovalRequest(environmentFocus.approvalId ?? selectedApproval?.requestId ?? "")
+              }]
+            : []),
+          {
+            label: "Open Governance",
+            onSelect: () => navigateToExecutionSection("approvals")
+          }
+        ];
+      case "governance-work-item":
+        return [
+          ...(environmentFocus.workItemId ?? selectedWorkItem?.workItemId
+            ? [{
+                label: "Open Work Item",
+                onSelect: () => continueWorkItem(environmentFocus.workItemId ?? selectedWorkItem?.workItemId ?? "")
+              }]
+            : []),
+          {
+            label: "Open Governance",
+            onSelect: () => navigateToExecutionSection("work")
+          }
+        ];
+      case "governance-incident":
+        return [
+          ...(environmentFocus.incidentId ?? selectedIncident?.incidentId
+            ? [{
+                label: "Open Recovery",
+                onSelect: () => continueRecovery(environmentFocus.incidentId ?? selectedIncident?.incidentId ?? "")
+              }]
+            : []),
+          {
+            label: "Inspect Evidence",
+            onSelect: () => navigateToEvidenceSection("artifacts")
+          }
+        ];
+      case "evidence-artifact":
+        return [
+          {
+            label: "Open Evidence",
+            onSelect: async () => {
+              const artifactId = environmentFocus.artifactId ?? selectedArtifact?.artifactId ?? null;
+              if (artifactId) {
+                setSelectedArtifactId(artifactId);
+              }
+              await navigateToEvidenceSection("artifacts");
+            }
+          },
+          {
+            label: "Replay Events",
+            onSelect: () => navigateToEvidenceSection("observation")
+          }
+        ];
+      case "evidence-event":
+        return [
+          {
+            label: "Replay Event",
+            onSelect: () => navigateToEvidenceSection("observation")
+          },
+          {
+            label: "Inspect Evidence",
+            onSelect: () => navigateToEvidenceSection("artifacts")
+          }
+        ];
+      case "runtime-symbol":
+      case "source-artifact":
+      case "runtime-scope":
+        return [
+          {
+            label: "Open Browser Focus",
+            onSelect: () => navigateToBrowserDomain(environmentFocus.sourcePath ? "source" : "symbols")
+          },
+          {
+            label: "Open Inspector",
+            onSelect: () => navigateToDesktopPanel("inspector")
+          }
+        ];
+      case "conversation-turn":
+        return [
+          {
+            label: "View Turn",
+            onSelect: () => navigateToConversationSection("turns")
+          },
+          {
+            label: "Open Inspector",
+            onSelect: () => navigateToDesktopPanel("inspector")
+          }
+        ];
+      case "conversation-thread":
+      case "linked-conversation":
+        return [
+          {
+            label: "View Thread",
+            onSelect: () => navigateToConversationSection("threads")
+          },
+          {
+            label: "Open Inspector",
+            onSelect: () => navigateToDesktopPanel("inspector")
+          }
+        ];
+      case "none":
+      default:
+        return [
+          {
+            label: "Open Inspector",
+            onSelect: () => navigateToDesktopPanel("inspector")
+          }
+        ];
+    }
+  }, [
+    environmentFocus,
+    selectedApproval?.requestId,
+    selectedArtifact?.artifactId,
+    selectedIncident?.incidentId,
+    selectedWorkItem?.workItemId
+  ]);
   const selectedConversationMessage =
     selectedThread?.messages.find((message) => message.messageId === selectedConversationMessageId) ??
     (selectedThread &&
@@ -2565,6 +3317,13 @@ export function App() {
   }, [activeWorkspace, effectiveEnvironmentId]);
 
   useEffect(() => {
+    if (activeWorkspace === "configuration" && effectiveEnvironmentId) {
+      void refreshProviderSummary(effectiveEnvironmentId);
+      void refreshPackageManagementSummary(effectiveEnvironmentId);
+    }
+  }, [activeWorkspace, effectiveEnvironmentId]);
+
+  useEffect(() => {
     if (
       activeWorkspace !== "browser" ||
       !effectiveEnvironmentId ||
@@ -2799,6 +3558,40 @@ export function App() {
     return desktopModelResult.data;
   }
 
+  async function refreshProviderSummary(environmentId?: string): Promise<ProviderProfileSummaryDto | null> {
+    try {
+      const providerResult = await window.sbclAgentDesktop.query.providerProfiles(environmentId);
+      setProviderSummary(providerResult.data);
+      setSelectedProviderProfileName((current) => {
+        if (providerResult.data.profiles.some((profile) => profile.name === current)) {
+          return current;
+        }
+        return providerResult.data.activeProfileName ?? providerResult.data.profiles[0]?.name ?? "default";
+      });
+      return providerResult.data;
+    } catch (error) {
+      setProviderProfileError(
+        error instanceof Error ? error.message : "Failed to load provider configuration."
+      );
+      return null;
+    }
+  }
+
+  async function refreshPackageManagementSummary(
+    environmentId?: string
+  ): Promise<PackageManagementSummaryDto | null> {
+    try {
+      const result = await window.sbclAgentDesktop.query.packageManagementSummary(environmentId);
+      setPackageManagementSummary(result.data);
+      return result.data;
+    } catch (error) {
+      setPackageManagementError(
+        error instanceof Error ? error.message : "Failed to load package-management summary."
+      );
+      return null;
+    }
+  }
+
   async function loadInitialState(): Promise<void> {
     try {
       desktopPreferencesHydratedRef.current = false;
@@ -2906,6 +3699,9 @@ export function App() {
         );
         setProjects(nextProjects);
         setCurrentProjectId((current) => current ?? desktopPreferences.currentProjectId ?? nextProjects[0]?.projectId ?? null);
+        await refreshProviderSummary(nextBinding.environmentId);
+      } else {
+        await refreshProviderSummary();
       }
       desktopPreferencesHydratedRef.current = true;
       shellPendingHydrationActionsRef.current = [];
@@ -4285,17 +5081,48 @@ export function App() {
     }
   }
 
-  async function handleSendConversationMessage(): Promise<void> {
-    if (!effectiveEnvironmentId || !selectedThreadId || conversationDraft.trim().length === 0) {
+  async function handleConversationAttachmentSelection(files: FileList | null): Promise<void> {
+    if (!files || files.length === 0) {
       return;
     }
+
+    try {
+      setConversationSendError(null);
+      const nextAttachments = await Promise.all(
+        Array.from(files).map((file, index) => conversationAttachmentFromFile(file, index))
+      );
+      setConversationAttachments((current) => [...current, ...nextAttachments]);
+    } catch (error) {
+      setConversationSendError(
+        error instanceof Error ? error.message : "Failed to prepare the selected conversation attachments."
+      );
+    }
+  }
+
+  function removeConversationAttachment(attachmentId: string): void {
+    setConversationAttachments((current) =>
+      current.filter((attachment) => attachment.attachmentId !== attachmentId)
+    );
+  }
+
+  async function handleSendConversationMessage(): Promise<void> {
+    if (
+      !effectiveEnvironmentId ||
+      !selectedThreadId ||
+      (conversationDraft.trim().length === 0 && conversationAttachments.length === 0)
+    ) {
+      return;
+    }
+
+    const currentThreadId = selectedThreadId;
+    const priorMessageCount = selectedThread?.messages.length ?? 0;
 
     try {
       setIsSendingConversation(true);
       setErrorMessage(null);
       setConversationSendError(null);
       setConversationStream({
-        threadId: selectedThreadId,
+        threadId: currentThreadId,
         turnId: null,
         content: ""
       });
@@ -4308,15 +5135,27 @@ export function App() {
 
       const result = await sendConversationMessage({
         environmentId: effectiveEnvironmentId,
-        threadId: selectedThreadId,
-        prompt: conversationDraft.trim()
+        threadId: currentThreadId,
+        prompt: conversationDraft.trim(),
+        attachments: conversationAttachments
       });
+      console.info(
+        "[conversation-send] status=%s threadId=%s turnId=%s attachmentCount=%d summaryLength=%d",
+        result.status,
+        result.data.threadId,
+        result.data.turnId,
+        conversationAttachments.length,
+        result.data.summary?.length ?? 0
+      );
 
-      await loadConversationWorkspace(effectiveEnvironmentId);
       const nextThreadId =
-        result.data.threadId && result.data.threadId !== "thread" ? result.data.threadId : selectedThreadId;
-      await loadThreadDetail(nextThreadId, effectiveEnvironmentId);
+        result.data.threadId && result.data.threadId !== "thread" ? result.data.threadId : currentThreadId;
       setSelectedThreadId(nextThreadId);
+      await loadConversationWorkspace(effectiveEnvironmentId, nextThreadId);
+      await loadThreadDetail(nextThreadId, effectiveEnvironmentId, {
+        expectedTurnId: result.data.turnId && result.data.turnId !== "turn" ? result.data.turnId : null,
+        minimumMessageCount: priorMessageCount + 1
+      });
       setSelectedTurnId(result.data.turnId && result.data.turnId !== "turn" ? result.data.turnId : null);
       if (result.status === "error" || result.status === "rejected") {
         const failureSummary =
@@ -4327,6 +5166,7 @@ export function App() {
         return;
       }
       setConversationDraft("");
+      setConversationAttachments([]);
       setConversationStream(null);
       setConversationSendError(null);
     } catch (error) {
@@ -4376,26 +5216,70 @@ export function App() {
     }
   }
 
-  async function loadConversationWorkspace(environmentId: string): Promise<void> {
+  async function loadConversationWorkspace(environmentId: string, preferredThreadIdOverride?: string | null): Promise<void> {
     try {
       const threadResult = await window.sbclAgentDesktop.query.threadList(environmentId);
       setThreads(threadResult.data);
 
       const preferredThreadId =
-        selectedThreadId ?? (currentProjectId ? selectedConversationThreadByProject[currentProjectId] : null);
+        preferredThreadIdOverride ??
+        selectedThreadIdRef.current ??
+        (currentProjectId ? selectedConversationThreadByProject[currentProjectId] : null);
       const nextThreadId =
         preferredThreadId && threadResult.data.some((thread) => thread.threadId === preferredThreadId)
           ? preferredThreadId
           : threadResult.data[0]?.threadId ?? null;
+      console.info(
+        "[conversation-workspace] count=%d preferredThreadId=%s nextThreadId=%s",
+        threadResult.data.length,
+        preferredThreadId,
+        nextThreadId
+      );
       setSelectedThreadId(nextThreadId);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Failed to load conversation workspace.");
     }
   }
 
-  async function loadThreadDetail(threadId: string, environmentId: string): Promise<void> {
+  async function loadThreadDetail(
+    threadId: string,
+    environmentId: string,
+    expectation?: {
+      expectedTurnId?: string | null;
+      minimumMessageCount?: number;
+    }
+  ): Promise<void> {
     try {
-      const detailResult = await window.sbclAgentDesktop.query.threadDetail(threadId, environmentId);
+      const expectedTurnId = expectation?.expectedTurnId ?? null;
+      const minimumMessageCount = expectation?.minimumMessageCount ?? 0;
+      let detailResult = await window.sbclAgentDesktop.query.threadDetail(threadId, environmentId);
+
+      if (
+        expectedTurnId ||
+        minimumMessageCount > 0
+      ) {
+        let attemptsRemaining = 4;
+        while (attemptsRemaining > 0) {
+          const hasExpectedTurn =
+            !expectedTurnId || detailResult.data.turns.some((turn) => turn.turnId === expectedTurnId);
+          const hasExpectedMessageCount = detailResult.data.messages.length >= minimumMessageCount;
+          if (hasExpectedTurn && hasExpectedMessageCount) {
+            break;
+          }
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 150));
+          detailResult = await window.sbclAgentDesktop.query.threadDetail(threadId, environmentId);
+          attemptsRemaining -= 1;
+        }
+      }
+
+      console.info(
+        "[conversation-thread] threadId=%s messageCount=%d turnCount=%d expectedTurnId=%s minimumMessageCount=%d",
+        threadId,
+        detailResult.data.messages.length,
+        detailResult.data.turns.length,
+        expectedTurnId,
+        minimumMessageCount
+      );
       setSelectedThread(detailResult.data);
 
       const nextTurnId = selectedTurnId ?? detailResult.data.turns[0]?.turnId ?? null;
@@ -6517,6 +7401,200 @@ export function App() {
     });
   }
 
+  async function applyProviderRoutingMode(mode: ProviderRoutingMode): Promise<void> {
+    try {
+      setIsUpdatingProviderRouting(true);
+      setProviderProfileError(null);
+      setProviderProfileStatusMessage(null);
+      const result = await window.sbclAgentDesktop.command.updateProviderRouting({ mode });
+      setProviderSummary(result.data);
+      setProviderProfileStatusMessage(`Routing mode updated to ${mode}.`);
+    } catch (error) {
+      setProviderProfileError(
+        error instanceof Error ? error.message : "Failed to update provider routing mode."
+      );
+    } finally {
+      setIsUpdatingProviderRouting(false);
+    }
+  }
+
+  async function activateProviderProfile(profileName: string): Promise<void> {
+    try {
+      setProviderProfileError(null);
+      setProviderProfileStatusMessage(null);
+      const result = await window.sbclAgentDesktop.command.useProviderProfile({ profileName });
+      setProviderSummary(result.data);
+      setSelectedProviderProfileName(profileName);
+      setProviderProfileStatusMessage(`Activated provider profile ${profileName}.`);
+    } catch (error) {
+      setProviderProfileError(
+        error instanceof Error ? error.message : "Failed to activate provider profile."
+      );
+    }
+  }
+
+  async function saveProviderProfile(clearApiKey = false): Promise<void> {
+    try {
+      setIsSavingProviderProfile(true);
+      setProviderProfileError(null);
+      setProviderProfileStatusMessage(null);
+      const apiKey = providerProfileDraft.apiKey?.trim() ?? "";
+      const payload: ConfigureProviderProfileInput = {
+        ...providerProfileDraft,
+        profileName: providerProfileDraft.profileName.trim() || "default",
+        model: providerProfileDraft.model.trim() || llmProviderPresetForProfile(providerProfileDraft).defaultModel,
+        fastModel:
+          providerProfileDraft.fastModel?.trim() ||
+          providerProfileDraft.model.trim() ||
+          llmProviderPresetForProfile(providerProfileDraft).defaultFastModel,
+        apiBase: providerProfileDraft.apiBase?.trim() ?? "",
+        intents: (providerProfileDraft.intents ?? []).map((intent) => intent.trim()).filter(Boolean),
+        activate: providerProfileDraft.activate ?? false
+      };
+      if (clearApiKey) {
+        payload.clearApiKey = true;
+        payload.apiKey = "";
+      } else if (apiKey.length > 0) {
+        payload.apiKey = apiKey;
+      } else {
+        delete payload.apiKey;
+      }
+      const result = await window.sbclAgentDesktop.command.configureProviderProfile(payload);
+      setProviderSummary(result.data);
+      setSelectedProviderProfileName(payload.profileName);
+      setProviderProfileDraft((current) => ({
+        ...current,
+        profileName: payload.profileName,
+        model: payload.model,
+        fastModel: payload.fastModel,
+        apiBase: payload.apiBase,
+        apiKey: "",
+        clearApiKey: false
+      }));
+      setProviderProfileStatusMessage(
+        clearApiKey
+          ? `Cleared the stored token for ${payload.profileName}.`
+          : payload.activate
+            ? `Saved and activated provider profile ${payload.profileName}.`
+            : `Saved provider profile ${payload.profileName}.`
+      );
+    } catch (error) {
+      setProviderProfileError(
+        error instanceof Error ? error.message : "Failed to save provider profile."
+      );
+    } finally {
+      setIsSavingProviderProfile(false);
+    }
+  }
+
+  async function runPackageManagementCommand(
+    execute: () => Promise<CommandResultDto<PackageManagementCommandResultDto>>
+  ): Promise<void> {
+    try {
+      setIsPackageManagementBusy(true);
+      setPackageManagementError(null);
+      setPackageManagementStatusMessage(null);
+      const result = await execute();
+      setPackageManagementCommandResult(result.data);
+      setPackageManagementSummary(result.data.packageManagement);
+      setPackageManagementStatusMessage(result.data.summary);
+    } catch (error) {
+      setPackageManagementError(
+        error instanceof Error ? error.message : "Package-management command failed."
+      );
+    } finally {
+      setIsPackageManagementBusy(false);
+    }
+  }
+
+  async function installQuicklispPackage(): Promise<void> {
+    if (!effectiveEnvironmentId || quicklispSystemDraft.trim().length === 0) {
+      return;
+    }
+    await runPackageManagementCommand(() =>
+      window.sbclAgentDesktop.command.installQuicklispPackage({
+        environmentId: effectiveEnvironmentId,
+        systemName: quicklispSystemDraft.trim()
+      })
+    );
+  }
+
+  async function executeQlotCommand(): Promise<void> {
+    if (!effectiveEnvironmentId || qlotCommandDraft.trim().length === 0) {
+      return;
+    }
+    const args = qlotCommandDraft
+      .split(/\s+/)
+      .map((value) => value.trim())
+      .filter(Boolean);
+    await runPackageManagementCommand(() =>
+      window.sbclAgentDesktop.command.runQlotCommand({
+        environmentId: effectiveEnvironmentId,
+        args
+      })
+    );
+  }
+
+  async function saveSourceRegistryEntry(): Promise<void> {
+    if (!effectiveEnvironmentId || sourceRegistryDraftPath.trim().length === 0) {
+      return;
+    }
+    const path = sourceRegistryDraftPath.trim();
+    await runPackageManagementCommand(() =>
+      sourceRegistryEditOriginalPath
+        ? window.sbclAgentDesktop.command.updateSourceRegistryEntry({
+            environmentId: effectiveEnvironmentId,
+            oldPath: sourceRegistryEditOriginalPath,
+            newPath: path
+          })
+        : window.sbclAgentDesktop.command.addSourceRegistryEntry({
+            environmentId: effectiveEnvironmentId,
+            path
+          })
+    );
+    setSourceRegistryDraftPath("");
+    setSourceRegistryEditOriginalPath(null);
+  }
+
+  async function removeSourceRegistryPath(path: string): Promise<void> {
+    if (!effectiveEnvironmentId) {
+      return;
+    }
+    await runPackageManagementCommand(() =>
+      window.sbclAgentDesktop.command.removeSourceRegistryEntry({
+        environmentId: effectiveEnvironmentId,
+        path
+      })
+    );
+  }
+
+  async function saveLocalProject(): Promise<void> {
+    if (!effectiveEnvironmentId || localProjectPathDraft.trim().length === 0) {
+      return;
+    }
+    await runPackageManagementCommand(() =>
+      window.sbclAgentDesktop.command.addLocalProject({
+        environmentId: effectiveEnvironmentId,
+        path: localProjectPathDraft.trim(),
+        name: localProjectNameDraft.trim() || undefined
+      })
+    );
+    setLocalProjectPathDraft("");
+    setLocalProjectNameDraft("");
+  }
+
+  async function removeLocalProjectByName(name: string): Promise<void> {
+    if (!effectiveEnvironmentId) {
+      return;
+    }
+    await runPackageManagementCommand(() =>
+      window.sbclAgentDesktop.command.removeLocalProject({
+        environmentId: effectiveEnvironmentId,
+        name
+      })
+    );
+  }
+
   function toggleWorkspaceMenu(workspace: WorkspaceId): void {
     setExpandedWorkspaceMenus((current) => ({
       ...current,
@@ -6554,6 +7632,11 @@ export function App() {
   }
 
   async function navigateToConversationSection(section: ConversationSection): Promise<void> {
+    if (section !== "draft") {
+      setDraftEntryFocusOverride(null);
+    } else if (!draftEntryFocusOverride) {
+      setDraftEntryFocusOverride(null);
+    }
     setSelectedConversationSection(section);
     setExpandedWorkspaceMenus((current) => ({ ...current, conversations: true }));
     openDesktopWindow("window:conversations-surface");
@@ -6586,9 +7669,20 @@ export function App() {
   }
 
   function activateConversationInspectorSection(section: ConversationSection): void {
+    if (section !== "draft") {
+      setDraftEntryFocusOverride(null);
+    }
     setSelectedConversationSection(section);
     setActiveHostedApp("control-panel");
     setActiveWorkspace("conversations");
+  }
+
+  async function openConversationDraftWithFocusOverride(override: EnvironmentFocusState): Promise<void> {
+    setDraftEntryFocusOverride(override);
+    setSelectedConversationSection("draft");
+    setExpandedWorkspaceMenus((current) => ({ ...current, conversations: true }));
+    openDesktopWindow("window:conversations-surface");
+    await navigateToWorkspace("conversations");
   }
 
   async function continueThread(threadId: string): Promise<void> {
@@ -7396,11 +8490,14 @@ export function App() {
         conversationSendError={conversationSendError}
         selectedBrowserDomain={selectedBrowserDomain}
         conversationDraft={conversationDraft}
+        conversationAttachments={conversationAttachments}
         conversationStream={conversationStream}
         environmentEvents={environmentEvents}
         isSendingConversation={isSendingConversation}
         lispParenColors={lispParenColors}
         sendConversationMessage={handleSendConversationMessage}
+        onConversationAttachmentSelection={handleConversationAttachmentSelection}
+        removeConversationAttachment={removeConversationAttachment}
         resolvedTheme={resolvedTheme}
         runtimeForm={runtimeForm}
         runtimeEntityDetail={runtimeEntityDetail}
@@ -7483,6 +8580,24 @@ export function App() {
         summary={summary}
         systemTheme={systemTheme}
         themePreference={themePreference}
+        providerSummary={providerSummary}
+        packageManagementSummary={packageManagementSummary}
+        packageManagementStatusMessage={packageManagementStatusMessage}
+        packageManagementError={packageManagementError}
+        packageManagementCommandResult={packageManagementCommandResult}
+        quicklispSystemDraft={quicklispSystemDraft}
+        qlotCommandDraft={qlotCommandDraft}
+        sourceRegistryDraftPath={sourceRegistryDraftPath}
+        sourceRegistryEditOriginalPath={sourceRegistryEditOriginalPath}
+        localProjectPathDraft={localProjectPathDraft}
+        localProjectNameDraft={localProjectNameDraft}
+        providerProfileDraft={providerProfileDraft}
+        selectedProviderProfileName={selectedProviderProfileName}
+        providerProfileStatusMessage={providerProfileStatusMessage}
+        providerProfileError={providerProfileError}
+        isSavingProviderProfile={isSavingProviderProfile}
+        isUpdatingProviderRouting={isUpdatingProviderRouting}
+        isPackageManagementBusy={isPackageManagementBusy}
         tooltipScalePercent={tooltipScalePercent}
         controlIconScalePercent={controlIconScalePercent}
         dockIconScalePercent={dockIconScalePercent}
@@ -7494,6 +8609,23 @@ export function App() {
         updateLispParenColor={updateLispParenColor}
         updateThemePreference={applyThemePreference}
         updateDesktopSurfaceScalePreference={updateDesktopSurfaceScalePreference}
+        setProviderProfileDraft={setProviderProfileDraft}
+        setSelectedProviderProfileName={setSelectedProviderProfileName}
+        setQuicklispSystemDraft={setQuicklispSystemDraft}
+        setQlotCommandDraft={setQlotCommandDraft}
+        setSourceRegistryDraftPath={setSourceRegistryDraftPath}
+        setSourceRegistryEditOriginalPath={setSourceRegistryEditOriginalPath}
+        setLocalProjectPathDraft={setLocalProjectPathDraft}
+        setLocalProjectNameDraft={setLocalProjectNameDraft}
+        applyProviderRoutingMode={applyProviderRoutingMode}
+        activateProviderProfile={activateProviderProfile}
+        saveProviderProfile={saveProviderProfile}
+        installQuicklispPackage={installQuicklispPackage}
+        executeQlotCommand={executeQlotCommand}
+        saveSourceRegistryEntry={saveSourceRegistryEntry}
+        removeSourceRegistryPath={removeSourceRegistryPath}
+        saveLocalProject={saveLocalProject}
+        removeLocalProjectByName={removeLocalProjectByName}
         workItems={workItems}
       />
     ),
@@ -8083,6 +9215,7 @@ export function App() {
                 artifacts,
                 browseRuntimeEntity,
                 conversationDraft,
+                environmentFocus,
                 incidents,
                 inspectRuntimeSymbol,
                 isDecidingApproval,
@@ -8236,8 +9369,17 @@ export function App() {
               approvalsWorkspaceProps={{
                 approvalDecision,
                 approvalRequests,
+                environmentFocusLabel,
                 isDecidingApproval,
                 navigateToLinkedEntity,
+                openConversationDraft: () =>
+                  openConversationDraftWithFocusOverride({
+                    ...createDefaultEnvironmentFocusState(),
+                    kind: "governance-approval",
+                    sourceWorkspace: "runtime",
+                    sourceSurface: "approvals",
+                    approvalId: selectedApprovalId
+                  }),
                 reconciliationDecision: status?.reconciliationDecision ?? summary?.reconciliationDecision ?? null,
                 selectedApproval,
                 selectedApprovalId,
@@ -8248,9 +9390,18 @@ export function App() {
               }}
               incidentsWorkspaceProps={{
                 clearPendingIncidentFocusId: () => setPendingIncidentFocusId(null),
+                environmentFocusLabel,
                 incidents,
                 navigateToLinkedEntity,
                 openIncidentRemediationPlanDialog,
+                openConversationDraft: () =>
+                  openConversationDraftWithFocusOverride({
+                    ...createDefaultEnvironmentFocusState(),
+                    kind: "governance-incident",
+                    sourceWorkspace: "incidents",
+                    sourceSurface: "incidents",
+                    incidentId: selectedIncidentId
+                  }),
                 openInspectorSurface: () => navigateToDesktopPanel("inspector"),
                 pendingIncidentFocusId,
                 selectedIncident,
@@ -8260,10 +9411,19 @@ export function App() {
               workWorkspaceProps={{
                 approvalRequests,
                 clearPendingWorkItemFocusId: () => setPendingWorkItemFocusId(null),
+                environmentFocusLabel,
                 isDecidingApproval,
                 navigateToLinkedEntity,
                 openApprovalRequest,
                 openCompleteWorkItemValidationsDialog: openWorkItemValidationDialog,
+                openConversationDraft: () =>
+                  openConversationDraftWithFocusOverride({
+                    ...createDefaultEnvironmentFocusState(),
+                    kind: "governance-work-item",
+                    sourceWorkspace: "runtime",
+                    sourceSurface: "operate",
+                    workItemId: selectedWorkItemId
+                  }),
                 openInspectorSurface: () => navigateToDesktopPanel("inspector"),
                 openQuarantineWorkItemDialog: openWorkItemQuarantineDialog,
                 openResumeWorkItemDialog: openWorkItemResumeDialog,
@@ -8280,10 +9440,29 @@ export function App() {
               }}
               evidenceWorkspaceProps={{
                 artifacts,
+                environmentFocusLabel,
                 eventFamilyFilter,
                 eventVisibilityFilter,
                 events: environmentEvents,
                 navigateToLinkedEntity,
+                openConversationDraft: () =>
+                  openConversationDraftWithFocusOverride(
+                    selectedArtifactId
+                      ? {
+                          ...createDefaultEnvironmentFocusState(),
+                          kind: "evidence-artifact",
+                          sourceWorkspace: "artifacts",
+                          sourceSurface: "artifacts",
+                          artifactId: selectedArtifactId
+                        }
+                      : {
+                          ...createDefaultEnvironmentFocusState(),
+                          kind: "evidence-event",
+                          sourceWorkspace: "artifacts",
+                          sourceSurface: "artifacts",
+                          eventCursor: selectedEventCursor
+                        }
+                  ),
                 openInspectorSurface: () => navigateToDesktopPanel("inspector"),
                 selectedArtifact,
                 selectedArtifactId,
@@ -8297,6 +9476,10 @@ export function App() {
               conversationsWorkspaceProps={{
                 activateConversationInspectorSection,
                 conversationDraft,
+                draftFocusActions: conversationDraftFocusActions,
+                environmentFocusLabel,
+                environmentFocusSummary: environmentFocusPresentation.summary,
+                environmentFocusTitle: environmentFocusPresentation.title,
                 conversationSections,
                 currentReplSessionId,
                 createReplSession: handleCreateReplSession,
@@ -8355,7 +9538,9 @@ export function App() {
                 controlIconScalePercent,
                 dockIconScalePercent,
                 conversationTextScalePercent,
-                sourceCodeTextScalePercent
+                sourceCodeTextScalePercent,
+                providerSummary,
+                packageManagementSummary
               }}
               editorSurfaceProps={{
                 acceptCurrentBufferBaseline: acceptCurrentEditorBufferBaseline,
@@ -8744,9 +9929,12 @@ function WorkspaceInspector({
   selectedTurn,
   conversationSendError,
   conversationDraft,
+  conversationAttachments,
   conversationStream,
   isSendingConversation,
   sendConversationMessage,
+  onConversationAttachmentSelection,
+  removeConversationAttachment,
   selectedConversationSection,
   selectedConfigurationSection,
   runtimeEntityDetail,
@@ -8802,6 +9990,24 @@ function WorkspaceInspector({
   pendingConversationComposerFocusThreadId,
   systemTheme,
   themePreference,
+  providerSummary,
+  packageManagementSummary,
+  packageManagementStatusMessage,
+  packageManagementError,
+  packageManagementCommandResult,
+  quicklispSystemDraft,
+  qlotCommandDraft,
+  sourceRegistryDraftPath,
+  sourceRegistryEditOriginalPath,
+  localProjectPathDraft,
+  localProjectNameDraft,
+  providerProfileDraft,
+  selectedProviderProfileName,
+  providerProfileStatusMessage,
+  providerProfileError,
+  isSavingProviderProfile,
+  isUpdatingProviderRouting,
+  isPackageManagementBusy,
   tooltipScalePercent,
   controlIconScalePercent,
   dockIconScalePercent,
@@ -8814,6 +10020,23 @@ function WorkspaceInspector({
   updateLispParenColor,
   updateThemePreference,
   updateDesktopSurfaceScalePreference,
+  setProviderProfileDraft,
+  setSelectedProviderProfileName,
+  setQuicklispSystemDraft,
+  setQlotCommandDraft,
+  setSourceRegistryDraftPath,
+  setSourceRegistryEditOriginalPath,
+  setLocalProjectPathDraft,
+  setLocalProjectNameDraft,
+  applyProviderRoutingMode,
+  activateProviderProfile,
+  saveProviderProfile,
+  installQuicklispPackage,
+  executeQlotCommand,
+  saveSourceRegistryEntry,
+  removeSourceRegistryPath,
+  saveLocalProject,
+  removeLocalProjectByName,
   artifacts,
   environmentEvents,
   workItems,
@@ -8830,6 +10053,7 @@ function WorkspaceInspector({
   selectedTurn: TurnDetailDto | null;
   conversationSendError: string | null;
   conversationDraft: string;
+  conversationAttachments: ConversationAttachmentDto[];
   conversationStream: {
     threadId: string;
     turnId: string | null;
@@ -8837,6 +10061,8 @@ function WorkspaceInspector({
   } | null;
   isSendingConversation: boolean;
   sendConversationMessage: () => Promise<void>;
+  onConversationAttachmentSelection: (files: FileList | null) => Promise<void>;
+  removeConversationAttachment: (attachmentId: string) => void;
   selectedConversationSection: ConversationSection;
   selectedConfigurationSection: ConfigurationSection;
   runtimeEntityDetail: QueryResultDto<RuntimeEntityDetailDto> | null;
@@ -8898,6 +10124,24 @@ function WorkspaceInspector({
   pendingConversationComposerFocusThreadId: string | null;
   systemTheme: ResolvedTheme;
   themePreference: ThemePreference;
+  providerSummary: ProviderProfileSummaryDto | null;
+  packageManagementSummary: PackageManagementSummaryDto | null;
+  packageManagementStatusMessage: string | null;
+  packageManagementError: string | null;
+  packageManagementCommandResult: PackageManagementCommandResultDto | null;
+  quicklispSystemDraft: string;
+  qlotCommandDraft: string;
+  sourceRegistryDraftPath: string;
+  sourceRegistryEditOriginalPath: string | null;
+  localProjectPathDraft: string;
+  localProjectNameDraft: string;
+  providerProfileDraft: ConfigureProviderProfileInput;
+  selectedProviderProfileName: string;
+  providerProfileStatusMessage: string | null;
+  providerProfileError: string | null;
+  isSavingProviderProfile: boolean;
+  isUpdatingProviderRouting: boolean;
+  isPackageManagementBusy: boolean;
   tooltipScalePercent: number;
   controlIconScalePercent: number;
   dockIconScalePercent: number;
@@ -8913,6 +10157,23 @@ function WorkspaceInspector({
     key: "tooltipScalePercent" | "controlIconScalePercent" | "dockIconScalePercent" | "conversationTextScalePercent" | "sourceCodeTextScalePercent",
     value: number
   ) => Promise<void>;
+  setProviderProfileDraft: React.Dispatch<React.SetStateAction<ConfigureProviderProfileInput>>;
+  setSelectedProviderProfileName: React.Dispatch<React.SetStateAction<string>>;
+  setQuicklispSystemDraft: React.Dispatch<React.SetStateAction<string>>;
+  setQlotCommandDraft: React.Dispatch<React.SetStateAction<string>>;
+  setSourceRegistryDraftPath: React.Dispatch<React.SetStateAction<string>>;
+  setSourceRegistryEditOriginalPath: React.Dispatch<React.SetStateAction<string | null>>;
+  setLocalProjectPathDraft: React.Dispatch<React.SetStateAction<string>>;
+  setLocalProjectNameDraft: React.Dispatch<React.SetStateAction<string>>;
+  applyProviderRoutingMode: (mode: ProviderRoutingMode) => Promise<void>;
+  activateProviderProfile: (profileName: string) => Promise<void>;
+  saveProviderProfile: (clearApiKey?: boolean) => Promise<void>;
+  installQuicklispPackage: () => Promise<void>;
+  executeQlotCommand: () => Promise<void>;
+  saveSourceRegistryEntry: () => Promise<void>;
+  removeSourceRegistryPath: (path: string) => Promise<void>;
+  saveLocalProject: () => Promise<void>;
+  removeLocalProjectByName: (name: string) => Promise<void>;
   artifacts: ArtifactSummaryDto[];
   environmentEvents: EnvironmentEventDto[];
   workItems: WorkItemSummaryDto[];
@@ -8928,15 +10189,26 @@ function WorkspaceInspector({
         : themePreference
       : selectedConfigurationSection === "lisp-code-view"
         ? `${normalizeParenDepthColors(lispParenColors).length} depth colors`
+        : selectedConfigurationSection === "llm"
+          ? `${providerSummary?.routingMode ?? "auto"} / ${providerSummary?.activeProfileName ?? "default"} / ${providerSummary?.profileCount ?? 0} profiles`
+          : selectedConfigurationSection === "package-management"
+            ? `${packageManagementSummary?.packageManager ?? "asdf"} / ${packageManagementSummary?.managedSourceRegistryEntryCount ?? 0} source entries / ${packageManagementSummary?.localProjectCount ?? 0} local projects`
         : `Tooltip ${tooltipScalePercent}% / Controls ${controlIconScalePercent}% / Dock ${dockIconScalePercent}% / Conversation ${conversationTextScalePercent}% / Source ${sourceCodeTextScalePercent}%`;
   const selectedConfigurationResolvedValue =
     selectedConfigurationSection === "theme"
       ? resolvedTheme
       : selectedConfigurationSection === "lisp-code-view"
         ? "Structured Lisp renderer"
+        : selectedConfigurationSection === "llm"
+          ? providerSummary?.activeProfile?.provider ?? "Provider profiles and routing"
+          : selectedConfigurationSection === "package-management"
+            ? packageManagementSummary?.qlotProjectRoot ??
+              packageManagementSummary?.workingDirectory ??
+              "Managed Quicklisp, Qlot, source-registry, and local-project state."
         : "Independent shell surface scaling, including workspace conversation text.";
   const messageStackRef = useRef<HTMLDivElement | null>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const composerAttachmentInputRef = useRef<HTMLInputElement | null>(null);
   const displayedConversationMessages =
     selectedThread &&
     conversationStream &&
@@ -10029,6 +11301,516 @@ function WorkspaceInspector({
                                 ))}
                               </div>
                             </div>
+                          ) : selectedConfigurationSection === "llm" ? (
+                            <div className="configuration-inspector-stack">
+                              <p className="inspector-copy">
+                                Configure the integrated language-model routing surface here. Profiles can target OpenAI, Anthropic, Gemini, xAI, Azure-hosted OpenAI-compatible endpoints, local LM Studio, or any other compatible endpoint you provide directly.
+                              </p>
+                              <dl className="detail-list">
+                                <DetailRow label="Active Profile" value={providerSummary?.activeProfileName ?? "default"} />
+                                <DetailRow label="Routing Mode" value={providerSummary?.routingMode ?? "auto"} />
+                                <DetailRow label="Profiles" value={String(providerSummary?.profileCount ?? 0)} />
+                              </dl>
+                              <div className="configuration-theme-actions" role="group" aria-label="Provider routing mode">
+                                <button
+                                  className={providerSummary?.routingMode === "auto" ? "starter-chip active" : "starter-chip"}
+                                  disabled={isUpdatingProviderRouting}
+                                  onClick={() => void applyProviderRoutingMode("auto")}
+                                  type="button"
+                                >
+                                  Auto Routing
+                                </button>
+                                <button
+                                  className={providerSummary?.routingMode === "manual" ? "starter-chip active" : "starter-chip"}
+                                  disabled={isUpdatingProviderRouting}
+                                  onClick={() => void applyProviderRoutingMode("manual")}
+                                  type="button"
+                                >
+                                  Manual Routing
+                                </button>
+                              </div>
+                              <div className="configuration-provider-profile-list" role="list" aria-label="Provider profiles">
+                                {(Array.isArray(providerSummary?.profiles) ? providerSummary.profiles : []).map((profile) => (
+                                  <div
+                                    className={
+                                      profile.name === selectedProviderProfileName
+                                        ? "configuration-provider-profile-card active"
+                                        : "configuration-provider-profile-card"
+                                    }
+                                    key={`provider-profile:${profile.name}`}
+                                    role="listitem"
+                                  >
+                                    <button
+                                      className="configuration-provider-profile-select"
+                                      onClick={() => setSelectedProviderProfileName(profile.name)}
+                                      type="button"
+                                    >
+                                      <strong>{profile.name}</strong>
+                                      <span>{profile.provider}</span>
+                                    </button>
+                                    <div className="configuration-provider-profile-meta">
+                                      <Badge tone={profile.name === providerSummary?.activeProfileName ? "active" : "steady"}>
+                                        {profile.name === providerSummary?.activeProfileName ? "Active" : "Stored"}
+                                      </Badge>
+                                      <span>{profile.apiKeyPresent ? "Token stored" : "No token stored"}</span>
+                                    </div>
+                                    <button
+                                      className="starter-chip"
+                                      disabled={profile.name === providerSummary?.activeProfileName}
+                                      onClick={() => void activateProviderProfile(profile.name)}
+                                      type="button"
+                                    >
+                                      Use Profile
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="configuration-provider-form">
+                                <label className="configuration-text-control">
+                                  <span>Profile Name</span>
+                                  <input
+                                    className="configuration-text-input"
+                                    onChange={(event) =>
+                                      setProviderProfileDraft((current) => ({
+                                        ...current,
+                                        profileName: event.target.value
+                                      }))
+                                    }
+                                    type="text"
+                                    value={providerProfileDraft.profileName}
+                                  />
+                                </label>
+                                <label className="configuration-text-control">
+                                  <span>Vendor Preset</span>
+                                  <select
+                                    className="configuration-select-input"
+                                    onChange={(event) => {
+                                      const preset =
+                                        LLM_PROVIDER_PRESETS.find((entry) => entry.id === event.target.value) ??
+                                        LLM_PROVIDER_PRESETS[0]!;
+                                      setProviderProfileDraft((current) => ({
+                                        ...current,
+                                        provider: preset.provider,
+                                        model: current.model.trim().length > 0 ? current.model : preset.defaultModel,
+                                        fastModel:
+                                          (current.fastModel?.trim()?.length ?? 0) > 0
+                                            ? current.fastModel
+                                            : preset.defaultFastModel,
+                                        apiBase:
+                                          (current.apiBase?.trim()?.length ?? 0) > 0
+                                            ? current.apiBase
+                                            : (preset.defaultApiBase ?? ""),
+                                        locality:
+                                          (current.locality?.trim()?.length ?? 0) > 0
+                                            ? current.locality
+                                            : preset.id === "lm-studio"
+                                              ? "local"
+                                              : "network"
+                                      }));
+                                    }}
+                                    value={llmProviderPresetForProfile(providerProfileDraft).id}
+                                  >
+                                    {LLM_PROVIDER_PRESETS.map((preset) => (
+                                      <option key={`provider-preset:${preset.id}`} value={preset.id}>
+                                        {preset.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label className="configuration-text-control">
+                                  <span>Transport Provider</span>
+                                  <input
+                                    className="configuration-text-input"
+                                    onChange={(event) =>
+                                      setProviderProfileDraft((current) => ({
+                                        ...current,
+                                        provider: event.target.value
+                                      }))
+                                    }
+                                    type="text"
+                                    value={providerProfileDraft.provider}
+                                  />
+                                </label>
+                                <label className="configuration-text-control">
+                                  <span>Endpoint</span>
+                                  <input
+                                    className="configuration-text-input"
+                                    onChange={(event) =>
+                                      setProviderProfileDraft((current) => ({
+                                        ...current,
+                                        apiBase: event.target.value
+                                      }))
+                                    }
+                                    placeholder="https://api.example.com/v1"
+                                    type="text"
+                                    value={providerProfileDraft.apiBase ?? ""}
+                                  />
+                                </label>
+                                <label className="configuration-text-control">
+                                  <span>Primary Model</span>
+                                  <input
+                                    className="configuration-text-input"
+                                    onChange={(event) =>
+                                      setProviderProfileDraft((current) => ({
+                                        ...current,
+                                        model: event.target.value
+                                      }))
+                                    }
+                                    type="text"
+                                    value={providerProfileDraft.model}
+                                  />
+                                </label>
+                                <label className="configuration-text-control">
+                                  <span>Fast Model</span>
+                                  <input
+                                    className="configuration-text-input"
+                                    onChange={(event) =>
+                                      setProviderProfileDraft((current) => ({
+                                        ...current,
+                                        fastModel: event.target.value
+                                      }))
+                                    }
+                                    type="text"
+                                    value={providerProfileDraft.fastModel ?? ""}
+                                  />
+                                </label>
+                                <label className="configuration-text-control">
+                                  <span>Secure Token</span>
+                                  <input
+                                    className="configuration-text-input"
+                                    onChange={(event) =>
+                                      setProviderProfileDraft((current) => ({
+                                        ...current,
+                                        apiKey: event.target.value
+                                      }))
+                                    }
+                                    placeholder={
+                                      providerSummary?.profiles.find((profile) => profile.name === selectedProviderProfileName)?.apiKeyPresent
+                                        ? "Stored token present. Enter a new token to replace it."
+                                        : "Paste a provider token"
+                                    }
+                                    type="password"
+                                    value={providerProfileDraft.apiKey ?? ""}
+                                  />
+                                </label>
+                                <label className="configuration-text-control">
+                                  <span>Intents</span>
+                                  <input
+                                    className="configuration-text-input"
+                                    onChange={(event) =>
+                                      setProviderProfileDraft((current) => ({
+                                        ...current,
+                                        intents: event.target.value
+                                          .split(",")
+                                          .map((value) => value.trim())
+                                          .filter(Boolean)
+                                      }))
+                                    }
+                                    placeholder="quick-turn, deep-reasoning, code-execution"
+                                    type="text"
+                                    value={(providerProfileDraft.intents ?? []).join(", ")}
+                                  />
+                                </label>
+                                <div className="configuration-provider-form-grid">
+                                  <label className="configuration-text-control">
+                                    <span>Latency Tier</span>
+                                    <input
+                                      className="configuration-text-input"
+                                      onChange={(event) =>
+                                        setProviderProfileDraft((current) => ({
+                                          ...current,
+                                          latencyTier: event.target.value
+                                        }))
+                                      }
+                                      type="text"
+                                      value={providerProfileDraft.latencyTier ?? "balanced"}
+                                    />
+                                  </label>
+                                  <label className="configuration-text-control">
+                                    <span>Review Bias</span>
+                                    <input
+                                      className="configuration-text-input"
+                                      onChange={(event) =>
+                                        setProviderProfileDraft((current) => ({
+                                          ...current,
+                                          reviewBias: event.target.value
+                                        }))
+                                      }
+                                      type="text"
+                                      value={providerProfileDraft.reviewBias ?? "neutral"}
+                                    />
+                                  </label>
+                                  <label className="configuration-text-control">
+                                    <span>Execution Bias</span>
+                                    <input
+                                      className="configuration-text-input"
+                                      onChange={(event) =>
+                                        setProviderProfileDraft((current) => ({
+                                          ...current,
+                                          executionBias: event.target.value
+                                        }))
+                                      }
+                                      type="text"
+                                      value={providerProfileDraft.executionBias ?? "balanced"}
+                                    />
+                                  </label>
+                                  <label className="configuration-text-control">
+                                    <span>Locality</span>
+                                    <input
+                                      className="configuration-text-input"
+                                      onChange={(event) =>
+                                        setProviderProfileDraft((current) => ({
+                                          ...current,
+                                          locality: event.target.value
+                                        }))
+                                      }
+                                      type="text"
+                                      value={providerProfileDraft.locality ?? "network"}
+                                    />
+                                  </label>
+                                </div>
+                                <label className="configuration-checkbox-control">
+                                  <input
+                                    checked={Boolean(providerProfileDraft.activate)}
+                                    onChange={(event) =>
+                                      setProviderProfileDraft((current) => ({
+                                        ...current,
+                                        activate: event.target.checked
+                                      }))
+                                    }
+                                    type="checkbox"
+                                  />
+                                  <span>Activate this profile after saving</span>
+                                </label>
+                                {providerProfileStatusMessage ? (
+                                  <p className="configuration-status-note" role="status">
+                                    {providerProfileStatusMessage}
+                                  </p>
+                                ) : null}
+                                {providerProfileError ? (
+                                  <p className="configuration-error-note" role="alert">
+                                    {providerProfileError}
+                                  </p>
+                                ) : null}
+                                <div className="configuration-provider-actions">
+                                  <button
+                                    className="starter-chip active"
+                                    disabled={isSavingProviderProfile}
+                                    onClick={() => void saveProviderProfile(false)}
+                                    type="button"
+                                  >
+                                    Save Profile
+                                  </button>
+                                  <button
+                                    className="starter-chip"
+                                    disabled={
+                                      isSavingProviderProfile ||
+                                      !(
+                                        providerSummary?.profiles.find((profile) => profile.name === selectedProviderProfileName)?.apiKeyPresent
+                                      )
+                                    }
+                                    onClick={() => void saveProviderProfile(true)}
+                                    type="button"
+                                  >
+                                    Clear Stored Token
+                                  </button>
+                                  <button
+                                    className="starter-chip"
+                                    onClick={() =>
+                                      setProviderProfileDraft(
+                                        buildProviderProfileDraft({
+                                          profileName: "new-profile"
+                                        })
+                                      )
+                                    }
+                                    type="button"
+                                  >
+                                    New Profile
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ) : selectedConfigurationSection === "package-management" ? (
+                            <div className="configuration-inspector-stack">
+                              <p className="inspector-copy">
+                                Manage runtime package tooling directly: Quicklisp installs, Qlot execution, source-registry entries, and local-project links all route through the live sbcl-agent host.
+                              </p>
+                              <dl className="detail-list">
+                                <DetailRow label="Manager" value={packageManagementSummary?.packageManager ?? "asdf"} />
+                                <DetailRow label="Quicklisp" value={packageManagementSummary?.quicklispAvailableP ? "available" : "unavailable"} />
+                                <DetailRow label="Qlot" value={packageManagementSummary?.qlotAvailableP ? "available" : "unavailable"} />
+                                <DetailRow label="Source Registry" value={String(packageManagementSummary?.managedSourceRegistryEntryCount ?? 0)} />
+                                <DetailRow label="Local Projects" value={String(packageManagementSummary?.localProjectCount ?? 0)} />
+                              </dl>
+                              <label className="configuration-text-control">
+                                <span>Quicklisp System</span>
+                                <input
+                                  className="configuration-text-input"
+                                  onChange={(event) => setQuicklispSystemDraft(event.target.value)}
+                                  placeholder="dexador"
+                                  type="text"
+                                  value={quicklispSystemDraft}
+                                />
+                              </label>
+                              <button
+                                className="starter-chip active"
+                                disabled={isPackageManagementBusy || quicklispSystemDraft.trim().length === 0}
+                                onClick={() => void installQuicklispPackage()}
+                                type="button"
+                              >
+                                Install Quicklisp Package
+                              </button>
+                              <label className="configuration-text-control">
+                                <span>Qlot Command</span>
+                                <input
+                                  className="configuration-text-input"
+                                  onChange={(event) => setQlotCommandDraft(event.target.value)}
+                                  placeholder="update"
+                                  type="text"
+                                  value={qlotCommandDraft}
+                                />
+                              </label>
+                              <button
+                                className="starter-chip"
+                                disabled={isPackageManagementBusy || qlotCommandDraft.trim().length === 0}
+                                onClick={() => void executeQlotCommand()}
+                                type="button"
+                              >
+                                Run Qlot Command
+                              </button>
+                              <label className="configuration-text-control">
+                                <span>{sourceRegistryEditOriginalPath ? "Edit Source Registry Entry" : "Add Source Registry Entry"}</span>
+                                <input
+                                  className="configuration-text-input"
+                                  onChange={(event) => setSourceRegistryDraftPath(event.target.value)}
+                                  placeholder="/path/to/system/root"
+                                  type="text"
+                                  value={sourceRegistryDraftPath}
+                                />
+                              </label>
+                              <div className="configuration-provider-actions">
+                                <button
+                                  className="starter-chip"
+                                  disabled={isPackageManagementBusy || sourceRegistryDraftPath.trim().length === 0}
+                                  onClick={() => void saveSourceRegistryEntry()}
+                                  type="button"
+                                >
+                                  {sourceRegistryEditOriginalPath ? "Save Entry" : "Add Entry"}
+                                </button>
+                                {sourceRegistryEditOriginalPath ? (
+                                  <button
+                                    className="starter-chip"
+                                    onClick={() => {
+                                      setSourceRegistryDraftPath("");
+                                      setSourceRegistryEditOriginalPath(null);
+                                    }}
+                                    type="button"
+                                  >
+                                    Cancel Edit
+                                  </button>
+                                ) : null}
+                              </div>
+                              <div className="configuration-inspector-stack">
+                                {(Array.isArray(packageManagementSummary?.managedSourceRegistryEntries)
+                                  ? packageManagementSummary.managedSourceRegistryEntries
+                                  : []).map((entry) => (
+                                  <div className="browser-focus-card" key={`source-registry:${entry.entryId}`}>
+                                    <div>
+                                      <p className="context-label">Source Registry</p>
+                                      <strong>{entry.path}</strong>
+                                      <p>{entry.existsP ? "Directory reachable" : "Directory not found"}</p>
+                                    </div>
+                                    <div className="browser-action-strip">
+                                      <button
+                                        className="starter-chip"
+                                        onClick={() => {
+                                          setSourceRegistryEditOriginalPath(entry.path);
+                                          setSourceRegistryDraftPath(entry.path);
+                                        }}
+                                        type="button"
+                                      >
+                                        Edit
+                                      </button>
+                                      <button
+                                        className="starter-chip"
+                                        disabled={isPackageManagementBusy}
+                                        onClick={() => void removeSourceRegistryPath(entry.path)}
+                                        type="button"
+                                      >
+                                        Remove
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                              <label className="configuration-text-control">
+                                <span>Local Project Path</span>
+                                <input
+                                  className="configuration-text-input"
+                                  onChange={(event) => setLocalProjectPathDraft(event.target.value)}
+                                  placeholder="/path/to/local/project"
+                                  type="text"
+                                  value={localProjectPathDraft}
+                                />
+                              </label>
+                              <label className="configuration-text-control">
+                                <span>Local Project Alias</span>
+                                <input
+                                  className="configuration-text-input"
+                                  onChange={(event) => setLocalProjectNameDraft(event.target.value)}
+                                  placeholder="optional-link-name"
+                                  type="text"
+                                  value={localProjectNameDraft}
+                                />
+                              </label>
+                              <button
+                                className="starter-chip"
+                                disabled={isPackageManagementBusy || localProjectPathDraft.trim().length === 0}
+                                onClick={() => void saveLocalProject()}
+                                type="button"
+                              >
+                                Add Local Project
+                              </button>
+                              <div className="configuration-inspector-stack">
+                                {(Array.isArray(packageManagementSummary?.localProjects)
+                                  ? packageManagementSummary.localProjects
+                                  : []).map((project) => (
+                                  <div className="browser-focus-card" key={`local-project:${project.projectId}`}>
+                                    <div>
+                                      <p className="context-label">Local Project</p>
+                                      <strong>{project.name}</strong>
+                                      <p>{project.path}</p>
+                                    </div>
+                                    <div className="browser-action-strip">
+                                      <button
+                                        className="starter-chip"
+                                        disabled={isPackageManagementBusy}
+                                        onClick={() => void removeLocalProjectByName(project.name)}
+                                        type="button"
+                                      >
+                                        Remove
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                              {packageManagementStatusMessage ? (
+                                <p className="configuration-status-note" role="status">
+                                  {packageManagementStatusMessage}
+                                </p>
+                              ) : null}
+                              {packageManagementError ? (
+                                <p className="configuration-error-note" role="alert">
+                                  {packageManagementError}
+                                </p>
+                              ) : null}
+                              {packageManagementCommandResult?.stdout ? (
+                                <pre className="runtime-preview">{packageManagementCommandResult.stdout}</pre>
+                              ) : null}
+                              {packageManagementCommandResult?.stderr ? (
+                                <pre className="runtime-preview">{packageManagementCommandResult.stderr}</pre>
+                              ) : null}
+                            </div>
                           ) : (
                             <div className="configuration-inspector-stack">
                               <p className="inspector-copy">
@@ -10242,6 +12024,17 @@ function WorkspaceInspector({
                     {conversationSendError}
                   </div>
                 ) : null}
+                <input
+                  accept="*/*"
+                  className="conversation-attachment-input"
+                  multiple
+                  onChange={(event) => {
+                    void onConversationAttachmentSelection(event.target.files);
+                    event.target.value = "";
+                  }}
+                  ref={composerAttachmentInputRef}
+                  type="file"
+                />
                 <textarea
                   className="runtime-editor conversation-draft-editor"
                   ref={composerTextareaRef}
@@ -10249,11 +12042,44 @@ function WorkspaceInspector({
                   rows={5}
                   value={conversationDraft}
                 />
+                {conversationAttachments.length > 0 ? (
+                  <div className="conversation-composer-attachment-list">
+                    {conversationAttachments.map((attachment) => (
+                      <div className="conversation-composer-attachment-chip" key={attachment.attachmentId}>
+                        <div className="conversation-composer-attachment-chip-copy">
+                          <strong>{attachment.name}</strong>
+                          <span>{attachment.summary}</span>
+                        </div>
+                        <div className="conversation-composer-attachment-chip-actions">
+                          <Badge tone="steady">{attachment.kind}</Badge>
+                          <button
+                            aria-label={`Remove ${attachment.name}`}
+                            className="conversation-composer-attachment-remove"
+                            onClick={() => removeConversationAttachment(attachment.attachmentId)}
+                            type="button"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
                 <div className="conversation-composer-actions">
+                  <button
+                    className="action-button action-button-secondary conversation-attachment-button"
+                    onClick={() => composerAttachmentInputRef.current?.click()}
+                    type="button"
+                  >
+                    Add files
+                  </button>
                   <button
                     aria-label={isSendingConversation ? "Sending message" : "Send message"}
                     className="action-button conversation-send-button"
-                    disabled={isSendingConversation || conversationDraft.trim().length === 0}
+                    disabled={
+                      isSendingConversation ||
+                      (conversationDraft.trim().length === 0 && conversationAttachments.length === 0)
+                    }
                     onClick={() => void sendConversationMessage()}
                     title={isSendingConversation ? "Sending..." : "Send message"}
                     type="button"
@@ -11841,6 +13667,7 @@ function BrowserWorkspace({
   selectedTelemetryProcessId,
   parenDepthColors,
   packageBrowser,
+  environmentFocus,
   navigateToWorkspace,
   conversationDraft,
   runtimeForm,
@@ -11906,6 +13733,7 @@ function BrowserWorkspace({
   selectedTelemetryProcessId: string | null;
   parenDepthColors: string[];
   packageBrowser: QueryResultDto<PackageBrowserDto> | null;
+  environmentFocus: EnvironmentFocusState;
   navigateToWorkspace: (workspaceId: WorkspaceId) => void;
   conversationDraft: string;
   runtimeForm: string;
@@ -11974,6 +13802,7 @@ function BrowserWorkspace({
   const [selectedLinkedConversationId, setSelectedLinkedConversationId] = useState<string | null>(null);
   const [listenerActionMode, setListenerActionMode] = useState<"default" | "inspect" | "reload" | "evaluate" | "custom">("default");
   const [customListenerForm, setCustomListenerForm] = useState<string | null>(null);
+  const previousConversationHandoffPromptRef = useRef("");
 
   const packageNames = Array.from(
     new Set([
@@ -12255,11 +14084,17 @@ function BrowserWorkspace({
             ? (customListenerForm ?? listenerHandoffForm)
           : listenerHandoffForm;
   const conversationHandoffPrompt = buildConversationPrompt({
-    symbol: focusedSymbol,
-    packageName: focusedPackage,
-    mode: runtimeInspection?.data.mode ?? runtimeInspectionMode,
-    sourcePath: sourcePreview?.data.path,
-    line: sourcePreview?.data.focusLine ?? null,
+    focusKind: environmentFocus.kind,
+    symbol: environmentFocus.runtimeSymbol,
+    packageName: environmentFocus.runtimePackage,
+    mode: environmentFocus.runtimeInspectionMode,
+    sourcePath: environmentFocus.sourcePath,
+    line: environmentFocus.sourceLine,
+    approvalId: environmentFocus.approvalId,
+    workItemId: environmentFocus.workItemId,
+    incidentId: environmentFocus.incidentId,
+    artifactId: environmentFocus.artifactId,
+    eventCursor: environmentFocus.eventCursor,
     threadTitle: selectedThread?.title ?? selectedLinkedConversation?.label,
     threadState: selectedThread?.state ?? selectedLinkedConversation?.badge,
     latestTurnState: selectedThread?.turns[0]?.state ?? selectedLinkedConversation?.latestTurnState
@@ -12617,9 +14452,13 @@ function BrowserWorkspace({
   ]);
 
   useEffect(() => {
-    if (conversationDraft !== conversationHandoffPrompt) {
+    if (
+      conversationDraft === previousConversationHandoffPromptRef.current &&
+      conversationDraft !== conversationHandoffPrompt
+    ) {
       setConversationDraft(conversationHandoffPrompt);
     }
+    previousConversationHandoffPromptRef.current = conversationHandoffPrompt;
   }, [conversationDraft, conversationHandoffPrompt, setConversationDraft]);
 
   useEffect(() => {

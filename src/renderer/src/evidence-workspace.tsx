@@ -11,6 +11,7 @@ import { Badge, PanelHeader } from "./surface-support";
 import { FilterSelect, MetricTile } from "./workspace-support-components";
 
 export function EvidenceWorkspace({
+  environmentFocusLabel,
   artifacts,
   selectedArtifact,
   selectedArtifactId,
@@ -24,8 +25,10 @@ export function EvidenceWorkspace({
   setEventFamilyFilter,
   setEventVisibilityFilter,
   navigateToLinkedEntity,
+  openConversationDraft,
   openInspectorSurface
 }: {
+  environmentFocusLabel: string;
   artifacts: ArtifactSummaryDto[];
   selectedArtifact: ArtifactDetailDto | null;
   selectedArtifactId: string | null;
@@ -39,6 +42,7 @@ export function EvidenceWorkspace({
   setEventFamilyFilter: (value: string) => void;
   setEventVisibilityFilter: (value: string) => void;
   navigateToLinkedEntity: (entity: LinkedEntityRefDto) => Promise<void>;
+  openConversationDraft: () => Promise<void>;
   openInspectorSurface: () => Promise<void>;
 }) {
   const evidenceObjective =
@@ -85,6 +89,7 @@ export function EvidenceWorkspace({
           </Badge>
         </div>
         <p className="lead-copy">{evidenceObjective}</p>
+        <p className="context-label">{environmentFocusLabel}</p>
         <div className="signal-digest-grid execution-objective-digest">
           <div className="signal-digest-card">
             <span className="context-label">Artifacts</span>
@@ -101,6 +106,11 @@ export function EvidenceWorkspace({
             <strong>{selectedArtifact || selectedEvent ? "focused" : "idle"}</strong>
             <p>{selectedEvent?.summary ?? selectedArtifact?.summary ?? "Evidence will converge here as artifacts and events are inspected together."}</p>
           </div>
+        </div>
+        <div className="browser-action-strip">
+          <button className="starter-chip" onClick={() => void openConversationDraft()} type="button">
+            Continue In Conversation
+          </button>
         </div>
       </section>
 

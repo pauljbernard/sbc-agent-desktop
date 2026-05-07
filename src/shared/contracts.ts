@@ -810,6 +810,7 @@ export interface SendConversationMessageInput {
   environmentId: string;
   threadId: string;
   prompt: string;
+  attachments?: ConversationAttachmentDto[];
 }
 
 export interface SendConversationMessageResultDto {
@@ -832,6 +833,19 @@ export interface MessageDto {
   role: "user" | "assistant" | "system";
   content: string;
   createdAt: string;
+  attachments?: ConversationAttachmentDto[];
+}
+
+export interface ConversationAttachmentDto {
+  attachmentId: string;
+  name: string;
+  mediaType: string;
+  kind: "text" | "image" | "binary";
+  source: "input" | "output";
+  summary: string;
+  sizeBytes?: number | null;
+  textContent?: string | null;
+  dataUrl?: string | null;
 }
 
 export interface ThreadSummaryDto {
@@ -891,6 +905,56 @@ export interface RuntimeSummaryDto {
   activeMutations: number;
   linkedIncidentIds: string[];
   scopes: RuntimeScopeSummaryDto[];
+}
+
+export interface PackageManagementSourceRegistryEntryDto {
+  entryId: string;
+  path: string;
+  existsP: boolean;
+  managedP: boolean;
+}
+
+export interface PackageManagementLocalProjectDto {
+  projectId: string;
+  name: string;
+  path: string;
+  linkPath: string;
+  existsP: boolean;
+  managedP: boolean;
+}
+
+export interface PackageManagementSummaryDto {
+  packageManager: string;
+  projectDir?: string | null;
+  workingDirectory?: string | null;
+  quicklispAvailableP: boolean;
+  qlotAvailableP: boolean;
+  qlotExecutablePath?: string | null;
+  qlotProjectRoot?: string | null;
+  loadedSetupCount: number;
+  loadedSetupPaths: string[];
+  sourceRegistryDirectoryCount: number;
+  sourceRegistryDirectories: string[];
+  managedSourceRegistryPath: string;
+  managedSourceRegistryEntryCount: number;
+  managedSourceRegistryEntries: PackageManagementSourceRegistryEntryDto[];
+  localProjectsRoot: string;
+  localProjectCount: number;
+  localProjects: PackageManagementLocalProjectDto[];
+}
+
+export interface PackageManagementCommandResultDto {
+  summary: string;
+  packageManagement: PackageManagementSummaryDto;
+  systemName?: string | null;
+  path?: string | null;
+  name?: string | null;
+  oldPath?: string | null;
+  newPath?: string | null;
+  argv?: string[] | null;
+  stdout?: string | null;
+  stderr?: string | null;
+  exitCode?: number | null;
 }
 
 export interface RuntimeTelemetryProcessDto {
@@ -1496,6 +1560,63 @@ export interface DesktopRestoreResultDto {
   [key: string]: unknown;
 }
 
+export type ProviderRoutingMode = "auto" | "manual";
+
+export interface ProviderProfileDto {
+  name: string;
+  provider: string;
+  model: string;
+  fastModel: string;
+  apiBase?: string | null;
+  apiKeyPresent: boolean;
+  intents: string[];
+  latencyTier: string;
+  reviewBias: string;
+  executionBias: string;
+  locality: string;
+}
+
+export interface ProviderRoutingPolicyDto {
+  mode: ProviderRoutingMode;
+  availableModes: ProviderRoutingMode[];
+  profileCount: number;
+  lastRoutePresent: boolean;
+}
+
+export interface ProviderProfileSummaryDto {
+  activeProfileName: string;
+  profileCount: number;
+  profiles: ProviderProfileDto[];
+  activeProfile?: ProviderProfileDto | null;
+  routingMode: ProviderRoutingMode;
+  routingPolicy: ProviderRoutingPolicyDto;
+  lastRoute?: Record<string, unknown> | null;
+}
+
+export interface ConfigureProviderProfileInput {
+  profileName: string;
+  provider: string;
+  model: string;
+  fastModel?: string | null;
+  apiBase?: string | null;
+  apiKey?: string | null;
+  clearApiKey?: boolean;
+  intents?: string[];
+  latencyTier?: string | null;
+  reviewBias?: string | null;
+  executionBias?: string | null;
+  locality?: string | null;
+  activate?: boolean;
+}
+
+export interface UseProviderProfileInput {
+  profileName: string;
+}
+
+export interface UpdateProviderRoutingInput {
+  mode: ProviderRoutingMode;
+}
+
 export interface DesktopPreferencesDto {
   lastWorkspace: WorkspaceId;
   selectedBrowserDomain?: string;
@@ -1638,6 +1759,8 @@ export interface QueryApi {
     workflowRecordId: string,
     environmentId?: string
   ): Promise<QueryResultDto<WorkflowRecordDto>>;
+  providerProfiles(environmentId?: string): Promise<QueryResultDto<ProviderProfileSummaryDto>>;
+  packageManagementSummary(environmentId?: string): Promise<QueryResultDto<PackageManagementSummaryDto>>;
 }
 
 export interface CommandApi {
@@ -1701,6 +1824,11 @@ export interface CommandApi {
   sendConversationMessage(
     input: SendConversationMessageInput
   ): Promise<CommandResultDto<SendConversationMessageResultDto>>;
+  extractConversationAttachmentText(input: {
+    name: string;
+    mediaType: string;
+    dataUrl: string;
+  }): Promise<string | null>;
   evaluateInContext(
     input: EvaluateInContextInput
   ): Promise<CommandResultDto<RuntimeEvalResultDto>>;
@@ -1717,6 +1845,43 @@ export interface CommandApi {
   desktopRestore(input: DesktopRestoreInput): Promise<CommandResultDto<DesktopRestoreResultDto>>;
   approveRequest(input: ApprovalDecisionInput): Promise<CommandResultDto<ApprovalDecisionDto>>;
   denyRequest(input: ApprovalDecisionInput): Promise<CommandResultDto<ApprovalDecisionDto>>;
+  configureProviderProfile(
+    input: ConfigureProviderProfileInput
+  ): Promise<CommandResultDto<ProviderProfileSummaryDto>>;
+  useProviderProfile(input: UseProviderProfileInput): Promise<CommandResultDto<ProviderProfileSummaryDto>>;
+  updateProviderRouting(
+    input: UpdateProviderRoutingInput
+  ): Promise<CommandResultDto<ProviderProfileSummaryDto>>;
+  installQuicklispPackage(input: {
+    environmentId: string;
+    systemName: string;
+  }): Promise<CommandResultDto<PackageManagementCommandResultDto>>;
+  runQlotCommand(input: {
+    environmentId: string;
+    args: string[];
+  }): Promise<CommandResultDto<PackageManagementCommandResultDto>>;
+  addSourceRegistryEntry(input: {
+    environmentId: string;
+    path: string;
+  }): Promise<CommandResultDto<PackageManagementCommandResultDto>>;
+  updateSourceRegistryEntry(input: {
+    environmentId: string;
+    oldPath: string;
+    newPath: string;
+  }): Promise<CommandResultDto<PackageManagementCommandResultDto>>;
+  removeSourceRegistryEntry(input: {
+    environmentId: string;
+    path: string;
+  }): Promise<CommandResultDto<PackageManagementCommandResultDto>>;
+  addLocalProject(input: {
+    environmentId: string;
+    path: string;
+    name?: string;
+  }): Promise<CommandResultDto<PackageManagementCommandResultDto>>;
+  removeLocalProject(input: {
+    environmentId: string;
+    name: string;
+  }): Promise<CommandResultDto<PackageManagementCommandResultDto>>;
 }
 
 export interface EventApi {

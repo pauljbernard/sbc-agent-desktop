@@ -1,5 +1,6 @@
 import { execFile, spawn } from "node:child_process";
-import { readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { appendFile, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { basename, dirname, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -23,9 +24,11 @@ import type {
   BindProjectTestingHarnessInput,
   CommandResultDto,
   CompleteWorkItemValidationsInput,
+  ConfigureProviderProfileInput,
   ConsoleLogEntryDto,
   ConsoleLogQueryInput,
   ConsoleLogStreamDto,
+  ConversationAttachmentDto,
   CorrectiveActionDto,
   CorrectiveContextDto,
   CorrectiveTriggerEventDto,
@@ -59,6 +62,8 @@ import type {
   IntentDetailDto,
   LinkedEntityRefDto,
   PackageBrowserDto,
+  PackageManagementCommandResultDto,
+  PackageManagementSummaryDto,
   ProjectArchitectureDecisionDto,
   ProjectDetailDto,
   ProjectFeatureSpecificationDto,
@@ -80,6 +85,9 @@ import type {
   ProjectTraceLinkDto,
   ProjectTraceNeighborhoodDto,
   ProjectUserJourneyDto,
+  ProviderProfileDto,
+  ProviderProfileSummaryDto,
+  ProviderRoutingMode,
   QuarantineWorkItemInput,
   QueryResultDto,
   ReconciliationDecisionActionDto,
@@ -114,6 +122,8 @@ import type {
   UpdateProjectStyleGuideInput,
   UpdateProjectTestingStrategyInput,
   UpdateProjectReleaseReadinessInput,
+  UpdateProviderRoutingInput,
+  UseProviderProfileInput,
   WorkflowRecordDto,
   WorkItemDetailDto,
   WorkItemPlanDirectiveDto,
@@ -128,6 +138,7 @@ interface LiveAdapterOptions {
   transport: "socket" | "pipe";
   endpoint: string;
   projectDir: string;
+  bridgePath: string;
   environmentStatePath: string;
 }
 
@@ -144,6 +155,150 @@ interface RawServiceResponse<TData = unknown> {
 interface StreamingBridgeFrame {
   type: "event" | "result";
   payload: unknown;
+}
+
+const DEFAULT_SBCL_PATH_CANDIDATES = [
+  "/opt/homebrew/bin/sbcl",
+  "/usr/local/bin/sbcl",
+  "/usr/bin/sbcl"
+] as const;
+
+function conversationAttachmentTempExtension(name: string, mediaType: string): string {
+  const lowerName = name.toLowerCase();
+  if (lowerName.endsWith(".docx")) {
+    return ".docx";
+  }
+  if (lowerName.endsWith(".doc")) {
+    return ".doc";
+  }
+  if (lowerName.endsWith(".rtf")) {
+    return ".rtf";
+  }
+  if (mediaType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+    return ".docx";
+  }
+  if (mediaType === "application/msword") {
+    return ".doc";
+  }
+  if (mediaType === "application/rtf" || mediaType === "text/rtf") {
+    return ".rtf";
+  }
+  return ".bin";
+}
+
+function parseAttachmentDataUrl(dataUrl: string): Buffer | null {
+  const match = /^data:([^;,]+)?(?:;charset=[^;,]+)?;base64,(.+)$/i.exec(dataUrl);
+  if (!match) {
+    return null;
+  }
+  try {
+    return Buffer.from(match[2], "base64");
+  } catch {
+    return null;
+  }
+}
+
+function resolveSbclExecutable(): string {
+  const configured = process.env.SBCL_AGENT_SBCL_PATH?.trim();
+  if (configured && existsSync(configured)) {
+    return configured;
+  }
+
+  for (const candidate of DEFAULT_SBCL_PATH_CANDIDATES) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return "sbcl";
+}
+
+function buildSbclSpawnEnvironment(): NodeJS.ProcessEnv {
+  const fallbackPath = [
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin"
+  ].join(":");
+  const inheritedPath = process.env.PATH?.trim();
+
+  return {
+    ...process.env,
+    PATH: inheritedPath ? `${fallbackPath}:${inheritedPath}` : fallbackPath
+  };
+}
+
+async function appendBridgeLaunchLog(message: string): Promise<void> {
+  const logPath =
+    process.env.SBCL_AGENT_UX_DEBUG_LOG_PATH?.trim() ||
+    resolve(os.homedir(), ".sbcl-agent-ux-launch.log");
+  const line = `[${new Date().toISOString()}] ${message}\n`;
+  try {
+    await appendFile(logPath, line, "utf8");
+  } catch {
+    // Ignore logging failures to avoid masking the launch failure.
+  }
+}
+
+function firstExistingPath(candidates: string[]): string | null {
+  for (const candidate of candidates) {
+    if (candidate && existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function resolveUxProjectDir(): string {
+  const configured = process.env.SBCL_AGENT_UX_PROJECT_DIR?.trim();
+  const candidates = [
+    configured ?? "",
+    process.cwd(),
+    resolve(process.cwd(), "../sbcl-agent-ux"),
+    resolve(__dirname, "../../../../../../../../")
+  ];
+  const resolved = firstExistingPath(
+    candidates.filter((candidate) => candidate.length > 0).map((candidate) => resolve(candidate, "package.json"))
+  );
+
+  if (!resolved) {
+    return process.cwd();
+  }
+
+  return dirname(resolved);
+}
+
+function resolveSbclAgentProjectDir(): string {
+  const configured = process.env.SBCL_AGENT_PROJECT_DIR?.trim();
+  const uxProjectDir = resolveUxProjectDir();
+  const candidates = [
+    configured ?? "",
+    resolve(process.cwd(), "../sbcl-agent"),
+    resolve(uxProjectDir, "../sbcl-agent"),
+    "/Volumes/data/development/sbcl-agent"
+  ];
+  const resolved = firstExistingPath(
+    candidates.filter((candidate) => candidate.length > 0).map((candidate) => resolve(candidate, "sbcl-agent.asd"))
+  );
+
+  if (!resolved) {
+    return candidates.find((candidate) => candidate.length > 0) ?? resolve(process.cwd(), "../sbcl-agent");
+  }
+
+  return dirname(resolved);
+}
+
+function resolveBridgePath(uxProjectDir: string): string {
+  const configured = process.env.SBCL_AGENT_BRIDGE_PATH?.trim();
+  const candidates = [
+    configured ?? "",
+    resolve(uxProjectDir, "scripts/live-service-bridge.lisp")
+  ];
+  return firstExistingPath(candidates.filter((candidate) => candidate.length > 0)) ??
+    resolve(uxProjectDir, "scripts/live-service-bridge.lisp");
 }
 
 const DEFAULT_LIVE_BINDING: BindingDto = {
@@ -808,6 +963,61 @@ function adaptRuntimeSummaryResponse(
       linkedIncidentIds: [],
       scopes
     },
+    metadata: normalizeMetadata(response.metadata)
+  };
+}
+
+function adaptPackageManagementSummaryResponse(
+  response: RawServiceResponse<Record<string, unknown>>
+): QueryResultDto<PackageManagementSummaryDto> {
+  const data = camelizeKeys(response.data) as Record<string, unknown>;
+  const normalizedData: PackageManagementSummaryDto = {
+    packageManager: typeof data.packageManager === "string" ? data.packageManager : "unknown",
+    projectDir: typeof data.projectDir === "string" ? data.projectDir : null,
+    workingDirectory: typeof data.workingDirectory === "string" ? data.workingDirectory : null,
+    quicklispAvailableP: Boolean(data.quicklispAvailableP),
+    qlotAvailableP: Boolean(data.qlotAvailableP),
+    qlotExecutablePath: typeof data.qlotExecutablePath === "string" ? data.qlotExecutablePath : null,
+    qlotProjectRoot: typeof data.qlotProjectRoot === "string" ? data.qlotProjectRoot : null,
+    loadedSetupCount: Number(data.loadedSetupCount ?? 0),
+    loadedSetupPaths: Array.isArray(data.loadedSetupPaths) ? (data.loadedSetupPaths as string[]) : [],
+    sourceRegistryDirectoryCount: Number(data.sourceRegistryDirectoryCount ?? 0),
+    sourceRegistryDirectories: Array.isArray(data.sourceRegistryDirectories)
+      ? (data.sourceRegistryDirectories as string[])
+      : [],
+    managedSourceRegistryPath:
+      typeof data.managedSourceRegistryPath === "string" ? data.managedSourceRegistryPath : "",
+    managedSourceRegistryEntryCount: Number(data.managedSourceRegistryEntryCount ?? 0),
+    managedSourceRegistryEntries: Array.isArray(data.managedSourceRegistryEntries)
+      ? (data.managedSourceRegistryEntries as PackageManagementSummaryDto["managedSourceRegistryEntries"])
+      : [],
+    localProjectsRoot: typeof data.localProjectsRoot === "string" ? data.localProjectsRoot : "",
+    localProjectCount: Number(data.localProjectCount ?? 0),
+    localProjects: Array.isArray(data.localProjects)
+      ? (data.localProjects as PackageManagementSummaryDto["localProjects"])
+      : []
+  };
+  return {
+    contractVersion: response.contractVersion,
+    domain: "package-management",
+    operation: response.operation,
+    kind: "query",
+    status: response.status === "error" ? "error" : "ok",
+    data: normalizedData,
+    metadata: normalizeMetadata(response.metadata)
+  };
+}
+
+function adaptPackageManagementCommandResponse(
+  response: RawServiceResponse<Record<string, unknown>>
+): CommandResultDto<PackageManagementCommandResultDto> {
+  return {
+    contractVersion: response.contractVersion,
+    domain: "package-management",
+    operation: response.operation,
+    kind: "command",
+    status: normalizeCommandStatus(response.status),
+    data: camelizeKeys(response.data) as PackageManagementCommandResultDto,
     metadata: normalizeMetadata(response.metadata)
   };
 }
@@ -2212,6 +2422,72 @@ function adaptWorkflowRecordDetailResponse(
   };
 }
 
+function adaptProviderProfile(profile: Record<string, unknown>): ProviderProfileDto {
+  const normalized = camelizeKeys(profile) as Record<string, unknown>;
+  return {
+    name: firstString(normalized.name) ?? "default",
+    provider: firstString(normalized.provider) ?? "mock",
+    model: firstString(normalized.model) ?? "gpt-5",
+    fastModel: firstString(normalized.fastModel) ?? "gpt-4.1-mini",
+    apiBase: firstString(normalized.apiBase) ?? null,
+    apiKeyPresent: Boolean(normalized.apiKeyPresent ?? normalized.apiKeyPresentP),
+    intents: asStringArray(normalized.intents),
+    latencyTier: firstString(normalized.latencyTier) ?? "balanced",
+    reviewBias: firstString(normalized.reviewBias) ?? "neutral",
+    executionBias: firstString(normalized.executionBias) ?? "balanced",
+    locality: firstString(normalized.locality) ?? "network"
+  };
+}
+
+function normalizeProviderRoutingMode(value: unknown): ProviderRoutingMode {
+  return value === "manual" ? "manual" : "auto";
+}
+
+function adaptProviderSummaryResponse(
+  response: RawServiceResponse<Record<string, unknown>>
+): QueryResultDto<ProviderProfileSummaryDto> {
+  const normalized = camelizeKeys(response.data) as Record<string, unknown>;
+  const profiles = asRecordArray(normalized.profiles).map(adaptProviderProfile);
+  const activeProfileName = firstString(normalized.activeProfileName) ?? "default";
+  const activeProfile =
+    asRecord(normalized.activeProfile).name || asRecord(normalized.activeProfile).provider
+      ? adaptProviderProfile(asRecord(normalized.activeProfile))
+      : profiles.find((profile) => profile.name === activeProfileName) ?? null;
+  const routingMode = normalizeProviderRoutingMode(normalized.routingMode);
+  const routingPolicyRecord = asRecord(normalized.routingPolicy);
+
+  return {
+    contractVersion: response.contractVersion,
+    domain: response.domain,
+    operation: response.operation,
+    kind: "query",
+    status: response.status === "error" ? "error" : "ok",
+    data: {
+      activeProfileName,
+      profileCount:
+        typeof normalized.profileCount === "number" ? normalized.profileCount : profiles.length,
+      profiles,
+      activeProfile,
+      routingMode,
+      routingPolicy: {
+        mode: normalizeProviderRoutingMode(routingPolicyRecord.mode),
+        availableModes: asStringArray(routingPolicyRecord.availableModes).map((mode) =>
+          mode === "manual" ? "manual" : "auto"
+        ),
+        profileCount:
+          typeof routingPolicyRecord.profileCount === "number"
+            ? routingPolicyRecord.profileCount
+            : profiles.length,
+        lastRoutePresent: Boolean(routingPolicyRecord.lastRoutePresent ?? routingPolicyRecord.lastRoutePresentP)
+      },
+      lastRoute: normalized.lastRoute && typeof normalized.lastRoute === "object"
+        ? (normalized.lastRoute as Record<string, unknown>)
+        : null
+    },
+    metadata: normalizeMetadata(response.metadata)
+  };
+}
+
 function adaptProjectSummary(item: Record<string, unknown>): ProjectSummaryDto {
   return {
     projectId: String(item.id ?? "project"),
@@ -2929,11 +3205,27 @@ function adaptThreadDetailResponse(
   response: RawServiceResponse<Record<string, unknown>>
 ): QueryResultDto<ThreadDetailDto> {
   const data = asRecord(response.data);
+  const adaptAttachments = (attachmentsValue: unknown): ConversationAttachmentDto[] =>
+    asRecordArray(attachmentsValue).map((attachment) => ({
+      attachmentId: String(attachment.attachmentId ?? `attachment-${Math.random().toString(36).slice(2)}`),
+      name: String(attachment.name ?? "attachment"),
+      mediaType: String(attachment.mediaType ?? "application/octet-stream"),
+      kind:
+        attachment.kind === "text" || attachment.kind === "image" || attachment.kind === "binary"
+          ? attachment.kind
+          : "binary",
+      source: attachment.source === "output" ? "output" : "input",
+      summary: String(attachment.summary ?? `${String(attachment.name ?? "attachment")}`),
+      sizeBytes: typeof attachment.sizeBytes === "number" ? attachment.sizeBytes : null,
+      textContent: attachment.textContent ? String(attachment.textContent) : null,
+      dataUrl: attachment.dataUrl ? String(attachment.dataUrl) : null
+    }));
   const messages = asRecordArray(data.messages).map((message) => ({
     messageId: String(message.id ?? "message"),
     role: messageRoleFromRaw(message.role as string | undefined),
     content: String(message.content ?? ""),
-    createdAt: universalTimeToIso(message.createdAt)
+    createdAt: universalTimeToIso(message.createdAt),
+    attachments: adaptAttachments(message.attachments)
   }));
   const turns = asRecordArray(data.turns).map((turn) => {
     const userMessageId = turn.userMessageId ? String(turn.userMessageId) : null;
@@ -3590,11 +3882,38 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
       input.environmentId,
       {
         threadId: input.threadId,
-        prompt: input.prompt
+        prompt: input.prompt,
+        attachments: input.attachments ?? []
       },
       onEvent
     );
     return adaptSendConversationMessageResponse(response);
+  }
+
+  async extractConversationAttachmentText(input: {
+    name: string;
+    mediaType: string;
+    dataUrl: string;
+  }): Promise<string | null> {
+    const buffer = parseAttachmentDataUrl(input.dataUrl);
+    if (!buffer) {
+      return null;
+    }
+    const extension = conversationAttachmentTempExtension(input.name, input.mediaType);
+    const tempPath = resolve(
+      os.tmpdir(),
+      `sbcl-agent-attachment-${Date.now()}-${Math.random().toString(36).slice(2)}${extension}`
+    );
+    try {
+      await writeFile(tempPath, buffer);
+      const { stdout } = await execFileAsync("textutil", ["-convert", "txt", "-stdout", tempPath]);
+      const text = stdout.trim();
+      return text.length > 0 ? text : null;
+    } catch {
+      return null;
+    } finally {
+      void unlink(tempPath).catch(() => undefined);
+    }
   }
 
   async runtimeSummary(environmentId?: string): Promise<QueryResultDto<RuntimeSummaryDto>> {
@@ -4484,6 +4803,24 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
     return adaptWorkflowRecordDetailResponse(response);
   }
 
+  async providerProfiles(environmentId?: string): Promise<QueryResultDto<ProviderProfileSummaryDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "environment.provider.get",
+      environmentId
+    );
+    return adaptProviderSummaryResponse(response);
+  }
+
+  async packageManagementSummary(
+    environmentId?: string
+  ): Promise<QueryResultDto<PackageManagementSummaryDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "package-management.summary",
+      environmentId
+    );
+    return adaptPackageManagementSummaryResponse(response);
+  }
+
   async focusWorkspace(workspace: WorkspaceId): Promise<void> {
     this.focusedWorkspaceOverride = workspace;
     this.preferences.lastWorkspace = workspace;
@@ -4538,6 +4875,155 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
     return queued;
   }
 
+  async configureProviderProfile(
+    input: ConfigureProviderProfileInput
+  ): Promise<CommandResultDto<ProviderProfileSummaryDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "environment.provider.configure",
+      this.currentBinding?.environmentId,
+      input as unknown as Record<string, unknown>
+    );
+    const summary = adaptProviderSummaryResponse(response);
+    if (input.activate) {
+      return this.useProviderProfile({ profileName: input.profileName });
+    }
+    return {
+      contractVersion: response.contractVersion,
+      domain: response.domain,
+      operation: response.operation,
+      kind: "command",
+      status: normalizeCommandStatus(response.status),
+      data: summary.data,
+      metadata: summary.metadata
+    };
+  }
+
+  async useProviderProfile(
+    input: UseProviderProfileInput
+  ): Promise<CommandResultDto<ProviderProfileSummaryDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "environment.provider.use",
+      this.currentBinding?.environmentId,
+      input as unknown as Record<string, unknown>
+    );
+    const summary = adaptProviderSummaryResponse(response);
+    return {
+      contractVersion: response.contractVersion,
+      domain: response.domain,
+      operation: response.operation,
+      kind: "command",
+      status: normalizeCommandStatus(response.status),
+      data: summary.data,
+      metadata: summary.metadata
+    };
+  }
+
+  async updateProviderRouting(
+    input: UpdateProviderRoutingInput
+  ): Promise<CommandResultDto<ProviderProfileSummaryDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "environment.provider.routing",
+      this.currentBinding?.environmentId,
+      input as unknown as Record<string, unknown>
+    );
+    const summary = adaptProviderSummaryResponse(response);
+    return {
+      contractVersion: response.contractVersion,
+      domain: response.domain,
+      operation: response.operation,
+      kind: "command",
+      status: normalizeCommandStatus(response.status),
+      data: summary.data,
+      metadata: summary.metadata
+    };
+  }
+
+  async installQuicklispPackage(input: {
+    environmentId: string;
+    systemName: string;
+  }): Promise<CommandResultDto<PackageManagementCommandResultDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "package-management.install-quicklisp",
+      input.environmentId,
+      { systemName: input.systemName }
+    );
+    return adaptPackageManagementCommandResponse(response);
+  }
+
+  async runQlotCommand(input: {
+    environmentId: string;
+    args: string[];
+  }): Promise<CommandResultDto<PackageManagementCommandResultDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "package-management.run-qlot",
+      input.environmentId,
+      { args: input.args }
+    );
+    return adaptPackageManagementCommandResponse(response);
+  }
+
+  async addSourceRegistryEntry(input: {
+    environmentId: string;
+    path: string;
+  }): Promise<CommandResultDto<PackageManagementCommandResultDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "package-management.add-source-registry-entry",
+      input.environmentId,
+      { path: input.path }
+    );
+    return adaptPackageManagementCommandResponse(response);
+  }
+
+  async updateSourceRegistryEntry(input: {
+    environmentId: string;
+    oldPath: string;
+    newPath: string;
+  }): Promise<CommandResultDto<PackageManagementCommandResultDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "package-management.update-source-registry-entry",
+      input.environmentId,
+      { oldPath: input.oldPath, newPath: input.newPath }
+    );
+    return adaptPackageManagementCommandResponse(response);
+  }
+
+  async removeSourceRegistryEntry(input: {
+    environmentId: string;
+    path: string;
+  }): Promise<CommandResultDto<PackageManagementCommandResultDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "package-management.remove-source-registry-entry",
+      input.environmentId,
+      { path: input.path }
+    );
+    return adaptPackageManagementCommandResponse(response);
+  }
+
+  async addLocalProject(input: {
+    environmentId: string;
+    path: string;
+    name?: string;
+  }): Promise<CommandResultDto<PackageManagementCommandResultDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "package-management.add-local-project",
+      input.environmentId,
+      { path: input.path, name: input.name }
+    );
+    return adaptPackageManagementCommandResponse(response);
+  }
+
+  async removeLocalProject(input: {
+    environmentId: string;
+    name: string;
+  }): Promise<CommandResultDto<PackageManagementCommandResultDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "package-management.remove-local-project",
+      input.environmentId,
+      { name: input.name }
+    );
+    return adaptPackageManagementCommandResponse(response);
+  }
+
   async quitApp(): Promise<void> {
     return;
   }
@@ -4557,10 +5043,9 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
       );
     }
 
-    const bridgePath = resolve(__dirname, "../../scripts/live-service-bridge.lisp");
     const args = [
       "--script",
-      bridgePath,
+      this.options.bridgePath,
       this.options.projectDir,
       this.options.environmentStatePath,
       operation,
@@ -4568,18 +5053,34 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
     ];
 
     if (request) {
-      args.push(JSON.stringify(request));
+      args.push("-");
     }
 
     return this.enqueueBridgeCall(
-      () =>
+      async () =>
         new Promise<T>((resolvePromise, rejectPromise) => {
-          const child = spawn("sbcl", args, {
-            cwd: this.options.projectDir,
-            stdio: ["ignore", "pipe", "pipe"]
+          const executable = resolveSbclExecutable();
+          const cwd = existsSync(this.options.projectDir) ? this.options.projectDir : os.homedir();
+          const env = buildSbclSpawnEnvironment();
+          void appendBridgeLaunchLog(
+            `invokeService operation=${operation} executable=${executable} executableExists=${existsSync(executable)} cwd=${cwd} cwdExists=${existsSync(cwd)} projectDir=${this.options.projectDir} projectDirExists=${existsSync(this.options.projectDir)} bridgePath=${this.options.bridgePath} bridgeExists=${existsSync(this.options.bridgePath)} environmentStatePath=${this.options.environmentStatePath}`
+          );
+          const child = spawn(executable, args, {
+            cwd,
+            env,
+            stdio: [request ? "pipe" : "ignore", "pipe", "pipe"]
           });
           let stdout = "";
           let stderr = "";
+
+          if (request && child.stdin) {
+            child.stdin.end(JSON.stringify(request));
+          }
+
+          if (!child.stdout || !child.stderr) {
+            rejectPromise(new Error("Service bridge did not expose stdout/stderr pipes."));
+            return;
+          }
 
           child.stdout.on("data", (chunk) => {
             stdout += chunk.toString();
@@ -4589,9 +5090,17 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
             stderr += chunk.toString();
           });
 
-          child.on("error", (error) => rejectPromise(error));
+          child.on("error", (error) => {
+            void appendBridgeLaunchLog(
+              `invokeService error operation=${operation} message=${error.message}`
+            );
+            rejectPromise(error);
+          });
           child.on("close", (code) => {
             if (code !== 0) {
+              void appendBridgeLaunchLog(
+                `invokeService close operation=${operation} code=${String(code)} stderr=${JSON.stringify(stderr)}`
+              );
               rejectPromise(new Error(stderr || `Service bridge exited with code ${code ?? "unknown"}.`));
               return;
             }
@@ -4629,27 +5138,41 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
       );
     }
 
-    const bridgePath = resolve(__dirname, "../../scripts/live-service-bridge.lisp");
     const args = [
       "--script",
-      bridgePath,
+      this.options.bridgePath,
       this.options.projectDir,
       this.options.environmentStatePath,
       operation,
       environmentId ?? "",
-      JSON.stringify(request)
+      "-"
     ];
 
     return this.enqueueBridgeCall(
-      () =>
+      async () =>
         new Promise<T>((resolvePromise, rejectPromise) => {
-          const child = spawn("sbcl", args, {
-            cwd: this.options.projectDir,
-            stdio: ["ignore", "pipe", "pipe"]
+          const executable = resolveSbclExecutable();
+          const cwd = existsSync(this.options.projectDir) ? this.options.projectDir : os.homedir();
+          const env = buildSbclSpawnEnvironment();
+          void appendBridgeLaunchLog(
+            `invokeStreamingService operation=${operation} executable=${executable} executableExists=${existsSync(executable)} cwd=${cwd} cwdExists=${existsSync(cwd)} projectDir=${this.options.projectDir} projectDirExists=${existsSync(this.options.projectDir)} bridgePath=${this.options.bridgePath} bridgeExists=${existsSync(this.options.bridgePath)} environmentStatePath=${this.options.environmentStatePath}`
+          );
+          const child = spawn(executable, args, {
+            cwd,
+            env,
+            stdio: ["pipe", "pipe", "pipe"]
           });
+          if (!child.stdout || !child.stderr) {
+            rejectPromise(new Error("Streaming bridge did not expose stdout/stderr pipes."));
+            return;
+          }
           const stdoutLines = createInterface({ input: child.stdout });
           let stderr = "";
           let resolved = false;
+
+          if (child.stdin) {
+            child.stdin.end(JSON.stringify(request));
+          }
 
           stdoutLines.on("line", (line) => {
             const trimmed = line.trim();
@@ -4692,11 +5215,19 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
             stderr += chunk.toString();
           });
 
-          child.on("error", (error) => rejectPromise(error));
+          child.on("error", (error) => {
+            void appendBridgeLaunchLog(
+              `invokeStreamingService error operation=${operation} message=${error.message}`
+            );
+            rejectPromise(error);
+          });
           child.on("close", (code) => {
             if (resolved) {
               return;
             }
+            void appendBridgeLaunchLog(
+              `invokeStreamingService close operation=${operation} code=${String(code)} stderr=${JSON.stringify(stderr)}`
+            );
             rejectPromise(
               new Error(
                 stderr.trim() || `Streaming bridge exited before returning a result (exit code ${code ?? "unknown"}).`
@@ -4723,16 +5254,18 @@ export function resolveLiveAdapterOptions(): LiveAdapterOptions {
     transport === "pipe"
       ? process.env.SBCL_AGENT_PIPE_COMMAND ?? "./bin/sbcl-agent"
       : process.env.SBCL_AGENT_SOCKET_ENDPOINT ?? "127.0.0.1:4017";
-  const projectDir =
-    process.env.SBCL_AGENT_PROJECT_DIR ?? resolve(process.cwd(), "../sbcl-agent");
+  const uxProjectDir = resolveUxProjectDir();
+  const projectDir = resolveSbclAgentProjectDir();
+  const bridgePath = resolveBridgePath(uxProjectDir);
   const environmentStatePath =
     process.env.SBCL_AGENT_ENVIRONMENT_STATE_PATH ??
-    resolve(__dirname, "../../.sbcl-agent-ux-live-environment.sexp");
+    resolve(os.homedir(), ".sbcl-agent-ux-live-environment.sexp");
 
   return {
     transport,
     endpoint,
     projectDir,
+    bridgePath,
     environmentStatePath
   };
 }

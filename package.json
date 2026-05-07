@@ -79,6 +79,7 @@
     "files": [
       "out/**/*",
       "dist/**/*",
+      "docs/**/*",
       "package.json"
     ],
     "mac": {

@@ -10,6 +10,7 @@ import type {
   CommandResultDto,
   ConsoleLogQueryInput,
   ConsoleLogStreamDto,
+  ConfigureProviderProfileInput,
   AppendProjectArchitectureDecisionInput,
   AppendProjectFeatureSpecificationInput,
   AppendProjectQualityGateInput,
@@ -42,9 +43,12 @@ import type {
   IntentDetailDto,
   IncidentSummaryDto,
   PackageBrowserDto,
+  PackageManagementCommandResultDto,
+  PackageManagementSummaryDto,
   ProjectDetailDto,
   ProjectListDto,
   ProjectTestingHarnessDto,
+  ProviderProfileSummaryDto,
   QueryResultDto,
   RuntimeEvalResultDto,
   RuntimeEntityDetailDto,
@@ -69,7 +73,9 @@ import type {
   UpdateProjectTestingStrategyInput,
   UpdateProjectReleaseReadinessInput,
   UpdateProjectReadinessObligationsInput,
+  UpdateProviderRoutingInput,
   UpdateIncidentRemediationPlanInput,
+  UseProviderProfileInput,
   CompleteWorkItemValidationsInput,
   WorkflowRecordDto,
   WorkItemDetailDto,
@@ -172,6 +178,11 @@ export interface SbclAgentHostAdapter {
     input: SendConversationMessageInput,
     onEvent?: (event: EnvironmentEventDto) => void
   ): Promise<CommandResultDto<SendConversationMessageResultDto>>;
+  extractConversationAttachmentText(input: {
+    name: string;
+    mediaType: string;
+    dataUrl: string;
+  }): Promise<string | null>;
   runtimeSummary(environmentId?: string): Promise<QueryResultDto<RuntimeSummaryDto>>;
   runtimeTelemetrySnapshot(environmentId?: string): Promise<QueryResultDto<RuntimeTelemetrySnapshotDto>>;
   runtimeInspectSymbol(input: {
@@ -250,9 +261,48 @@ export interface SbclAgentHostAdapter {
     workflowRecordId: string,
     environmentId?: string
   ): Promise<QueryResultDto<WorkflowRecordDto>>;
+  providerProfiles(environmentId?: string): Promise<QueryResultDto<ProviderProfileSummaryDto>>;
+  packageManagementSummary(environmentId?: string): Promise<QueryResultDto<PackageManagementSummaryDto>>;
   focusWorkspace(workspace: WorkspaceId): Promise<void>;
   getDesktopPreferences(): Promise<DesktopPreferencesDto>;
   setDesktopPreferences(patch: Partial<DesktopPreferencesDto>): Promise<DesktopPreferencesDto>;
+  configureProviderProfile(
+    input: ConfigureProviderProfileInput
+  ): Promise<CommandResultDto<ProviderProfileSummaryDto>>;
+  useProviderProfile(input: UseProviderProfileInput): Promise<CommandResultDto<ProviderProfileSummaryDto>>;
+  updateProviderRouting(
+    input: UpdateProviderRoutingInput
+  ): Promise<CommandResultDto<ProviderProfileSummaryDto>>;
+  installQuicklispPackage(input: {
+    environmentId: string;
+    systemName: string;
+  }): Promise<CommandResultDto<PackageManagementCommandResultDto>>;
+  runQlotCommand(input: {
+    environmentId: string;
+    args: string[];
+  }): Promise<CommandResultDto<PackageManagementCommandResultDto>>;
+  addSourceRegistryEntry(input: {
+    environmentId: string;
+    path: string;
+  }): Promise<CommandResultDto<PackageManagementCommandResultDto>>;
+  updateSourceRegistryEntry(input: {
+    environmentId: string;
+    oldPath: string;
+    newPath: string;
+  }): Promise<CommandResultDto<PackageManagementCommandResultDto>>;
+  removeSourceRegistryEntry(input: {
+    environmentId: string;
+    path: string;
+  }): Promise<CommandResultDto<PackageManagementCommandResultDto>>;
+  addLocalProject(input: {
+    environmentId: string;
+    path: string;
+    name?: string;
+  }): Promise<CommandResultDto<PackageManagementCommandResultDto>>;
+  removeLocalProject(input: {
+    environmentId: string;
+    name: string;
+  }): Promise<CommandResultDto<PackageManagementCommandResultDto>>;
   quitApp(): Promise<void>;
   openEntityInNewWindow(ref?: unknown): Promise<void>;
 }
