@@ -972,15 +972,27 @@ function adaptPackageManagementSummaryResponse(
 ): QueryResultDto<PackageManagementSummaryDto> {
   const data = camelizeKeys(response.data) as Record<string, unknown>;
   const normalizedData: PackageManagementSummaryDto = {
-    ...(data as PackageManagementSummaryDto),
+    packageManager: typeof data.packageManager === "string" ? data.packageManager : "unknown",
+    projectDir: typeof data.projectDir === "string" ? data.projectDir : null,
+    workingDirectory: typeof data.workingDirectory === "string" ? data.workingDirectory : null,
+    quicklispAvailableP: Boolean(data.quicklispAvailableP),
+    qlotAvailableP: Boolean(data.qlotAvailableP),
+    qlotExecutablePath: typeof data.qlotExecutablePath === "string" ? data.qlotExecutablePath : null,
+    qlotProjectRoot: typeof data.qlotProjectRoot === "string" ? data.qlotProjectRoot : null,
+    loadedSetupCount: Number(data.loadedSetupCount ?? 0),
     loadedSetupPaths: Array.isArray(data.loadedSetupPaths) ? (data.loadedSetupPaths as string[]) : [],
+    sourceRegistryDirectoryCount: Number(data.sourceRegistryDirectoryCount ?? 0),
     sourceRegistryDirectories: Array.isArray(data.sourceRegistryDirectories)
       ? (data.sourceRegistryDirectories as string[])
       : [],
-    centralRegistry: Array.isArray(data.centralRegistry) ? (data.centralRegistry as string[]) : [],
+    managedSourceRegistryPath:
+      typeof data.managedSourceRegistryPath === "string" ? data.managedSourceRegistryPath : "",
+    managedSourceRegistryEntryCount: Number(data.managedSourceRegistryEntryCount ?? 0),
     managedSourceRegistryEntries: Array.isArray(data.managedSourceRegistryEntries)
       ? (data.managedSourceRegistryEntries as PackageManagementSummaryDto["managedSourceRegistryEntries"])
       : [],
+    localProjectsRoot: typeof data.localProjectsRoot === "string" ? data.localProjectsRoot : "",
+    localProjectCount: Number(data.localProjectCount ?? 0),
     localProjects: Array.isArray(data.localProjects)
       ? (data.localProjects as PackageManagementSummaryDto["localProjects"])
       : []
