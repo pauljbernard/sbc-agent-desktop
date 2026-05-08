@@ -33,6 +33,12 @@ The system should be organized into four layers:
 3. Electron application for `Surface` core
 4. platform adaptation layer
 
+### Realtime Introspective Environment Architecture
+
+Before breaking the desktop into services and adaptation layers, it helps to name the deeper architectural boundary: `Surface` is not hosting a remote agent that acts on an external target. It is projecting one live environment whose runtime, agent, memory, governance, and UI state are all introspectively available inside the same execution world.
+
+![Realtime introspective environment architecture](../docs/RealtimeIntrospectiveEnvironmentArchitecture.png)
+
 ### Execution Kernel Architecture
 
 The kernel diagram below shows the architectural center that Surface is hosting: one environment, an execution kernel organized around `invoke`, `inspect`, and `control`, and a stable service boundary consumed by the desktop and other clients.

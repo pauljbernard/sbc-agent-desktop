@@ -38,6 +38,12 @@ This matters because modern engineering work is no longer just file manipulation
 
 Agents can inspect, evaluate, mutate, stage, and explain work across multiple layers. Once that becomes true, the user needs a system that keeps those layers aligned instead of scattering them across disconnected tools.
 
+## Realtime Introspective Environment Architecture
+
+The diagram below shows the architectural distinction that drives the whole system. `sbcl-agent` and `Surface` are not arranged like a traditional external agent supervising a target environment from the outside. The agent executes inside the same live SBCL environment that holds runtime state, transcript, memory, governance, evidence, and desktop state.
+
+![Realtime introspective environment architecture](RealtimeIntrospectiveEnvironmentArchitecture.png)
+
 ## Execution Kernel Architecture
 
 At the center of that environment is the execution kernel: `invoke`, `inspect`, and `control` govern how runtime work happens, how state is read, and how policy-mediated intervention occurs.

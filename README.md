@@ -87,7 +87,13 @@ The Electron application should increasingly be a thin host over that model rath
 
 ## Architecture At A Glance
 
-The two diagrams below capture the current architectural frame that the rest of this repository documents in detail.
+The four diagrams below capture the current architectural frame that the rest of this repository documents in detail.
+
+### Realtime Introspective Environment Architecture
+
+This diagram explains the architectural premise that makes `Surface` different from a conventional desktop for an external agent: the agent and the environment share one live runtime, so observation and action are environment-native rather than indirect.
+
+![Realtime introspective environment architecture](docs/RealtimeIntrospectiveEnvironmentArchitecture.png)
 
 ### Execution Kernel Architecture
 
