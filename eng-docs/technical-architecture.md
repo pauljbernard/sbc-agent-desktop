@@ -33,6 +33,12 @@ The system should be organized into four layers:
 3. Electron application for `Surface` core
 4. platform adaptation layer
 
+### Execution Kernel Architecture
+
+The kernel diagram below shows the architectural center that Surface is hosting: one environment, an execution kernel organized around `invoke`, `inspect`, and `control`, and a stable service boundary consumed by the desktop and other clients.
+
+![Execution kernel architecture](../docs/KernelArchitecture.png)
+
 ### Conversational Context Architecture
 
 The following diagram shows how Surface assembles context for a conversation turn from the current UI state, the live SBCL environment, transcript history, and deliberate operator memory before provider execution.

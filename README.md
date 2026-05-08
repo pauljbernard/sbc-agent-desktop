@@ -89,6 +89,10 @@ The Electron application should increasingly be a thin host over that model rath
 
 The two diagrams below capture the current architectural frame that the rest of this repository documents in detail.
 
+### Execution Kernel Architecture
+
+![Execution kernel architecture](docs/KernelArchitecture.png)
+
 ### Conversational Context Architecture
 
 ![Conversational context architecture](docs/ConversationalContextArchitecture.png)

@@ -38,6 +38,12 @@ This matters because modern engineering work is no longer just file manipulation
 
 Agents can inspect, evaluate, mutate, stage, and explain work across multiple layers. Once that becomes true, the user needs a system that keeps those layers aligned instead of scattering them across disconnected tools.
 
+## Execution Kernel Architecture
+
+At the center of that environment is the execution kernel: `invoke`, `inspect`, and `control` govern how runtime work happens, how state is read, and how policy-mediated intervention occurs.
+
+![Execution kernel architecture](KernelArchitecture.png)
+
 ## The System Keeps Three Realities Together
 
 `sbcl-agent` tries to keep three realities in view at the same time:
