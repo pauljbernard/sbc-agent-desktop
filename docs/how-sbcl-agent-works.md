@@ -116,6 +116,12 @@ Threads and turns can carry:
 
 That means a conversation is not just "discussion about the work." It can be part of the durable record of how the work was inspected, changed, governed, and resolved.
 
+## Conversational Context Architecture
+
+The conversation layer does not send only the current prompt to the model. It assembles live context from the Surface desktop, the SBCL environment, transcript history, and deliberate operator memory before a turn is executed.
+
+![Conversational context architecture](ConversationalContextArchitecture.png)
+
 ## The Browser Is A Live Image Browser
 
 The Browser workspace is intentionally close to the classic Lisp notion of a system browser.
@@ -178,6 +184,12 @@ The goal is not bureaucracy. The goal is continuity:
 - why it was allowed or blocked
 - what happened
 - what still needs closure
+
+## Governance Architecture
+
+Governance is part of the operating environment itself. Runtime actions, approvals, work-items, incidents, evidence, and recovery form one continuous loop rather than being split across unrelated external systems.
+
+![Governance architecture](GovernanceArchitecture.png)
 
 ## Why This Matters For Agentic Development
 

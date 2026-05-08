@@ -8,6 +8,17 @@ import type {
 
 interface CalculatorSurfaceProps {
   environmentId: string | null;
+  refreshToken: string;
+  draftExpression: string;
+  pendingExpressionRequest: {
+    expression: string;
+    shouldEvaluate: boolean;
+    token: number;
+  } | null;
+  clearPendingExpressionRequest: () => void;
+  recordEvaluation: (input: { expression: string; result: CalculatorResultDto }) => void;
+  insertResultIntoDraft: (input: { expression: string; result: CalculatorResultDto }) => Promise<void> | void;
+  openConversationDraft: () => Promise<void> | void;
 }
 
 interface CalculatorHistoryEntry {
@@ -120,7 +131,26 @@ function normalizeCalculatorSummary(summary: CalculatorSummaryDto | null): Norma
   };
 }
 
-export function CalculatorSurface({ environmentId }: CalculatorSurfaceProps) {
+function calculatorHistoryEntries(summary: CalculatorSummaryDto | null): CalculatorHistoryEntry[] {
+  return Array.isArray(summary?.history)
+    ? summary.history.map((entry) => ({
+        expression: entry.expression,
+        mode: entry.mode,
+        result: entry.result
+      }))
+    : [];
+}
+
+export function CalculatorSurface({
+  environmentId,
+  refreshToken,
+  draftExpression,
+  pendingExpressionRequest,
+  clearPendingExpressionRequest,
+  recordEvaluation,
+  insertResultIntoDraft,
+  openConversationDraft
+}: CalculatorSurfaceProps) {
   const [summary, setSummary] = useState<CalculatorSummaryDto | null>(null);
   const [mode, setMode] = useState<CalculatorMode>("basic");
   const [expression, setExpression] = useState("");
@@ -138,44 +168,93 @@ export function CalculatorSurface({ environmentId }: CalculatorSurfaceProps) {
     [base]
   );
 
+  function applySummaryState(nextSummaryDto: CalculatorSummaryDto): void {
+    setSummary(nextSummaryDto);
+    const nextSummary = normalizeCalculatorSummary(nextSummaryDto);
+    setExpression(nextSummaryDto.currentExpression ?? "");
+    setMode(nextSummaryDto.currentMode ?? nextSummary.defaultMode);
+    setBase(nextSummaryDto.currentBase ?? nextSummary.defaultBase);
+    setWordSize(nextSummaryDto.currentWordSize ?? nextSummary.defaultWordSize);
+    setAngleUnit(nextSummaryDto.currentAngleUnit ?? nextSummary.defaultAngleUnit);
+    setResult(nextSummaryDto.latestResult ?? null);
+    setHistory(calculatorHistoryEntries(nextSummaryDto));
+  }
+
+  async function refreshSummary(activeEnvironmentId: string): Promise<void> {
+    const calculatorSummary = window.sbclAgentDesktop?.query?.calculatorSummary;
+    if (typeof calculatorSummary !== "function") {
+      throw new Error("Calculator bridge is not available yet. Reload Surface after the host bridge restarts.");
+    }
+    const response = await calculatorSummary(activeEnvironmentId);
+    applySummaryState(response.data);
+  }
+
   useEffect(() => {
     if (!environmentId) {
       return;
     }
-    const calculatorSummary = window.sbclAgentDesktop?.query?.calculatorSummary;
-    if (typeof calculatorSummary !== "function") {
-      setError("Calculator bridge is not available yet. Reload Surface after the host bridge restarts.");
+    void refreshSummary(environmentId).catch((loadError) => {
+      setError(loadError instanceof Error ? loadError.message : "Failed to load calculator summary.");
+    });
+  }, [environmentId, refreshToken]);
+
+  useEffect(() => {
+    if (!environmentId) {
       return;
     }
-    void calculatorSummary(environmentId)
-      .then((response) => {
-        setSummary(response.data);
-        const nextSummary = normalizeCalculatorSummary(response.data);
-        setMode(nextSummary.defaultMode);
-        setBase(nextSummary.defaultBase);
-        setWordSize(nextSummary.defaultWordSize);
-        setAngleUnit(nextSummary.defaultAngleUnit);
-      })
-      .catch((loadError) => {
-        setError(loadError instanceof Error ? loadError.message : "Failed to load calculator summary.");
+    const intervalId = window.setInterval(() => {
+      void refreshSummary(environmentId).catch(() => {
+        // Keep the last visible state if the background refresh fails.
       });
+    }, 4000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
   }, [environmentId]);
 
-  function appendToken(token: string): void {
-    setExpression((current) => `${current}${token}`);
-  }
-
-  function backspace(): void {
-    setExpression((current) => current.slice(0, -1));
-  }
-
-  function clearExpression(): void {
-    setExpression("");
-    setResult(null);
+  async function appendToken(token: string): Promise<void> {
+    if (!environmentId) {
+      return;
+    }
+    const appendCalculatorToken = window.sbclAgentDesktop?.command?.appendCalculatorToken;
+    if (typeof appendCalculatorToken !== "function") {
+      setError("Calculator control bridge is not available yet. Reload Surface after the host bridge restarts.");
+      return;
+    }
     setError(null);
+    const response = await appendCalculatorToken({ environmentId, token });
+    applySummaryState(response.data);
   }
 
-  async function evaluateExpression(): Promise<void> {
+  async function backspace(): Promise<void> {
+    if (!environmentId) {
+      return;
+    }
+    const backspaceCalculator = window.sbclAgentDesktop?.command?.backspaceCalculator;
+    if (typeof backspaceCalculator !== "function") {
+      setError("Calculator control bridge is not available yet. Reload Surface after the host bridge restarts.");
+      return;
+    }
+    setError(null);
+    const response = await backspaceCalculator(environmentId);
+    applySummaryState(response.data);
+  }
+
+  async function clearExpression(): Promise<void> {
+    if (!environmentId) {
+      return;
+    }
+    const clearCalculator = window.sbclAgentDesktop?.command?.clearCalculator;
+    if (typeof clearCalculator !== "function") {
+      setError("Calculator control bridge is not available yet. Reload Surface after the host bridge restarts.");
+      return;
+    }
+    setError(null);
+    const response = await clearCalculator(environmentId);
+    applySummaryState(response.data);
+  }
+
+  async function evaluateExpression(expressionOverride?: string): Promise<void> {
     if (!environmentId) {
       setError("A bound environment is required before the calculator can evaluate expressions.");
       return;
@@ -185,7 +264,8 @@ export function CalculatorSurface({ environmentId }: CalculatorSurfaceProps) {
       setError("Calculator bridge is not available yet. Reload Surface after the host bridge restarts.");
       return;
     }
-    if (expression.trim().length === 0) {
+    const activeExpression = (expressionOverride ?? expression).trim();
+    if (activeExpression.length === 0) {
       return;
     }
     setIsBusy(true);
@@ -193,27 +273,50 @@ export function CalculatorSurface({ environmentId }: CalculatorSurfaceProps) {
     try {
       const response = await evaluateCalculator({
         environmentId,
-        expression,
+        expression: activeExpression,
         mode,
         base,
         wordSize,
         angleUnit
       });
       setResult(response.data);
-      setHistory((current) => [
-        {
-          expression,
-          mode,
-          result: response.data.displayValue
-        },
-        ...current
-      ].slice(0, 12));
+      recordEvaluation({ expression: activeExpression, result: response.data });
+      await refreshSummary(environmentId);
     } catch (evaluationError) {
       setError(evaluationError instanceof Error ? evaluationError.message : "Calculator evaluation failed.");
     } finally {
       setIsBusy(false);
     }
   }
+
+  useEffect(() => {
+    if (!pendingExpressionRequest || !environmentId) {
+      return;
+    }
+    const setCalculatorExpression = window.sbclAgentDesktop?.command?.setCalculatorExpression;
+    if (typeof setCalculatorExpression !== "function") {
+      setError("Calculator control bridge is not available yet. Reload Surface after the host bridge restarts.");
+      clearPendingExpressionRequest();
+      return;
+    }
+    void setCalculatorExpression({
+      environmentId,
+      expression: pendingExpressionRequest.expression
+    })
+      .then((response) => {
+        applySummaryState(response.data);
+        setError(null);
+        if (pendingExpressionRequest.shouldEvaluate) {
+          void evaluateExpression(pendingExpressionRequest.expression);
+        }
+      })
+      .catch((loadError) => {
+        setError(loadError instanceof Error ? loadError.message : "Failed to update calculator expression.");
+      })
+      .finally(() => {
+        clearPendingExpressionRequest();
+      });
+  }, [environmentId, pendingExpressionRequest]);
 
   return (
     <div className="calculator-surface" onClick={(event) => event.stopPropagation()}>
@@ -224,7 +327,7 @@ export function CalculatorSurface({ environmentId }: CalculatorSurfaceProps) {
             <button
               className={mode === candidateMode ? "calculator-mode-button active" : "calculator-mode-button"}
               key={candidateMode}
-              onClick={() => setMode(candidateMode)}
+              onClick={() => { const setCalculatorMode = window.sbclAgentDesktop?.command?.setCalculatorMode; if (!environmentId || typeof setCalculatorMode !== "function") { setMode(candidateMode); return; } void setCalculatorMode({ environmentId, mode: candidateMode }).then((response) => applySummaryState(response.data)); }}
               type="button"
             >
               {candidateMode}
@@ -238,7 +341,7 @@ export function CalculatorSurface({ environmentId }: CalculatorSurfaceProps) {
           <span className="context-label">Expression</span>
           <input
             className="desktop-window-workbench-symbol calculator-expression-input"
-            onChange={(event) => setExpression(event.target.value)}
+            onChange={(event) => setExpression(event.target.value)} onBlur={() => { const setCalculatorExpression = window.sbclAgentDesktop?.command?.setCalculatorExpression; if (!environmentId || typeof setCalculatorExpression !== "function") { return; } void setCalculatorExpression({ environmentId, expression }).then((response) => applySummaryState(response.data)).catch(() => {}); }}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
                 event.preventDefault();
@@ -256,20 +359,46 @@ export function CalculatorSurface({ environmentId }: CalculatorSurfaceProps) {
       </div>
 
       <div className="calculator-controls">
-        <button className="action-button action-button-secondary" onClick={clearExpression} type="button">
+        <button className="action-button action-button-secondary" onClick={() => void clearExpression()} type="button">
           Clear
         </button>
-        <button className="action-button action-button-secondary" onClick={backspace} type="button">
+        <button className="action-button action-button-secondary" onClick={() => void backspace()} type="button">
           Backspace
         </button>
-        <button className="action-button action-button-secondary" onClick={() => appendToken("(")} type="button">
+        <button className="action-button action-button-secondary" onClick={() => void appendToken("(")} type="button">
           (
         </button>
-        <button className="action-button action-button-secondary" onClick={() => appendToken(")")} type="button">
+        <button className="action-button action-button-secondary" onClick={() => void appendToken(")")} type="button">
           )
         </button>
         <button className="action-button" disabled={isBusy} onClick={() => void evaluateExpression()} type="button">
           {isBusy ? "Evaluating..." : "Evaluate"}
+        </button>
+      </div>
+      <div className="browser-action-strip">
+        <button
+          className="starter-chip"
+          disabled={draftExpression.trim().length === 0}
+          onClick={() => { const setCalculatorExpression = window.sbclAgentDesktop?.command?.setCalculatorExpression; if (!environmentId || typeof setCalculatorExpression !== "function") { setExpression(draftExpression); return; } void setCalculatorExpression({ environmentId, expression: draftExpression }).then((response) => applySummaryState(response.data)); }}
+          type="button"
+        >
+          Use Draft Expression
+        </button>
+        <button
+          className="starter-chip"
+          disabled={!result || expression.trim().length === 0}
+          onClick={() => {
+            if (!result) {
+              return;
+            }
+            void insertResultIntoDraft({ expression: expression.trim(), result });
+          }}
+          type="button"
+        >
+          Insert Result Into Draft
+        </button>
+        <button className="starter-chip" onClick={() => void openConversationDraft()} type="button">
+          Open Draft
         </button>
       </div>
 
@@ -280,7 +409,7 @@ export function CalculatorSurface({ environmentId }: CalculatorSurfaceProps) {
               {SCIENTIFIC_BUTTONS.map((row, rowIndex) => (
                 <div className="calculator-button-row" key={`scientific:${rowIndex}`}>
                   {row.map((token) => (
-                    <button className="calculator-key" key={token} onClick={() => appendToken(token)} type="button">
+                    <button className="calculator-key" key={token} onClick={() => void appendToken(token)} type="button">
                       {token}
                     </button>
                   ))}
@@ -295,7 +424,7 @@ export function CalculatorSurface({ environmentId }: CalculatorSurfaceProps) {
                 <span className="context-label">Base</span>
                 <select
                   className="desktop-window-workbench-select"
-                  onChange={(event) => setBase(Number(event.target.value))}
+                  onChange={(event) => { const nextBase = Number(event.target.value); const setCalculatorBase = window.sbclAgentDesktop?.command?.setCalculatorBase; if (!environmentId || typeof setCalculatorBase !== "function") { setBase(nextBase); return; } void setCalculatorBase({ environmentId, base: nextBase }).then((response) => applySummaryState(response.data)); }}
                   value={base}
                 >
                   {normalizedSummary.availableBases.map((value) => (
@@ -309,7 +438,7 @@ export function CalculatorSurface({ environmentId }: CalculatorSurfaceProps) {
                 <span className="context-label">Word Size</span>
                 <select
                   className="desktop-window-workbench-select"
-                  onChange={(event) => setWordSize(Number(event.target.value))}
+                  onChange={(event) => { const nextWordSize = Number(event.target.value); const setCalculatorWordSize = window.sbclAgentDesktop?.command?.setCalculatorWordSize; if (!environmentId || typeof setCalculatorWordSize !== "function") { setWordSize(nextWordSize); return; } void setCalculatorWordSize({ environmentId, wordSize: nextWordSize }).then((response) => applySummaryState(response.data)); }}
                   value={wordSize}
                 >
                   {normalizedSummary.availableWordSizes.map((value) => (
@@ -325,7 +454,7 @@ export function CalculatorSurface({ environmentId }: CalculatorSurfaceProps) {
               <span className="context-label">Angle Unit</span>
               <select
                 className="desktop-window-workbench-select"
-                onChange={(event) => setAngleUnit(event.target.value as CalculatorAngleUnit)}
+                onChange={(event) => { const nextAngleUnit = event.target.value as CalculatorAngleUnit; const setCalculatorAngleUnit = window.sbclAgentDesktop?.command?.setCalculatorAngleUnit; if (!environmentId || typeof setCalculatorAngleUnit !== "function") { setAngleUnit(nextAngleUnit); return; } void setCalculatorAngleUnit({ environmentId, angleUnit: nextAngleUnit }).then((response) => applySummaryState(response.data)); }}
                 value={angleUnit}
               >
                 {normalizedSummary.availableAngleUnits.map((value) => (
@@ -341,7 +470,7 @@ export function CalculatorSurface({ environmentId }: CalculatorSurfaceProps) {
             {(mode === "programmer" ? visibleProgrammerButtons : BASIC_BUTTONS).map((row, rowIndex) => (
               <div className="calculator-button-row" key={`row:${rowIndex}`}>
                 {row.map((token) => (
-                  <button className="calculator-key" key={token} onClick={() => appendToken(token)} type="button">
+                  <button className="calculator-key" key={token} onClick={() => void appendToken(token)} type="button">
                     {token}
                   </button>
                 ))}
@@ -386,7 +515,7 @@ export function CalculatorSurface({ environmentId }: CalculatorSurfaceProps) {
                 <button
                   className="calculator-history-entry"
                   key={`${entry.expression}:${index}`}
-                  onClick={() => setExpression(entry.expression)}
+                  onClick={() => { const setCalculatorExpression = window.sbclAgentDesktop?.command?.setCalculatorExpression; if (!environmentId || typeof setCalculatorExpression !== "function") { setExpression(entry.expression); return; } void setCalculatorExpression({ environmentId, expression: entry.expression }).then((response) => applySummaryState(response.data)); }}
                   type="button"
                 >
                   <strong>{entry.expression}</strong>

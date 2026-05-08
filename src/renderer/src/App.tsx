@@ -7,12 +7,14 @@ import type {
   ArtifactSummaryDto,
   ApprovalDecisionInput,
   BindingDto,
+  CalculatorResultDto,
   CommandResultDto,
   ConfigureProviderProfileInput,
   ConsoleLogEntryDto,
   ConversationAttachmentDto,
   ConsoleLogStreamDto,
   DesktopPreferencesDto,
+  DesktopActionDto,
   DesktopModelDto,
   DesktopPanelStateDto,
   DesktopPanelId,
@@ -34,6 +36,10 @@ import type {
   IncidentSummaryDto,
   LinkedEntityRefDto,
   MessageDto,
+  MemoryEntryDto,
+  MemoryDeleteResultDto,
+  MemoryListDto,
+  MemoryUpdateInput,
   PackageBrowserDto,
   PackageBrowserSymbolDto,
   PackageManagementCommandResultDto,
@@ -151,6 +157,7 @@ import {
   type SignalPriority
 } from "./interaction-support";
 import { TranscriptSurface, type TranscriptSurfaceEntry } from "./transcript-surface";
+import { MemoryWorkspace } from "./memory-workspace";
 import { WorkspaceSurface } from "./workspace-surface";
 import { EditorSurface } from "./editor-surface";
 import { ConfigurationWorkspace } from "./configuration-workspace";
@@ -1562,6 +1569,10 @@ export function App() {
   const [projects, setProjects] = useState<ProjectProfileDto[]>([]);
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [projectListResult, setProjectListResult] = useState<QueryResultDto<ProjectListDto> | null>(null);
+  const [memoryListResult, setMemoryListResult] = useState<QueryResultDto<MemoryListDto> | null>(null);
+  const [selectedMemoryId, setSelectedMemoryId] = useState<string | null>(null);
+  const [pendingUpdateMemoryId, setPendingUpdateMemoryId] = useState<string | null>(null);
+  const [pendingDeleteMemoryId, setPendingDeleteMemoryId] = useState<string | null>(null);
   const [selectedGovernedProjectId, setSelectedGovernedProjectId] = useState<string | null>(null);
   const [selectedProjectDetail, setSelectedProjectDetail] = useState<ProjectDetailDto | null>(null);
   const [selectedConversationThreadByProject, setSelectedConversationThreadByProject] = useState<Record<string, string>>({});
@@ -1692,6 +1703,15 @@ export function App() {
   const [conversationDraft, setConversationDraft] = useState(
     "Start from the live environment focus and keep runtime, source, and governance context attached."
   );
+  const [pendingCalculatorExpressionRequest, setPendingCalculatorExpressionRequest] = useState<{
+    expression: string;
+    shouldEvaluate: boolean;
+    token: number;
+  } | null>(null);
+  const [latestCalculatorResult, setLatestCalculatorResult] = useState<{
+    expression: string;
+    result: CalculatorResultDto;
+  } | null>(null);
   const [conversationAttachments, setConversationAttachments] = useState<ConversationAttachmentDto[]>([]);
   const [conversationSendError, setConversationSendError] = useState<string | null>(null);
   const [isSendingConversation, setIsSendingConversation] = useState(false);
@@ -1705,6 +1725,8 @@ export function App() {
   const [runtimeTelemetry, setRuntimeTelemetry] = useState<RuntimeTelemetrySnapshotDto | null>(null);
   const [selectedTelemetryProcessId, setSelectedTelemetryProcessId] = useState<string | null>(null);
   const [consoleLogStream, setConsoleLogStream] = useState<QueryResultDto<ConsoleLogStreamDto> | null>(null);
+  const [environmentConsoleLogStream, setEnvironmentConsoleLogStream] = useState<QueryResultDto<ConsoleLogStreamDto> | null>(null);
+  const [hostConsoleLogStream, setHostConsoleLogStream] = useState<QueryResultDto<ConsoleLogStreamDto> | null>(null);
   const [selectedConsolePlane, setSelectedConsolePlane] = useState<"environment" | "host">("environment");
   const [selectedConsoleSourceFilter, setSelectedConsoleSourceFilter] = useState("All Sources");
   const [selectedConsoleEntryId, setSelectedConsoleEntryId] = useState<string | null>(null);
@@ -1781,6 +1803,10 @@ export function App() {
   const [selectedEventCursor, setSelectedEventCursor] = useState<number | null>(null);
   const [eventFamilyFilter, setEventFamilyFilter] = useState<string>("all");
   const [eventVisibilityFilter, setEventVisibilityFilter] = useState<string>("all");
+  const [selectedTranscriptSourceFilter, setSelectedTranscriptSourceFilter] = useState<
+    "all" | TranscriptSurfaceEntry["source"]
+  >("all");
+  const [selectedTranscriptEntryKey, setSelectedTranscriptEntryKey] = useState<string | null>(null);
   const [documentationPages, setDocumentationPages] = useState<DocumentationPageSummaryDto[]>([]);
   const [selectedDocumentationSlug, setSelectedDocumentationSlug] = useState<string>("development-model");
   const [selectedDocumentationPage, setSelectedDocumentationPage] = useState<DocumentationPageDto | null>(null);
@@ -1874,6 +1900,17 @@ export function App() {
     maxWidth: number;
   } | null>(null);
   const sidebarResizeCleanupRef = useRef<(() => void) | null>(null);
+  const railSectionResizeSessionRef = useRef<{
+    side: "left" | "right";
+    startClientY: number;
+    startHeight: number;
+    minHeight: number;
+    maxHeight: number;
+  } | null>(null);
+  const railSectionResizeCleanupRef = useRef<(() => void) | null>(null);
+  const [leftRailDockSectionHeight, setLeftRailDockSectionHeight] = useState<number | null>(null);
+  const [rightRailDockSectionHeight, setRightRailDockSectionHeight] = useState<number | null>(null);
+  const [activeRailSectionResizeSide, setActiveRailSectionResizeSide] = useState<"left" | "right" | null>(null);
   const [splitterLayout, setSplitterLayout] = useState<{
     top: number;
     bottom: number;
@@ -2046,6 +2083,15 @@ export function App() {
     (currentProjectId ? threads.find((thread) => thread.threadId === selectedConversationThreadByProject[currentProjectId]) : null) ??
     threads[0] ??
     null;
+  const calculatorRefreshToken = [
+    effectiveEnvironmentId ?? "no-environment",
+    selectedThreadId ?? "no-thread",
+    selectedTurnId ?? "no-turn",
+    String(threads.length),
+    currentProjectConversationFocus?.threadId ?? "no-focus-thread",
+    currentProjectConversationFocus?.latestActivityAt ?? "no-latest-activity",
+    currentProjectConversationFocus?.latestTurnState ?? "no-turn-state"
+  ].join(":");
   const environmentFocus = useMemo<EnvironmentFocusState>(() => {
     const browserFocus = createEnvironmentFocusFromBrowserContext({
       sourceWorkspace: activeWorkspace,
@@ -2157,7 +2203,8 @@ export function App() {
     ]
   );
   const conversationDraftFocusActions = useMemo(() => {
-    switch (environmentFocus.kind) {
+    const baseActions = (() => {
+      switch (environmentFocus.kind) {
       case "governance-approval":
         return [
           ...(environmentFocus.approvalId ?? selectedApproval?.requestId
@@ -2269,9 +2316,45 @@ export function App() {
             onSelect: () => navigateToDesktopPanel("inspector")
           }
         ];
-    }
+      }
+    })();
+
+    return [
+      ...baseActions,
+      ...(conversationDraft.trim().length > 0
+        ? [{
+            label: "Evaluate In Calculator",
+            onSelect: () => openCalculatorWithExpression(conversationDraft, true)
+          }]
+        : []),
+      {
+        label: "Open Calculator",
+        onSelect: () => {
+          openCalculatorApplication();
+        }
+      },
+      ...(latestCalculatorResult
+        ? [{
+            label: "Insert Calculator Result",
+            onSelect: () => insertCalculatorResultIntoConversationDraft(latestCalculatorResult)
+          }]
+        : [])
+    ];
   }, [
+    conversationDraft,
     environmentFocus,
+    latestCalculatorResult,
+    navigateToBrowserDomain,
+    navigateToConversationSection,
+    navigateToDesktopPanel,
+    navigateToEvidenceSection,
+    navigateToExecutionSection,
+    openCalculatorApplication,
+    openCalculatorWithExpression,
+    insertCalculatorResultIntoConversationDraft,
+    continueRecovery,
+    continueWorkItem,
+    openApprovalRequest,
     selectedApproval?.requestId,
     selectedArtifact?.artifactId,
     selectedIncident?.incidentId,
@@ -2341,8 +2424,74 @@ export function App() {
     : 0;
   const currentWorkspaceHistory = currentProjectId ? workspaceHistoryByProject[currentProjectId] ?? [] : [];
   const transcriptEntries = useMemo<TranscriptSurfaceEntry[]>(
-    () =>
-      [
+    () => {
+      const conversationTranscriptEntries: TranscriptSurfaceEntry[] = [];
+      if (selectedTurn) {
+        conversationTranscriptEntries.push({
+          key: `conversation-turn:${selectedTurn.turnId}`,
+          timestamp: selectedTurn.createdAt,
+          source: "conversation",
+          title: "Conversation Turn",
+          summary: `${selectedTurn.state} · ${selectedTurn.operations.length} action${selectedTurn.operations.length === 1 ? "" : "s"} · ${selectedTurn.artifactIds.length} artifact${selectedTurn.artifactIds.length === 1 ? "" : "s"}`,
+          preview: selectedTurn.summary,
+          status:
+            selectedTurn.state === "awaiting_approval"
+              ? "awaiting_approval"
+              : selectedTurn.state === "failed"
+                ? "error"
+                : "ok",
+          family: "conversation-turn",
+          threadId: selectedTurn.threadId,
+          turnId: selectedTurn.turnId
+        });
+        if (selectedTurn.userMessage) {
+          conversationTranscriptEntries.push({
+            key: `conversation-message:${selectedTurn.userMessage.messageId}`,
+            timestamp: selectedTurn.userMessage.createdAt,
+            source: "conversation",
+            title: "User Prompt",
+            summary: selectedTurn.userMessage.content.slice(0, 160) || "User prompt",
+            preview: selectedTurn.userMessage.content,
+            family: "conversation-user",
+            threadId: selectedTurn.threadId,
+            turnId: selectedTurn.turnId
+          });
+        }
+        if (selectedTurn.assistantMessage) {
+          conversationTranscriptEntries.push({
+            key: `conversation-message:${selectedTurn.assistantMessage.messageId}`,
+            timestamp: selectedTurn.assistantMessage.createdAt,
+            source: "conversation",
+            title: "Assistant Reply",
+            summary: selectedTurn.assistantMessage.content.slice(0, 160) || "Assistant reply",
+            preview: selectedTurn.assistantMessage.content,
+            family: "conversation-assistant",
+            threadId: selectedTurn.threadId,
+            turnId: selectedTurn.turnId
+          });
+        }
+        for (const operation of selectedTurn.operations) {
+          conversationTranscriptEntries.push({
+            key: `conversation-operation:${operation.operationId}`,
+            timestamp: operation.completedAt ?? operation.startedAt,
+            source: "conversation",
+            title: operation.toolId ? `Action ${operation.toolId}` : operation.name,
+            summary: operation.summary,
+            preview: [operation.inputPreview, operation.outputPreview].filter(Boolean).join("\n\n"),
+            status:
+              operation.status === "awaiting-approval" || operation.status === "blocked"
+                ? "awaiting_approval"
+                : operation.status === "failed" || operation.status === "interrupted"
+                  ? "error"
+                  : "ok",
+            family: operation.kind,
+            threadId: selectedTurn.threadId,
+            turnId: selectedTurn.turnId
+          });
+        }
+      }
+      return [
+        ...conversationTranscriptEntries,
         ...currentWorkspaceHistory.map((entry) => ({
           key: `workspace:${entry.entryId}`,
           timestamp: entry.timestamp,
@@ -2377,6 +2526,40 @@ export function App() {
           turnId: event.turnId ?? null,
           eventCursor: event.cursor
         })),
+        ...(environmentConsoleLogStream?.data.entries ?? []).slice(0, 40).map((entry) => ({
+          key: `environment-console:${entry.entryId}`,
+          timestamp: entry.timestamp,
+          source: "environment-console" as const,
+          title: entry.source,
+          summary: entry.message,
+          preview: [
+            `${entry.type.toUpperCase()} · ${entry.category}`,
+            entry.detail ?? null,
+            entry.turnRefId ? `turn ${entry.turnRefId}` : null,
+            entry.threadRefId ? `thread ${entry.threadRefId}` : null,
+            entry.incidentId ? `incident ${entry.incidentId}` : null
+          ]
+            .filter((value): value is string => Boolean(value))
+            .join("\n"),
+          family: entry.category,
+          threadId: entry.threadRefId ?? null,
+          turnId: entry.turnRefId ?? null
+        })),
+        ...(hostConsoleLogStream?.data.entries ?? []).slice(0, 40).map((entry) => ({
+          key: `host-console:${entry.entryId}`,
+          timestamp: entry.timestamp,
+          source: "host-console" as const,
+          title: entry.source,
+          summary: entry.message,
+          preview: [
+            `${entry.type.toUpperCase()} · ${entry.category}`,
+            entry.processName ? `${entry.processName}${entry.pid ? ` (${entry.pid})` : ""}` : null,
+            entry.detail ?? null
+          ]
+            .filter((value): value is string => Boolean(value))
+            .join("\n"),
+          family: entry.category
+        })),
         ...(conversationStream?.content
           ? [
               {
@@ -2392,9 +2575,43 @@ export function App() {
               }
             ]
           : [])
-      ].sort((left, right) => right.timestamp.localeCompare(left.timestamp)),
-    [conversationStream?.content, conversationStream?.threadId, conversationStream?.turnId, currentProjectReplFocus, currentWorkspaceHistory, environmentEvents]
+      ].sort((left, right) => right.timestamp.localeCompare(left.timestamp));
+    },
+    [
+      conversationStream?.content,
+      conversationStream?.threadId,
+      conversationStream?.turnId,
+      currentProjectReplFocus,
+      currentWorkspaceHistory,
+      environmentConsoleLogStream?.data.entries,
+      environmentEvents,
+      hostConsoleLogStream?.data.entries,
+      selectedTurn
+    ]
   );
+  const filteredTranscriptEntries = useMemo(
+    () =>
+      selectedTranscriptSourceFilter === "all"
+        ? transcriptEntries
+        : transcriptEntries.filter((entry) => entry.source === selectedTranscriptSourceFilter),
+    [selectedTranscriptSourceFilter, transcriptEntries]
+  );
+  const selectedTranscriptEntry =
+    filteredTranscriptEntries.find((entry) => entry.key === selectedTranscriptEntryKey) ??
+    filteredTranscriptEntries[0] ??
+    null;
+  const memoryEntries = memoryListResult?.data.entries ?? [];
+  const selectedMemory =
+    memoryEntries.find((entry) => entry.memoryId === selectedMemoryId) ?? memoryEntries[0] ?? null;
+  useEffect(() => {
+    const nextEntryKey = filteredTranscriptEntries[0]?.key ?? null;
+    if (
+      !filteredTranscriptEntries.some((entry) => entry.key === selectedTranscriptEntryKey) &&
+      selectedTranscriptEntryKey !== nextEntryKey
+    ) {
+      setSelectedTranscriptEntryKey(nextEntryKey);
+    }
+  }, [filteredTranscriptEntries, selectedTranscriptEntryKey]);
   const queueThreads = threads;
   const queueApprovals = approvalRequests;
   const queueIncidents = incidents;
@@ -3252,6 +3469,12 @@ export function App() {
   }, [activeWorkspace, effectiveEnvironmentId]);
 
   useEffect(() => {
+    if (activeWorkspace === "memory" && effectiveEnvironmentId) {
+      void loadMemoryWorkspace(effectiveEnvironmentId);
+    }
+  }, [activeWorkspace, effectiveEnvironmentId]);
+
+  useEffect(() => {
     if (activeWorkspace !== "projects" || !effectiveEnvironmentId || !selectedGovernedProjectId) {
       return;
     }
@@ -3354,6 +3577,21 @@ export function App() {
 
     void loadConsoleLogStream(effectiveEnvironmentId, selectedConsolePlane);
   }, [activeWorkspace, effectiveEnvironmentId, selectedBrowserDomain, selectedConsolePlane]);
+
+  useEffect(() => {
+    if (activeWorkspace !== "transcript" || !effectiveEnvironmentId) {
+      return;
+    }
+
+    void loadActivityWorkspace(effectiveEnvironmentId);
+    void loadTranscriptConsoleStreams(effectiveEnvironmentId);
+    const intervalId = window.setInterval(() => {
+      void loadActivityWorkspace(effectiveEnvironmentId);
+      void loadTranscriptConsoleStreams(effectiveEnvironmentId);
+    }, 4000);
+
+    return () => window.clearInterval(intervalId);
+  }, [activeWorkspace, effectiveEnvironmentId, eventFamilyFilter, eventVisibilityFilter]);
 
   useEffect(() => {
     if (activeWorkspace !== "browser" || !effectiveEnvironmentId || selectedBrowserDomain !== "diagnostics") {
@@ -5112,6 +5350,396 @@ export function App() {
     );
   }
 
+  function buildConversationSurfaceContext(): Record<string, unknown> {
+    const calculatorFocused = focusedDesktopWindowId === "window:calculator";
+    const transcriptFocused = activeWorkspace === "transcript";
+    const desktopResidentWindows = desktopWindows
+      .filter((window) => window.state !== "minimized")
+      .slice(0, 12)
+      .map((window) => ({
+        windowId: window.id,
+        title: window.title,
+        summary: window.summary ?? null,
+        state: window.state,
+        kind: window.kind,
+        panelId: window.panelId ?? null,
+        focused: window.id === focusedDesktopWindowId
+      }));
+    const desktopMinimizedWindows = desktopWindows
+      .filter((window) => window.state === "minimized")
+      .slice(0, 12)
+      .map((window) => ({
+        windowId: window.id,
+        title: window.title,
+        summary: window.summary ?? null,
+        kind: window.kind,
+        panelId: window.panelId ?? null
+      }));
+    return {
+      activeWorkspace,
+      selectedConversationSection,
+      selectedBrowserDomain,
+      environmentFocus: {
+        kind: environmentFocus.kind,
+        runtimeSymbol: environmentFocus.runtimeSymbol ?? null,
+        runtimePackage: environmentFocus.runtimePackage ?? null,
+        runtimeInspectionMode: environmentFocus.runtimeInspectionMode ?? null,
+        sourcePath: environmentFocus.sourcePath ?? null,
+        sourceLine: environmentFocus.sourceLine ?? null,
+        approvalId: environmentFocus.approvalId ?? null,
+        workItemId: environmentFocus.workItemId ?? null,
+        incidentId: environmentFocus.incidentId ?? null,
+        artifactId: environmentFocus.artifactId ?? null,
+        eventCursor: environmentFocus.eventCursor ?? null
+      },
+      thread: selectedThread
+        ? {
+            threadId: selectedThread.threadId,
+            title: selectedThread.title,
+            state: selectedThread.state,
+            latestTurnState:
+              selectedThread.turns.length > 0
+                ? selectedThread.turns[selectedThread.turns.length - 1]?.state ?? null
+                : null
+          }
+        : selectedThreadId
+          ? {
+              threadId: selectedThreadId
+            }
+          : null,
+      draft: {
+        length: conversationDraft.trim().length,
+        attachmentCount: conversationAttachments.length,
+        summary:
+          conversationDraft.trim().length > 0
+            ? conversationDraft.trim().slice(0, 240)
+            : "No text draft content."
+      },
+      calculator: calculatorFocused || latestCalculatorResult || pendingCalculatorExpressionRequest
+        ? {
+            focused: calculatorFocused,
+            pendingExpression: pendingCalculatorExpressionRequest?.expression ?? null,
+            pendingEvaluationRequested: pendingCalculatorExpressionRequest?.shouldEvaluate ?? false,
+            draftExpression:
+              conversationDraft.trim().length > 0 ? conversationDraft.trim().slice(0, 240) : null,
+            latestResult: latestCalculatorResult
+              ? {
+                  expression: latestCalculatorResult.expression,
+                  displayValue: latestCalculatorResult.result.displayValue,
+                  summary: latestCalculatorResult.result.summary ?? null,
+                  mode: latestCalculatorResult.result.mode,
+                  base: latestCalculatorResult.result.base,
+                  wordSize: latestCalculatorResult.result.wordSize,
+                  angleUnit: latestCalculatorResult.result.angleUnit
+                }
+              : null
+          }
+        : null,
+      transcript:
+        transcriptFocused || selectedTranscriptEntry || filteredTranscriptEntries.length > 0
+          ? {
+              focused: transcriptFocused,
+              selectedSourceFilter: selectedTranscriptSourceFilter,
+              visibleEntryCount: filteredTranscriptEntries.length,
+              selectedEntry: selectedTranscriptEntry
+                ? {
+                    key: selectedTranscriptEntry.key,
+                    source: selectedTranscriptEntry.source,
+                    timestamp: selectedTranscriptEntry.timestamp,
+                    title: selectedTranscriptEntry.title,
+                    summary: selectedTranscriptEntry.summary,
+                    preview: selectedTranscriptEntry.preview ?? null,
+                    family: selectedTranscriptEntry.family ?? null,
+                    threadId: selectedTranscriptEntry.threadId ?? null,
+                    turnId: selectedTranscriptEntry.turnId ?? null,
+                    eventCursor: selectedTranscriptEntry.eventCursor ?? null,
+                    form: selectedTranscriptEntry.form ?? null,
+                    status: selectedTranscriptEntry.status ?? null
+                  }
+                : null,
+              visibleEntries: filteredTranscriptEntries.slice(0, 12).map((entry) => ({
+                key: entry.key,
+                source: entry.source,
+                timestamp: entry.timestamp,
+                title: entry.title,
+                summary: entry.summary,
+                preview: entry.preview ?? null,
+                family: entry.family ?? null,
+                threadId: entry.threadId ?? null,
+                turnId: entry.turnId ?? null,
+                eventCursor: entry.eventCursor ?? null,
+                status: entry.status ?? null
+              }))
+            }
+          : null,
+      memory:
+        activeWorkspace === "memory" || selectedMemory || memoryEntries.length > 0
+          ? {
+              focused: activeWorkspace === "memory",
+              entryCount: memoryEntries.length,
+              selectedMemory: selectedMemory
+                ? {
+                    memoryId: selectedMemory.memoryId,
+                    kind: selectedMemory.kind,
+                    category: selectedMemory.category,
+                    attribute: selectedMemory.attribute,
+                    value: selectedMemory.value,
+                    summary: selectedMemory.summary,
+                    confidence: selectedMemory.confidence ?? null,
+                    sourceTurnId: selectedMemory.sourceTurnId ?? null
+                  }
+                : null,
+              visibleEntries: memoryEntries.slice(0, 12).map((entry) => ({
+                memoryId: entry.memoryId,
+                kind: entry.kind,
+                category: entry.category,
+                attribute: entry.attribute,
+                value: entry.value,
+                summary: entry.summary,
+                confidence: entry.confidence ?? null
+              }))
+            }
+          : null,
+      desktop: desktopModel
+        ? {
+            workspaceId: desktopModel.workspaceId,
+            activePanel: desktopModel.activePanel,
+            focusObjectId: desktopModel.focusObjectId ?? null,
+            surfaceCount: desktopModel.surfaceCount,
+            governanceCount: desktopModel.governanceCount,
+            objectGroupCount: desktopModel.objectGroupCount,
+            activePanelSummary: desktopModel.activePanelSummary ?? null,
+            recommendedAction: desktopModel.recommendedAction ?? null,
+            focusedWindowId: focusedDesktopWindowId,
+            residentWindowCount: desktopResidentWindows.length,
+            minimizedWindowCount: desktopMinimizedWindows.length,
+            residentWindows: desktopResidentWindows,
+            minimizedWindows: desktopMinimizedWindows
+          }
+        : null
+    };
+  }
+
+  function buildConversationSurfaceActions(): Array<Record<string, unknown>> {
+    const calculatorFocused = focusedDesktopWindowId === "window:calculator";
+    const transcriptFocused = activeWorkspace === "transcript";
+    const calculatorExpressionCandidate =
+      pendingCalculatorExpressionRequest?.expression?.trim() ||
+      latestCalculatorResult?.expression?.trim() ||
+      conversationDraft.trim();
+    const actions: Array<Record<string, unknown>> = [];
+
+    if (calculatorFocused) {
+      const calculatorMode = latestCalculatorResult?.result.mode ?? "basic";
+      const calculatorBase = latestCalculatorResult?.result.base ?? 10;
+      const calculatorWordSize = latestCalculatorResult?.result.wordSize ?? 64;
+      const calculatorAngleUnit = latestCalculatorResult?.result.angleUnit ?? "radians";
+      actions.push({
+        toolId: "calculator/summary",
+        label: "Inspect Calculator",
+        summary: "Read the current calculator capabilities, modes, expression buffer, and numeric controls before acting on the focused calculator panel.",
+        source: "calculator.focus"
+      });
+      actions.push({
+        toolId: "calculator/set-expression",
+        label: "Set Calculator Expression",
+        summary: "Replace the focused calculator expression buffer with a new expression. Use this for multi-token calculations such as 7*5 before evaluating.",
+        source: "calculator.expression",
+        requiredArguments: ["expression"]
+      });
+      actions.push({
+        toolId: "calculator/append-token",
+        label: "Press Calculator Token",
+        summary: "Append one calculator token such as 7, 5, +, -, *, /, (, ), sin(, or 0x to the focused calculator expression buffer.",
+        source: "calculator.keypad",
+        requiredArguments: ["token"]
+      });
+      actions.push({
+        toolId: "calculator/append-token",
+        label: "Press 7",
+        summary: "Append the token 7 to the focused calculator expression buffer.",
+        source: "calculator.keypad",
+        arguments: { token: "7" }
+      });
+      actions.push({
+        toolId: "calculator/clear",
+        label: "Clear Calculator",
+        summary: "Clear the focused calculator expression buffer and latest result.",
+        source: "calculator.controls"
+      });
+      actions.push({
+        toolId: "calculator/backspace",
+        label: "Backspace Calculator",
+        summary: "Remove the last character from the focused calculator expression buffer.",
+        source: "calculator.controls"
+      });
+      actions.push({
+        toolId: "calculator/set-mode",
+        label: "Switch To Scientific",
+        summary: "Switch the focused calculator to scientific mode.",
+        source: "calculator.mode",
+        arguments: { mode: "scientific" }
+      });
+      if (calculatorExpressionCandidate.length > 0) {
+        actions.push({
+          toolId: "calculator/evaluate",
+          label: "Evaluate In Calculator",
+          summary: `Evaluate ${JSON.stringify(calculatorExpressionCandidate.slice(0, 120))} in the focused calculator panel context.`,
+          source: latestCalculatorResult?.expression?.trim() === calculatorExpressionCandidate ? "calculator.latestResult" : pendingCalculatorExpressionRequest?.expression?.trim() === calculatorExpressionCandidate ? "calculator.pendingExpression" : "calculator.draftExpression",
+          arguments: {
+            expression: calculatorExpressionCandidate,
+            mode: calculatorMode,
+            base: calculatorBase,
+            wordSize: calculatorWordSize,
+            angleUnit: calculatorAngleUnit
+          }
+        });
+      }
+      actions.push({
+        toolId: "calculator/evaluate",
+        label: "Evaluate Calculator Expression",
+        summary: "Evaluate a specific expression in the focused calculator. Use this when the user asks for a calculation result directly.",
+        source: "calculator.evaluate",
+        requiredArguments: ["expression"],
+        arguments: {
+          mode: calculatorMode,
+          base: calculatorBase,
+          wordSize: calculatorWordSize,
+          angleUnit: calculatorAngleUnit
+        }
+      });
+    }
+
+    if (transcriptFocused && selectedTranscriptEntry?.form) {
+      actions.push({
+        toolId: "desktop/show",
+        label: "Inspect Transcript Focus",
+        summary: `Inspect the currently selected transcript entry ${JSON.stringify(selectedTranscriptEntry.title)} before acting on its runtime or governance implications.`,
+        source: "transcript.focus"
+      });
+    }
+
+    actions.push({
+      toolId: "desktop/show",
+      label: "Inspect Surface",
+      summary: "Read the current Surface desktop model before deciding on a UI action."
+    });
+
+    const seenActionIds = new Set<string>();
+    const seenActionKeys = new Set<string>();
+    const actionLimit = 16;
+
+    const pushDesktopAction = (
+      action: DesktopActionDto | null | undefined,
+      label: string,
+      summary: string,
+      source: string
+    ): boolean => {
+      if (!action) {
+        return false;
+      }
+      const identity =
+        action.actionId ??
+        `${action.panelId}:${action.actionKind}:${action.index ?? ""}:${action.executionId ?? ""}:${action.objectKind ?? ""}:${action.command}`;
+      if (seenActionIds.has(action.actionId ?? "") || seenActionKeys.has(identity)) {
+        return false;
+      }
+      if (action.actionId) {
+        seenActionIds.add(action.actionId);
+      }
+      seenActionKeys.add(identity);
+      actions.push({
+        toolId: "desktop/action",
+        label,
+        summary,
+        source,
+        arguments: {
+          actionId: action.actionId,
+          actionKind: action.actionKind,
+          panelId: action.panelId,
+          command: action.command,
+          index: action.index ?? null,
+          executionId: action.executionId ?? null,
+          objectKind: action.objectKind ?? null,
+          params: action.params ?? null
+        }
+      });
+      return actions.length >= actionLimit;
+    };
+
+    const recommendedAction = desktopModel?.recommendedAction;
+    if (recommendedAction) {
+      const desktopRecommendedAction: DesktopActionDto = {
+        actionId: recommendedAction.actionId,
+        actionKind: recommendedAction.actionKind,
+        panelId: desktopModel?.activePanel ?? "workspace",
+        command: recommendedAction.command
+      };
+      if (
+        pushDesktopAction(
+          desktopRecommendedAction,
+          recommendedAction.label || "Recommended Surface action",
+          `Recommended next Surface action from the current desktop focus: ${recommendedAction.command}.`,
+          "desktop.recommendedAction"
+        )
+      ) {
+        return actions;
+      }
+    }
+
+    const entryPoints = desktopModel?.entryPoints ?? [];
+    for (const entryPoint of entryPoints) {
+      if (
+        pushDesktopAction(
+          entryPoint.action,
+          `${entryPoint.label} / open`,
+          `Open the ${entryPoint.label.toLowerCase()} entry point from the current Surface desktop model.`,
+          `desktop.entryPoint.${entryPoint.entryKind}`
+        )
+      ) {
+        return actions;
+      }
+      const entryPointActions = entryPoint.actions ? Object.entries(entryPoint.actions) : [];
+      for (const [actionKey, entryAction] of entryPointActions) {
+        if (
+          pushDesktopAction(
+            entryAction,
+            `${entryPoint.label} / ${actionKey}`,
+            `Invoke ${actionKey} for the ${entryPoint.label.toLowerCase()} entry point.`,
+            `desktop.entryPoint.${entryPoint.entryKind}.${actionKey}`
+          )
+        ) {
+          return actions;
+        }
+      }
+    }
+
+    const desktopPanels = desktopModel?.panels ? Object.values(desktopModel.panels) : [];
+    const activePanelId = desktopModel?.activePanel ?? null;
+    const orderedPanels = [
+      ...desktopPanels.filter((panel) => panel.panelId === activePanelId),
+      ...desktopPanels.filter((panel) => panel.panelId !== activePanelId)
+    ];
+
+    for (const panel of orderedPanels) {
+      const panelActions = [panel.actions.activate, panel.actions.select, panel.actions.open, panel.actions.restore];
+      for (const action of panelActions) {
+        if (
+          pushDesktopAction(
+            action,
+            `${panel.panelId} / ${action?.actionKind ?? "action"}`,
+            `Invoke ${action?.command ?? "the selected command"} for the ${panel.panelId} panel.`,
+            panel.panelId === activePanelId ? "desktop.activePanel" : "desktop.panel"
+          )
+        ) {
+          return actions;
+        }
+      }
+    }
+
+    return actions;
+  }
+
   async function handleSendConversationMessage(): Promise<void> {
     if (
       !effectiveEnvironmentId ||
@@ -5144,7 +5772,9 @@ export function App() {
         environmentId: effectiveEnvironmentId,
         threadId: currentThreadId,
         prompt: conversationDraft.trim(),
-        attachments: conversationAttachments
+        attachments: conversationAttachments,
+        surfaceContext: buildConversationSurfaceContext(),
+        surfaceActions: buildConversationSurfaceActions()
       });
       console.info(
         "[conversation-send] status=%s threadId=%s turnId=%s attachmentCount=%d summaryLength=%d",
@@ -5214,6 +5844,89 @@ export function App() {
     }
   }
 
+  async function loadMemoryWorkspace(environmentId: string): Promise<void> {
+    try {
+      const result = await window.sbclAgentDesktop.query.memoryList(environmentId);
+      setMemoryListResult(result);
+      setSelectedMemoryId((current) => {
+        if (current && result.data.entries.some((entry) => entry.memoryId === current)) {
+          return current;
+        }
+        return result.data.entries[0]?.memoryId ?? null;
+      });
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to load retained memories.");
+    }
+  }
+
+  async function handleUpdateMemory(input: Omit<MemoryUpdateInput, "environmentId">): Promise<void> {
+    if (!effectiveEnvironmentId) {
+      return;
+    }
+    try {
+      setPendingUpdateMemoryId(input.memoryId);
+      const result = await window.sbclAgentDesktop.command.updateMemory({
+        environmentId: effectiveEnvironmentId,
+        ...input
+      });
+      setMemoryListResult((current) => {
+        if (!current) {
+          return current;
+        }
+        const nextEntries = current.data.entries.map((entry) =>
+          entry.memoryId === result.data.memoryId ? result.data : entry
+        );
+        return {
+          ...current,
+          data: {
+            ...current.data,
+            entries: nextEntries,
+            entryCount: nextEntries.length
+          }
+        };
+      });
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to update retained memory.");
+    } finally {
+      setPendingUpdateMemoryId(null);
+    }
+  }
+
+  async function handleDeleteMemory(memoryId: string): Promise<void> {
+    if (!effectiveEnvironmentId) {
+      return;
+    }
+    try {
+      setPendingDeleteMemoryId(memoryId);
+      const result: CommandResultDto<MemoryDeleteResultDto> =
+        await window.sbclAgentDesktop.command.deleteMemory({
+          environmentId: effectiveEnvironmentId,
+          memoryId
+        });
+      if (result.data.deletedP) {
+        setMemoryListResult((current) => {
+          if (!current) {
+            return current;
+          }
+          const nextEntries = current.data.entries.filter((entry) => entry.memoryId !== memoryId);
+          return {
+            ...current,
+            data: {
+              ...current.data,
+              entries: nextEntries,
+              entryCount: nextEntries.length
+            }
+          };
+        });
+        setSelectedMemoryId((current) => (current === memoryId ? null : current));
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to delete retained memory.");
+    } finally {
+      setPendingDeleteMemoryId(null);
+    }
+  }
+
   async function loadProjectDetail(projectId: string, environmentId: string): Promise<void> {
     try {
       const result = await window.sbclAgentDesktop.query.projectDetail(projectId, environmentId);
@@ -5226,19 +5939,44 @@ export function App() {
   async function loadConversationWorkspace(environmentId: string, preferredThreadIdOverride?: string | null): Promise<void> {
     try {
       const threadResult = await window.sbclAgentDesktop.query.threadList(environmentId);
-      setThreads(threadResult.data);
 
       const preferredThreadId =
         preferredThreadIdOverride ??
         selectedThreadIdRef.current ??
         (currentProjectId ? selectedConversationThreadByProject[currentProjectId] : null);
+      const preferredThreadExists =
+        preferredThreadId != null &&
+        threadResult.data.some((thread) => thread.threadId === preferredThreadId);
+      const optimisticPreferredThread =
+        preferredThreadId && !preferredThreadExists
+          ? threads.find((thread) => thread.threadId === preferredThreadId) ??
+            (selectedThread && selectedThread.threadId === preferredThreadId
+              ? {
+                  threadId: selectedThread.threadId,
+                  title: selectedThread.title,
+                  summary: selectedThread.summary,
+                  state: selectedThread.state,
+                  latestActivityAt: selectedThread.turns.at(-1)?.createdAt ?? new Date().toISOString(),
+                  latestTurnState: selectedThread.turns.at(-1)?.state ?? "background",
+                  attentionFlags: []
+                }
+              : null)
+          : null;
+      const nextThreads =
+        optimisticPreferredThread && !threadResult.data.some((thread) => thread.threadId === optimisticPreferredThread.threadId)
+          ? [optimisticPreferredThread, ...threadResult.data]
+          : threadResult.data;
+      setThreads(nextThreads);
+
       const nextThreadId =
-        preferredThreadId && threadResult.data.some((thread) => thread.threadId === preferredThreadId)
+        preferredThreadIdOverride && preferredThreadId
           ? preferredThreadId
-          : threadResult.data[0]?.threadId ?? null;
+          : preferredThreadId && nextThreads.some((thread) => thread.threadId === preferredThreadId)
+            ? preferredThreadId
+            : nextThreads[0]?.threadId ?? null;
       console.info(
         "[conversation-workspace] count=%d preferredThreadId=%s nextThreadId=%s",
-        threadResult.data.length,
+        nextThreads.length,
         preferredThreadId,
         nextThreadId
       );
@@ -5353,6 +6091,27 @@ export function App() {
       setSelectedConsoleEntryId((current) => current ?? result.data.entries[0]?.entryId ?? null);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Failed to load console stream.");
+    }
+  }
+
+  async function loadTranscriptConsoleStreams(environmentId: string): Promise<void> {
+    try {
+      const [environmentResult, hostResult] = await Promise.all([
+        window.sbclAgentDesktop.query.consoleLogStream({
+          environmentId,
+          plane: "environment",
+          limit: 120
+        }),
+        window.sbclAgentDesktop.query.consoleLogStream({
+          environmentId,
+          plane: "host",
+          limit: 120
+        })
+      ]);
+      setEnvironmentConsoleLogStream(environmentResult);
+      setHostConsoleLogStream(hostResult);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to load transcript console streams.");
     }
   }
 
@@ -6471,6 +7230,12 @@ export function App() {
           title: "Durable Output Stream",
           summary: "Transcript is the durable cross-surface output lane for runtime evaluations, workspace results, and environment events so feedback stays ambient and inspectable instead of buried inside individual instruments."
         };
+      case "memory":
+        return {
+          eyebrow: "Memory",
+          title: "Deliberate Operator Memory",
+          summary: "Memory keeps durable operator facts editable and inspectable so identity, preferences, and working style become persistent environment state instead of accidental prompt residue."
+        };
       case "browser":
         return {
           eyebrow: "Browser",
@@ -6820,6 +7585,15 @@ export function App() {
           };
         }
         return null;
+      case "memory":
+        if (!memoryListResult) {
+          return {
+            label: "Resolving retained memory",
+            summary: "The desktop is loading deliberate operator memories so they can be inspected and maintained directly.",
+            tone: "warning"
+          };
+        }
+        return null;
       case "browser":
         if (!runtimeSummary) {
           return {
@@ -6878,6 +7652,7 @@ export function App() {
     artifacts.length,
     environmentEvents.length,
     incidents.length,
+    memoryListResult,
     projectListResult?.data.projects.length,
     runtimeSummary,
     selectedArtifact,
@@ -6945,6 +7720,8 @@ export function App() {
         return "workspace";
       case "window:transcript-surface":
         return "transcript";
+      case "window:memory-surface":
+        return "memory";
       case "window:configuration-surface":
         return "configuration";
       case "window:conversations-surface":
@@ -7157,6 +7934,7 @@ export function App() {
     () => () => {
       sidebarResizeCleanupRef.current?.();
       inspectorResizeCleanupRef.current?.();
+      railSectionResizeCleanupRef.current?.();
     },
     []
   );
@@ -7340,6 +8118,68 @@ export function App() {
       inspectorResizeCleanupRef.current = null;
       void persistShellDesktopPreferences();
     }
+  }
+
+
+  function startRailSectionResize(side: "left" | "right", event: React.MouseEvent<HTMLButtonElement>): void {
+    const panel = side === "left" ? sidebarPanelRef.current : inspectorPanelRef.current;
+    const list = side === "left" ? leftRailListRef.current : rightRailListRef.current;
+    if (!panel || !list) {
+      return;
+    }
+
+    const panelRect = panel.getBoundingClientRect();
+    const listRect = list.getBoundingClientRect();
+    const minHeight = 63;
+    const minContentHeight = 120;
+    const availableHeight = panelRect.bottom - listRect.top - 12;
+    const maxHeight = Math.max(minHeight, availableHeight - minContentHeight - 7);
+
+    railSectionResizeSessionRef.current = {
+      side,
+      startClientY: event.clientY,
+      startHeight: listRect.height,
+      minHeight,
+      maxHeight
+    };
+    railSectionResizeCleanupRef.current?.();
+
+    function handleMouseMove(moveEvent: MouseEvent): void {
+      const session = railSectionResizeSessionRef.current;
+      if (!session) {
+        return;
+      }
+      const nextHeight = Math.min(
+        Math.max(session.startHeight + (moveEvent.clientY - session.startClientY), session.minHeight),
+        session.maxHeight
+      );
+      if (session.side === "left") {
+        setLeftRailDockSectionHeight(nextHeight);
+      } else {
+        setRightRailDockSectionHeight(nextHeight);
+      }
+    }
+
+    function handleMouseUp(): void {
+      if (!railSectionResizeSessionRef.current) {
+        return;
+      }
+      setActiveRailSectionResizeSide(null);
+      document.body.classList.remove("shell-rail-section-resizing");
+      railSectionResizeSessionRef.current = null;
+      railSectionResizeCleanupRef.current?.();
+      railSectionResizeCleanupRef.current = null;
+    }
+
+    document.addEventListener("mousemove", handleMouseMove, true);
+    document.addEventListener("mouseup", handleMouseUp, true);
+    railSectionResizeCleanupRef.current = () => {
+      document.removeEventListener("mousemove", handleMouseMove, true);
+      document.removeEventListener("mouseup", handleMouseUp, true);
+    };
+    setActiveRailSectionResizeSide(side);
+    document.body.classList.add("shell-rail-section-resizing");
+    event.preventDefault();
   }
 
   const shellRenderLayout = deriveShellRenderLayout(shellLayout, viewportWidth);
@@ -7665,6 +8505,11 @@ export function App() {
     await navigateToWorkspace("transcript");
   }
 
+  async function navigateToMemorySurface(): Promise<void> {
+    openDesktopWindow("window:memory-surface");
+    await navigateToWorkspace("memory");
+  }
+
   function conversationSectionLabel(section: ConversationSection): string {
     return section === "threads"
       ? "Threads"
@@ -7808,6 +8653,38 @@ export function App() {
     openDesktopWindow("window:calculator");
   }
 
+  async function openCalculatorWithExpression(expression: string, shouldEvaluate = false): Promise<void> {
+    const trimmedExpression = expression.trim();
+    if (trimmedExpression.length === 0) {
+      return;
+    }
+    setPendingCalculatorExpressionRequest({
+      expression: trimmedExpression,
+      shouldEvaluate,
+      token: Date.now()
+    });
+    openCalculatorApplication();
+  }
+
+  function clearPendingCalculatorExpressionRequest(): void {
+    setPendingCalculatorExpressionRequest(null);
+  }
+
+  async function insertCalculatorResultIntoConversationDraft(input: {
+    expression: string;
+    result: CalculatorResultDto;
+  }): Promise<void> {
+    setLatestCalculatorResult(input);
+    const summaryLine = input.result.summary?.trim().length
+      ? input.result.summary.trim()
+      : `Result ${input.result.displayValue}`;
+    const addition = `Calculator: ${input.expression} = ${input.result.displayValue}\n${summaryLine}`;
+    setConversationDraft((current) =>
+      current.trim().length > 0 ? `${current.trim()}\n\n${addition}` : addition
+    );
+    await navigateToConversationSection("draft");
+  }
+
   function closeDesktopWindow(windowId: string): void {
     updateActiveDesktopWindows((current) => updateWindowState(current, windowId, "closed"));
   }
@@ -7870,6 +8747,7 @@ export function App() {
         "window:editor-surface",
         "window:workspace-surface",
         "window:transcript-surface",
+        "window:memory-surface",
         "window:configuration-surface",
         "window:conversations-surface",
         "window:calculator"
@@ -8237,6 +9115,21 @@ export function App() {
         });
       }
 
+      if (!suppressedDesktopWindowIds.includes("window:memory-surface")) {
+        next = upsertDesktopWindow(next, {
+          id: "window:memory-surface",
+          kind: "utility",
+          title: "Memory Surface",
+          summary:
+            selectedMemory?.summary ??
+            "Inspect, revise, and delete deliberate operator memories without leaving the active environment.",
+          state: next.find((window) => window.id === "window:memory-surface")?.state ?? "minimized",
+          zIndex: next.find((window) => window.id === "window:memory-surface")?.zIndex ?? 12,
+          ...DEFAULT_DESKTOP_WINDOW_FRAMES["window:memory-surface"],
+          closable: true
+        });
+      }
+
       if (!suppressedDesktopWindowIds.includes("window:operate-surface")) {
         next = upsertDesktopWindow(next, {
           id: "window:operate-surface",
@@ -8309,7 +9202,7 @@ export function App() {
 
       return next;
     });
-  }, [activeDesktopId, activeHostedAppDescriptor.label, currentWorkspaceResult?.data.summary, desktopModel, inspectorPinned, runtimeSummary, selectedBrowserDomainDescriptor.label, selectedBrowserDomainDescriptor.summary, selectedConfigurationSection, selectedConversationSection, selectedOperateSurfaceDescriptor.label, selectedOperateSurfaceDescriptor.summary, selectedProjectDetail?.summary, selectedProjectSummary?.summary, shellCurrentSurfaceSummary.summary, shellProactiveLead?.summary, shellLayout.undockedPanelIds, suppressedDesktopWindowIds, summary?.activeContext.focusSummary, transcriptEntries, workspaceDescriptor.summary]);
+  }, [activeDesktopId, activeHostedAppDescriptor.label, currentWorkspaceResult?.data.summary, desktopModel, inspectorPinned, runtimeSummary, selectedBrowserDomainDescriptor.label, selectedBrowserDomainDescriptor.summary, selectedConfigurationSection, selectedConversationSection, selectedMemory?.summary, selectedOperateSurfaceDescriptor.label, selectedOperateSurfaceDescriptor.summary, selectedProjectDetail?.summary, selectedProjectSummary?.summary, shellCurrentSurfaceSummary.summary, shellProactiveLead?.summary, shellLayout.undockedPanelIds, suppressedDesktopWindowIds, summary?.activeContext.focusSummary, transcriptEntries, workspaceDescriptor.summary]);
 
   useEffect(() => {
     if (desktopCompositionInitializedById[activeDesktopId]) {
@@ -8418,6 +9311,15 @@ export function App() {
           };
         }
 
+        if (window.id === "window:memory-surface") {
+          return {
+            ...window,
+            summary:
+              selectedMemory?.summary ??
+              "Inspect, revise, and delete deliberate operator memories without leaving the active environment."
+          };
+        }
+
         if (window.id === "window:operate-surface") {
           return {
             ...window,
@@ -8448,7 +9350,7 @@ export function App() {
 
         return window;
       }),
-    [activeHostedAppDescriptor.label, currentWorkspaceResult?.data.summary, desktopModel?.panels?.display?.selectedTitle, desktopWindows, runtimeSummary, selectedBrowserDomainDescriptor.label, selectedBrowserDomainDescriptor.summary, selectedConfigurationSection, selectedConversationSection, selectedOperateSurfaceDescriptor.label, selectedOperateSurfaceDescriptor.summary, selectedProjectDetail?.summary, selectedProjectSummary?.summary, shellCurrentSurfaceSummary.summary, shellProactiveLead?.summary, summary?.activeContext.focusSummary, transcriptEntries, workspaceDescriptor.summary]
+    [activeHostedAppDescriptor.label, currentWorkspaceResult?.data.summary, desktopModel?.panels?.display?.selectedTitle, desktopWindows, runtimeSummary, selectedBrowserDomainDescriptor.label, selectedBrowserDomainDescriptor.summary, selectedConfigurationSection, selectedConversationSection, selectedMemory?.summary, selectedOperateSurfaceDescriptor.label, selectedOperateSurfaceDescriptor.summary, selectedProjectDetail?.summary, selectedProjectSummary?.summary, shellCurrentSurfaceSummary.summary, shellProactiveLead?.summary, summary?.activeContext.focusSummary, transcriptEntries, workspaceDescriptor.summary]
   );
 
   const allShellPanelContentById: Partial<Record<ShellDockPanelId, ReactNode>> = {
@@ -8491,6 +9393,9 @@ export function App() {
         }}
         navigateToTranscriptSurface={() => {
           void navigateToTranscriptSurface();
+        }}
+        navigateToMemorySurface={() => {
+          void navigateToMemorySurface();
         }}
         navigateToWorkspace={(workspaceId) => {
           void navigateToWorkspace(workspaceId);
@@ -8556,6 +9461,7 @@ export function App() {
         transcriptEntries={transcriptEntries}
         currentWorkspaceHistoryCount={currentWorkspaceHistory.length}
         currentReplHistoryCount={currentProjectReplFocus?.history?.length ?? 0}
+        memoryEntries={memoryEntries}
         currentProject={currentProject}
         selectedProjectDetail={selectedProjectDetail}
         selectedProjectSummary={selectedProjectSummary}
@@ -8592,6 +9498,7 @@ export function App() {
         selectedEvidenceSection={selectedEvidenceSection}
         selectedEvent={selectedEvent}
         selectedIncident={selectedIncident}
+        selectedMemory={selectedMemory}
         selectedOperateSection={selectedOperateSection}
         selectedTelemetryProcess={
           runtimeTelemetry?.processes.find((process) => process.processId === selectedTelemetryProcessId) ??
@@ -9149,6 +10056,7 @@ export function App() {
           activePanelId={shellLayout.leftRail.activePanelId}
           ariaLabel="Application navigation"
           dockPanels={leftRailPanels}
+          dockSectionHeight={leftRailDockSectionHeight}
           dragTargetActive={shellPanelDragState?.target === "left"}
           listRef={leftRailListRef}
           onDropDockedPanel={(panelId) => {
@@ -9161,6 +10069,9 @@ export function App() {
           }}
           onPanelPointerDown={(panelId, panelLabel, event) => {
             beginShellPanelPointerDrag(panelId, panelLabel, "left", event.clientX, event.clientY);
+          }}
+          onResizeDockSectionMouseDown={(event) => {
+            startRailSectionResize("left", event);
           }}
           onToggle={() => {
             void toggleSidebarPinned();
@@ -9232,6 +10143,7 @@ export function App() {
               currentProjectReplFocus={currentProjectReplFocus}
               currentFocusSummary={summary?.activeContext.focusSummary ?? "Environment posture is not yet available."}
               currentFocusTitle={summary?.activeContext.currentThreadTitle ?? summary?.environmentLabel ?? "Environment"}
+              calculatorRefreshToken={calculatorRefreshToken}
               desktopDescriptors={desktopDescriptors}
               desktopZoom={activeDesktopZoom}
               actionQueue={dashboardActionQueue}
@@ -9692,12 +10604,26 @@ export function App() {
                   setRuntimeForm(form);
                   await navigateToExecutionSection("listener");
                 },
+                selectedEntryKey: selectedTranscriptEntryKey,
+                selectedSourceFilter: selectedTranscriptSourceFilter,
                 setWorkspaceDraft: setCurrentWorkspaceDraft,
+                setSelectedEntryKey: setSelectedTranscriptEntryKey,
+                setSelectedSourceFilter: setSelectedTranscriptSourceFilter,
                 transcriptEntries
+              }}
+              memoryWorkspaceProps={{
+                memories: memoryEntries,
+                selectedMemoryId,
+                setSelectedMemoryId,
+                onUpdateMemory: handleUpdateMemory,
+                onDeleteMemory: handleDeleteMemory,
+                pendingDeleteMemoryId,
+                pendingUpdateMemoryId
               }}
               activeWorkspace={activeWorkspace}
               selectedExecutionSection={selectedExecutionSection}
               currentProjectTitle={currentProject?.title ?? "implicit"}
+              environmentId={effectiveEnvironmentId}
               bindingId={binding?.environmentId ?? "unbound"}
               centerAttentionSignals={centerAttentionSignals}
               hostState={hostStatus?.hostState ?? "starting"}
@@ -9853,6 +10779,12 @@ export function App() {
               setRuntimeInspectorSymbol={updateRuntimeInspectorSymbol}
               setRuntimeForm={setRuntimeForm}
               switchReplSession={handleSwitchReplSession}
+              calculatorDraftExpression={conversationDraft}
+              pendingCalculatorExpressionRequest={pendingCalculatorExpressionRequest}
+              clearPendingCalculatorExpressionRequest={clearPendingCalculatorExpressionRequest}
+              insertCalculatorResultIntoConversationDraft={insertCalculatorResultIntoConversationDraft}
+              openConversationDraft={() => navigateToConversationSection("draft")}
+              recordCalculatorEvaluation={(input) => setLatestCalculatorResult(input)}
               windows={desktopWindowSnapshots}
             />
           </div>
@@ -9889,6 +10821,7 @@ export function App() {
           activePanelId={shellLayout.rightRail.activePanelId}
           ariaLabel="Workspace inspector"
           dockPanels={rightRailPanels}
+          dockSectionHeight={rightRailDockSectionHeight}
           dragTargetActive={shellPanelDragState?.target === "right"}
           listRef={rightRailListRef}
           onDropDockedPanel={(panelId) => {
@@ -9901,6 +10834,9 @@ export function App() {
           }}
           onPanelPointerDown={(panelId, panelLabel, event) => {
             beginShellPanelPointerDrag(panelId, panelLabel, "right", event.clientX, event.clientY);
+          }}
+          onResizeDockSectionMouseDown={(event) => {
+            startRailSectionResize("right", event);
           }}
           onToggle={() => {
             void toggleInspectorPinned();
@@ -9985,6 +10921,7 @@ function WorkspaceInspector({
   transcriptEntries,
   currentWorkspaceHistoryCount,
   currentReplHistoryCount,
+  memoryEntries,
   currentProject,
   selectedProjectDetail,
   selectedProjectSummary,
@@ -10000,6 +10937,7 @@ function WorkspaceInspector({
   selectedWorkItemPlan,
   selectedWorkflowRecord,
   selectedIncident,
+  selectedMemory,
   selectedArtifact,
   selectedConsoleEntry,
   selectedConversationMessage,
@@ -10113,6 +11051,7 @@ function WorkspaceInspector({
   transcriptEntries: TranscriptSurfaceEntry[];
   currentWorkspaceHistoryCount: number;
   currentReplHistoryCount: number;
+  memoryEntries: MemoryEntryDto[];
   currentProject: ProjectProfileDto | null;
   selectedProjectDetail: ProjectDetailDto | null;
   selectedProjectSummary: ProjectSummaryDto | null;
@@ -10128,6 +11067,7 @@ function WorkspaceInspector({
   selectedWorkItemPlan: WorkItemPlanDto | null;
   selectedWorkflowRecord: WorkflowRecordDto | null;
   selectedIncident: IncidentDetailDto | null;
+  selectedMemory: MemoryEntryDto | null;
   selectedArtifact: ArtifactDetailDto | null;
   selectedConsoleEntry: ConsoleLogEntryDto | null;
   selectedConversationMessage: MessageDto | null;
@@ -10331,6 +11271,10 @@ function WorkspaceInspector({
         ? selectedProjectDetail?.title ?? selectedProjectSummary?.title ?? currentProject?.title ?? "No project selected"
       : activeWorkspace === "transcript"
         ? transcriptEntries[0]?.title ?? "Transcript"
+      : activeWorkspace === "memory"
+        ? selectedMemory
+          ? `${selectedMemory.category} / ${selectedMemory.attribute}`
+          : "Retained Memory"
       : activeWorkspace === "workspace"
         ? `${workspaceTitle} Workspace`
       : activeWorkspace === "editor"
@@ -10374,6 +11318,9 @@ function WorkspaceInspector({
           "Select a governed project to inspect its constitution, requirements, journeys, architecture, and linked evidence."
       : activeWorkspace === "transcript"
         ? transcriptEntries[0]?.summary ?? "Transcript keeps durable evaluation and environment feedback visible across the environment."
+      : activeWorkspace === "memory"
+        ? selectedMemory?.summary ??
+          `Inspect ${memoryEntries.length} retained memory entr${memoryEntries.length === 1 ? "y" : "ies"} and deliberately revise or delete them when they no longer reflect the operator.`
       : activeWorkspace === "workspace"
         ? workspaceResult?.data.summary ??
           "Draft Lisp forms here, evaluate them deliberately, and keep the retained scratch history separate from both conversation turns and listener execution posture."
@@ -10780,6 +11727,44 @@ function WorkspaceInspector({
                 ) : (
                   <p className="inspector-copy">
                     Transcript entries will appear here once workspace, listener, or environment activity is retained.
+                  </p>
+                )
+              }
+            ]
+        : activeWorkspace === "memory"
+          ? [
+              {
+                id: "context",
+                label: "Context",
+                content: (
+                  <dl className="detail-list">
+                    <DetailRow label="Entries" value={String(memoryEntries.length)} />
+                    <DetailRow label="Selected" value={selectedMemory?.memoryId ?? "No memory selected"} />
+                    <DetailRow label="Category" value={selectedMemory?.category ?? "n/a"} />
+                    <DetailRow label="Attribute" value={selectedMemory?.attribute ?? "n/a"} />
+                  </dl>
+                )
+              },
+              {
+                id: "detail",
+                label: "Detail",
+                content: selectedMemory ? (
+                  <div className="configuration-inspector-stack">
+                    <p className="inspector-copy">{selectedMemory.summary}</p>
+                    <dl className="detail-list">
+                      <DetailRow label="Value" value={selectedMemory.value} />
+                      <DetailRow
+                        label="Confidence"
+                        value={selectedMemory.confidence != null ? String(selectedMemory.confidence) : "n/a"}
+                      />
+                      <DetailRow label="Kind" value={selectedMemory.kind} />
+                      <DetailRow label="Recorded" value={selectedMemory.recordedAt ?? "n/a"} />
+                      <DetailRow label="Updated" value={selectedMemory.updatedAt ?? "n/a"} />
+                    </dl>
+                  </div>
+                ) : (
+                  <p className="inspector-copy">
+                    Select a retained memory to inspect and maintain its deliberate identity or preference record.
                   </p>
                 )
               }
@@ -12215,12 +13200,14 @@ function DesktopWindowStage({
   editorSurfaceProps,
   workspaceSurfaceProps,
   transcriptSurfaceProps,
+  memoryWorkspaceProps,
   activeWorkspace,
   selectedExecutionSection,
   browserSurfaceTitle,
   browserSurfaceSummary,
   browserSurfaceEntries,
   currentProjectTitle,
+  environmentId,
   bindingId,
   centerAttentionSignals,
   hostState,
@@ -12289,7 +13276,14 @@ function DesktopWindowStage({
   replSessionTitleDraft,
   setReplSessionTitleDraft,
   runtimeInspectorPackage,
-  setRuntimeInspectorPackage
+  setRuntimeInspectorPackage,
+  calculatorDraftExpression,
+  calculatorRefreshToken,
+  pendingCalculatorExpressionRequest,
+  clearPendingCalculatorExpressionRequest,
+  insertCalculatorResultIntoConversationDraft,
+  openConversationDraft,
+  recordCalculatorEvaluation
 }: {
   className?: string;
   activeDesktopId: string;
@@ -12324,12 +13318,14 @@ function DesktopWindowStage({
   editorSurfaceProps: React.ComponentProps<typeof EditorSurface>;
   workspaceSurfaceProps: React.ComponentProps<typeof WorkspaceSurface>;
   transcriptSurfaceProps: React.ComponentProps<typeof TranscriptSurface>;
+  memoryWorkspaceProps: React.ComponentProps<typeof MemoryWorkspace>;
   activeWorkspace: WorkspaceId;
   selectedExecutionSection: ExecutionSection;
   browserSurfaceTitle: string;
   browserSurfaceSummary: string;
   browserSurfaceEntries: BrowserSurfaceEntry[];
   currentProjectTitle: string;
+  environmentId: string | null;
   bindingId: string;
   centerAttentionSignals: DesktopAttentionSignal[];
   hostState: string;
@@ -12402,6 +13398,20 @@ function DesktopWindowStage({
   setReplSessionTitleDraft: (value: string) => void;
   runtimeInspectorPackage: string;
   setRuntimeInspectorPackage: (value: string) => void;
+  calculatorDraftExpression: string;
+  calculatorRefreshToken: string;
+  pendingCalculatorExpressionRequest: {
+    expression: string;
+    shouldEvaluate: boolean;
+    token: number;
+  } | null;
+  clearPendingCalculatorExpressionRequest: () => void;
+  insertCalculatorResultIntoConversationDraft: (input: {
+    expression: string;
+    result: CalculatorResultDto;
+  }) => Promise<void>;
+  openConversationDraft: () => Promise<void>;
+  recordCalculatorEvaluation: (input: { expression: string; result: CalculatorResultDto }) => void;
 }) {
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const windowCardRefs = useRef(new Map<string, HTMLDivElement>());
@@ -12527,6 +13537,9 @@ function DesktopWindowStage({
     if (window.id === "window:transcript-surface") {
       return "desktop-window-dock-glyph-transcript";
     }
+    if (window.id === "window:memory-surface") {
+      return "desktop-window-dock-glyph-workspace";
+    }
     if (window.id === "window:operate-surface") {
       return "desktop-window-dock-glyph-operate";
     }
@@ -12548,6 +13561,8 @@ function DesktopWindowStage({
       "window:editor-surface",
       "window:projects-surface",
       "window:conversations-surface",
+      "window:transcript-surface",
+      "window:memory-surface",
       "window:calculator"
     ].includes(window.id);
   }
@@ -12559,6 +13574,8 @@ function DesktopWindowStage({
     if (
       window.id === "window:conversations-surface" ||
       window.id === "window:editor-surface" ||
+      window.id === "window:transcript-surface" ||
+      window.id === "window:memory-surface" ||
       window.id === "window:calculator"
     ) {
       return false;
@@ -13472,6 +14489,11 @@ function DesktopWindowStage({
                   <TranscriptSurface {...transcriptSurfaceProps} />
                 </div>
               ) : null}
+              {window.id === "window:memory-surface" ? (
+                <div className="desktop-window-browser-surface" onClick={(event) => event.stopPropagation()}>
+                  <MemoryWorkspace {...memoryWorkspaceProps} />
+                </div>
+              ) : null}
               {window.id === "window:operate-surface" ? (
                 <div className="desktop-window-browser-surface" onClick={(event) => event.stopPropagation()}>
                   {renderOperateSurfaceContent()}
@@ -13489,7 +14511,16 @@ function DesktopWindowStage({
               ) : null}
               {window.id === "window:calculator" ? (
                 <div className="desktop-window-browser-surface" onClick={(event) => event.stopPropagation()}>
-                  <CalculatorSurface environmentId={bindingId || null} />
+                  <CalculatorSurface
+                    clearPendingExpressionRequest={clearPendingCalculatorExpressionRequest}
+                    draftExpression={calculatorDraftExpression}
+                    environmentId={environmentId}
+                    insertResultIntoDraft={insertCalculatorResultIntoConversationDraft}
+                    openConversationDraft={openConversationDraft}
+                    pendingExpressionRequest={pendingCalculatorExpressionRequest}
+                    refreshToken={calculatorRefreshToken}
+                    recordEvaluation={recordCalculatorEvaluation}
+                  />
                 </div>
               ) : null}
               {window.id === "window:listener-workbench" ? (

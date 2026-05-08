@@ -85,6 +85,18 @@ That contract gives the desktop a stable model for:
 
 The Electron application should increasingly be a thin host over that model rather than a client that reconstructs navigation semantics from older command families.
 
+## Architecture At A Glance
+
+The two diagrams below capture the current architectural frame that the rest of this repository documents in detail.
+
+### Conversational Context Architecture
+
+![Conversational context architecture](docs/ConversationalContextArchitecture.png)
+
+### Governance Architecture
+
+![Governance architecture](docs/GovernanceArchitecture.png)
+
 ## Repository Structure
 
 ```text

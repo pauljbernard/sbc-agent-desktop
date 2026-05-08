@@ -51,33 +51,35 @@ export function ShellColumnSplitter({
 }
 
 interface ShellRailHostProps {
+  activePanelId?: ShellDockPanelId | null;
   ariaLabel: string;
   children: ReactNode;
   dockPanels?: ShellDockPanelDefinition[];
-  activePanelId?: ShellDockPanelId | null;
+  dockSectionHeight?: number | null;
   dragTargetActive?: boolean;
   listRef?: Ref<HTMLDivElement>;
   panelRef?: Ref<HTMLElement>;
   title: string;
   toggleAriaLabel: string;
   toggleTitle: string;
-  onToggle: () => void;
+  onMovePanel?: (panelId: ShellDockPanelId, direction: "backward" | "forward") => void;
+  onNativeDragEnd?: () => void;
   onNativeDragStart?: (
     panelId: ShellDockPanelId,
     panelLabel: string,
     origin: "left" | "right",
     event: ReactDragEvent<HTMLElement>
   ) => void;
-  onNativeDragEnd?: () => void;
   onPanelPointerDown?: (
     panelId: ShellDockPanelId,
     panelLabel: string,
     event: ReactMouseEvent<HTMLElement>
   ) => void;
+  onResizeDockSectionMouseDown?: MouseEventHandler<HTMLButtonElement>;
   onSelectPanel?: (panelId: ShellDockPanelId) => void;
-  onUndockPanel?: (panelId: ShellDockPanelId) => void;
   onDropDockedPanel?: (panelId: ShellDockPanelId) => void;
-  onMovePanel?: (panelId: ShellDockPanelId, direction: "backward" | "forward") => void;
+  onToggle: () => void;
+  onUndockPanel?: (panelId: ShellDockPanelId) => void;
 }
 
 const SHELL_PANEL_DRAG_MIME = "application/x-sbcl-agent-shell-panel-id";
@@ -88,24 +90,26 @@ function readDraggedPanelId(event: { dataTransfer: DataTransfer | null }): Shell
 }
 
 export function ShellRailHost({
-  ariaLabel,
   activePanelId,
+  ariaLabel,
   children,
   dockPanels = [],
+  dockSectionHeight,
   dragTargetActive = false,
   listRef,
   panelRef,
   title,
   toggleAriaLabel,
   toggleTitle,
-  onToggle,
-  onNativeDragStart,
+  onMovePanel,
   onNativeDragEnd,
+  onNativeDragStart,
   onPanelPointerDown,
+  onResizeDockSectionMouseDown,
   onSelectPanel,
-  onUndockPanel,
   onDropDockedPanel,
-  onMovePanel
+  onToggle,
+  onUndockPanel
 }: ShellRailHostProps) {
   const handleListDragOver: DragEventHandler<HTMLDivElement> = (event) => {
     if (!onDropDockedPanel || !readDraggedPanelId(event)) {
@@ -142,120 +146,131 @@ export function ShellRailHost({
       </div>
       {dockPanels.length > 0 ? (
         <div
-          aria-label={`${title} rail panels`}
-          className={`shell-dock-list${dragTargetActive ? " shell-dock-list-drop-target" : ""}`}
-          onDragOver={handleListDragOver}
-          onDrop={handleListDrop}
-          ref={listRef}
-          role="listbox"
+          className="shell-rail-dock-section"
+          style={dockSectionHeight != null ? { height: `${dockSectionHeight}px` } : undefined}
         >
-          {dockPanels.map((panel, index) => (
-            <div
-              aria-selected={panel.id === activePanelId}
-              className={panel.id === activePanelId ? "shell-dock-list-item active" : "shell-dock-list-item"}
-              key={panel.id}
-              onClick={() => onSelectPanel?.(panel.id)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  onSelectPanel?.(panel.id);
-                }
-              }}
-              onMouseDown={(event) => {
-                if (event.button !== 0) {
-                  return;
-                }
-                const target = event.target as HTMLElement | null;
-                if (target?.closest(".shell-dock-list-undock, .shell-dock-list-reorder")) {
-                  return;
-                }
-                event.preventDefault();
-                onPanelPointerDown?.(panel.id, panel.label, event);
-              }}
-              role="option"
-              tabIndex={0}
-            >
-              {onMovePanel ? (
-                <button
-                  aria-label={`Move ${panel.label} earlier`}
-                  className="shell-dock-list-reorder"
-                  disabled={index === 0}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onMovePanel(panel.id, "backward");
-                  }}
-                  title={`Move ${panel.label} earlier`}
-                  type="button"
-                >
-                  ‹
-                </button>
-              ) : null}
-              <button
-                aria-label={`Drag ${panel.label}`}
-                className="shell-dock-list-drag"
-                draggable
-                onDragEnd={() => onNativeDragEnd?.()}
-                onDragStart={(event) => {
-                  event.dataTransfer.effectAllowed = "move";
-                  event.dataTransfer.setData(SHELL_PANEL_DRAG_MIME, panel.id);
-                  onNativeDragStart?.(panel.id, panel.label, title === "Inspector" ? "right" : "left", event);
+          <div
+            aria-label={`${title} rail panels`}
+            className={`shell-dock-list${dragTargetActive ? " shell-dock-list-drop-target" : ""}`}
+            onDragOver={handleListDragOver}
+            onDrop={handleListDrop}
+            ref={listRef}
+            role="listbox"
+          >
+            {dockPanels.map((panel, index) => (
+              <div
+                aria-selected={panel.id === activePanelId}
+                className={panel.id === activePanelId ? "shell-dock-list-item active" : "shell-dock-list-item"}
+                key={panel.id}
+                onClick={() => onSelectPanel?.(panel.id)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onSelectPanel?.(panel.id);
+                  }
                 }}
-                type="button"
-              >
-                ⋮⋮
-              </button>
-              <button
-                className="shell-dock-list-option"
                 onMouseDown={(event) => {
                   if (event.button !== 0) {
                     return;
                   }
+                  const target = event.target as HTMLElement | null;
+                  if (target?.closest(".shell-dock-list-undock, .shell-dock-list-reorder")) {
+                    return;
+                  }
                   event.preventDefault();
-                  event.stopPropagation();
                   onPanelPointerDown?.(panel.id, panel.label, event);
                 }}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onSelectPanel?.(panel.id);
-                }}
-                type="button"
+                role="option"
+                tabIndex={0}
               >
-                {panel.label}
-              </button>
-              {onUndockPanel ? (
+                {onMovePanel ? (
+                  <div className="shell-dock-list-reorder-cluster">
+                    <button
+                      aria-label={`Move ${panel.label} earlier`}
+                      className="shell-dock-list-reorder"
+                      disabled={index === 0}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onMovePanel(panel.id, "backward");
+                      }}
+                      title={`Move ${panel.label} earlier`}
+                      type="button"
+                    >
+                      ‹
+                    </button>
+                    <button
+                      aria-label={`Move ${panel.label} later`}
+                      className="shell-dock-list-reorder"
+                      disabled={index === dockPanels.length - 1}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onMovePanel(panel.id, "forward");
+                      }}
+                      title={`Move ${panel.label} later`}
+                      type="button"
+                    >
+                      ›
+                    </button>
+                  </div>
+                ) : null}
                 <button
-                  aria-label={`Undock ${panel.label}`}
-                  className="shell-dock-list-undock"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onUndockPanel(panel.id);
+                  aria-label={`Drag ${panel.label}`}
+                  className="shell-dock-list-drag"
+                  draggable
+                  onDragEnd={() => onNativeDragEnd?.()}
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = "move";
+                    event.dataTransfer.setData(SHELL_PANEL_DRAG_MIME, panel.id);
+                    onNativeDragStart?.(panel.id, panel.label, title === "Inspector" ? "right" : "left", event);
                   }}
-                  title={`Undock ${panel.label}`}
                   type="button"
                 >
-                  ↗
+                  ⋮⋮
                 </button>
-              ) : null}
-              {onMovePanel ? (
                 <button
-                  aria-label={`Move ${panel.label} later`}
-                  className="shell-dock-list-reorder"
-                  disabled={index === dockPanels.length - 1}
+                  className="shell-dock-list-option"
+                  onMouseDown={(event) => {
+                    if (event.button !== 0) {
+                      return;
+                    }
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onPanelPointerDown?.(panel.id, panel.label, event);
+                  }}
                   onClick={(event) => {
                     event.stopPropagation();
-                    onMovePanel(panel.id, "forward");
+                    onSelectPanel?.(panel.id);
                   }}
-                  title={`Move ${panel.label} later`}
                   type="button"
                 >
-                  ›
+                  {panel.label}
                 </button>
-              ) : null}
-            </div>
-          ))}
+                {onUndockPanel ? (
+                  <button
+                    aria-label={`Undock ${panel.label}`}
+                    className="shell-dock-list-undock"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onUndockPanel(panel.id);
+                    }}
+                    title={`Undock ${panel.label}`}
+                    type="button"
+                  >
+                    ↗
+                  </button>
+                ) : null}
+              </div>
+            ))}
+          </div>
+          <button
+            aria-label={`Resize ${title} dock panels`}
+            className="shell-rail-section-splitter"
+            onMouseDown={onResizeDockSectionMouseDown}
+            type="button"
+          />
         </div>
       ) : null}
-      {children}
+      <div className="shell-rail-content">{children}</div>
     </aside>
   );
 }

@@ -33,6 +33,12 @@ The system should be organized into four layers:
 3. Electron application for `Surface` core
 4. platform adaptation layer
 
+### Conversational Context Architecture
+
+The following diagram shows how Surface assembles context for a conversation turn from the current UI state, the live SBCL environment, transcript history, and deliberate operator memory before provider execution.
+
+![Conversational context architecture](../docs/ConversationalContextArchitecture.png)
+
 For the federated employee/contractor node model, the desktop is additionally locked to a strict boundary:
 
 - it remains a pure client of `sbcl-agent`
@@ -181,6 +187,12 @@ Recommended Electron ownership:
    - rejected
 4. Event stream updates the affected entities.
 5. App core refreshes local view state.
+
+## Governance Architecture
+
+The governance model is not an after-the-fact audit lane. It is part of the execution architecture itself, linking policy, approval, validation, incidents, evidence, and recovery to the same environment and operator surfaces.
+
+![Governance architecture](../docs/GovernanceArchitecture.png)
 
 ### Event Flow
 

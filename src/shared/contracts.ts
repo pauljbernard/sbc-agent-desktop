@@ -8,6 +8,7 @@ export type WorkspaceId =
   | "editor"
   | "workspace"
   | "transcript"
+  | "memory"
   | "browser"
   | "runtime"
   | "work"
@@ -811,6 +812,8 @@ export interface SendConversationMessageInput {
   threadId: string;
   prompt: string;
   attachments?: ConversationAttachmentDto[];
+  surfaceContext?: Record<string, unknown>;
+  surfaceActions?: Array<Record<string, unknown>>;
 }
 
 export interface SendConversationMessageResultDto {
@@ -833,7 +836,22 @@ export interface MessageDto {
   role: "user" | "assistant" | "system";
   content: string;
   createdAt: string;
+  turnId?: string | null;
   attachments?: ConversationAttachmentDto[];
+}
+
+export interface ConversationOperationDto {
+  operationId: string;
+  kind: string;
+  name: string;
+  status: string;
+  startedAt: string;
+  completedAt?: string | null;
+  summary: string;
+  toolId?: string | null;
+  inputPreview?: string | null;
+  outputPreview?: string | null;
+  policyDecision?: string | null;
 }
 
 export interface ConversationAttachmentDto {
@@ -1374,10 +1392,13 @@ export interface TurnDetailDto {
   summary: string;
   createdAt: string;
   operationIds: string[];
+  operations: ConversationOperationDto[];
   artifactIds: string[];
   incidentIds: string[];
   approvalIds: string[];
   workItemIds: string[];
+  userMessage?: MessageDto | null;
+  assistantMessage?: MessageDto | null;
 }
 
 export interface EnvironmentSummaryDto {
@@ -1499,12 +1520,21 @@ export interface DesktopPanelStateDto {
   [key: string]: unknown;
 }
 
+export interface DesktopRecommendedActionDto {
+  label: string;
+  actionKind: DesktopActionKind;
+  command: string;
+  actionId?: string;
+}
+
 export interface DesktopEntryPointDto {
   entryKind: string;
   label: string;
   command: string;
   focusObjectId?: string | null;
   objectKind?: string | null;
+  action?: DesktopActionDto | null;
+  actions?: Record<string, DesktopActionDto | null> | null;
 }
 
 export interface DesktopModelDto {
@@ -1523,6 +1553,8 @@ export interface DesktopModelDto {
   topDisplaySurface?: Record<string, unknown> | null;
   entryPoints: DesktopEntryPointDto[];
   panels: Record<DesktopPanelId, DesktopPanelStateDto>;
+  activePanelSummary?: Record<string, unknown> | null;
+  recommendedAction?: DesktopRecommendedActionDto | null;
   workspace?: Record<string, unknown>;
   surfaceList?: Record<string, unknown>;
   inspector?: Record<string, unknown>;
@@ -1668,8 +1700,52 @@ export interface DocumentationPageDto extends DocumentationPageSummaryDto {
   markdown: string;
 }
 
+export interface MemoryEntryDto {
+  memoryId: string;
+  kind: string;
+  category: string;
+  attribute: string;
+  value: string;
+  summary: string;
+  confidence?: number | null;
+  sourceTurnId?: string | null;
+  recordedAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface MemoryListDto {
+  entries: MemoryEntryDto[];
+  entryCount: number;
+}
+
+export interface MemoryUpdateInput {
+  environmentId: string;
+  memoryId: string;
+  category?: string;
+  attribute?: string;
+  value?: string;
+  summary?: string;
+  confidence?: number | null;
+}
+
+export interface MemoryDeleteInput {
+  environmentId: string;
+  memoryId: string;
+}
+
+export interface MemoryDeleteResultDto {
+  memoryId: string;
+  deletedP: boolean;
+}
+
 export type CalculatorMode = "basic" | "scientific" | "programmer";
 export type CalculatorAngleUnit = "radians" | "degrees";
+
+export interface CalculatorHistoryEntryDto {
+  expression: string;
+  mode: CalculatorMode;
+  result: string;
+}
 
 export interface CalculatorSummaryDto {
   availableModes: CalculatorMode[];
@@ -1680,6 +1756,13 @@ export interface CalculatorSummaryDto {
   defaultWordSize: number;
   availableAngleUnits: CalculatorAngleUnit[];
   defaultAngleUnit: CalculatorAngleUnit;
+  currentExpression?: string;
+  currentMode?: CalculatorMode;
+  currentBase?: number;
+  currentWordSize?: number;
+  currentAngleUnit?: CalculatorAngleUnit;
+  latestResult?: CalculatorResultDto | null;
+  history?: CalculatorHistoryEntryDto[];
   summary: string;
 }
 
@@ -1707,6 +1790,36 @@ export interface CalculatorEvaluateInput {
   base?: number;
   wordSize?: number;
   angleUnit?: CalculatorAngleUnit;
+}
+
+export interface CalculatorSetExpressionInput {
+  environmentId: string;
+  expression: string;
+}
+
+export interface CalculatorAppendTokenInput {
+  environmentId: string;
+  token: string;
+}
+
+export interface CalculatorSetModeInput {
+  environmentId: string;
+  mode: CalculatorMode;
+}
+
+export interface CalculatorSetBaseInput {
+  environmentId: string;
+  base: number;
+}
+
+export interface CalculatorSetWordSizeInput {
+  environmentId: string;
+  wordSize: number;
+}
+
+export interface CalculatorSetAngleUnitInput {
+  environmentId: string;
+  angleUnit: CalculatorAngleUnit;
 }
 
 export interface EntityRefDto {
@@ -1801,6 +1914,8 @@ export interface QueryApi {
     workflowRecordId: string,
     environmentId?: string
   ): Promise<QueryResultDto<WorkflowRecordDto>>;
+  memoryList(environmentId?: string): Promise<QueryResultDto<MemoryListDto>>;
+  memoryDetail(memoryId: string, environmentId?: string): Promise<QueryResultDto<MemoryEntryDto>>;
   providerProfiles(environmentId?: string): Promise<QueryResultDto<ProviderProfileSummaryDto>>;
   packageManagementSummary(environmentId?: string): Promise<QueryResultDto<PackageManagementSummaryDto>>;
   calculatorSummary(environmentId?: string): Promise<QueryResultDto<CalculatorSummaryDto>>;
@@ -1864,6 +1979,8 @@ export interface CommandApi {
   updateConversationThread(
     input: UpdateConversationThreadInput
   ): Promise<CommandResultDto<ThreadSummaryDto>>;
+  updateMemory(input: MemoryUpdateInput): Promise<CommandResultDto<MemoryEntryDto>>;
+  deleteMemory(input: MemoryDeleteInput): Promise<CommandResultDto<MemoryDeleteResultDto>>;
   sendConversationMessage(
     input: SendConversationMessageInput
   ): Promise<CommandResultDto<SendConversationMessageResultDto>>;
@@ -1875,6 +1992,14 @@ export interface CommandApi {
   evaluateInContext(
     input: EvaluateInContextInput
   ): Promise<CommandResultDto<RuntimeEvalResultDto>>;
+  setCalculatorExpression(input: CalculatorSetExpressionInput): Promise<CommandResultDto<CalculatorSummaryDto>>;
+  appendCalculatorToken(input: CalculatorAppendTokenInput): Promise<CommandResultDto<CalculatorSummaryDto>>;
+  backspaceCalculator(environmentId: string): Promise<CommandResultDto<CalculatorSummaryDto>>;
+  clearCalculator(environmentId: string): Promise<CommandResultDto<CalculatorSummaryDto>>;
+  setCalculatorMode(input: CalculatorSetModeInput): Promise<CommandResultDto<CalculatorSummaryDto>>;
+  setCalculatorBase(input: CalculatorSetBaseInput): Promise<CommandResultDto<CalculatorSummaryDto>>;
+  setCalculatorWordSize(input: CalculatorSetWordSizeInput): Promise<CommandResultDto<CalculatorSummaryDto>>;
+  setCalculatorAngleUnit(input: CalculatorSetAngleUnitInput): Promise<CommandResultDto<CalculatorSummaryDto>>;
   stageSourceChange(
     input: SourceMutationInput
   ): Promise<CommandResultDto<SourceMutationResultDto>>;

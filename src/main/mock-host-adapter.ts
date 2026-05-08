@@ -48,6 +48,9 @@ import type {
   IncidentDetailDto,
   IncidentRemediationPlanDto,
   IntentDetailDto,
+  MemoryDeleteResultDto,
+  MemoryEntryDto,
+  MemoryListDto,
   ProjectDetailDto,
   ProjectListDto,
   ProjectQualityGateDto,
@@ -71,6 +74,7 @@ import type {
   RuntimeEntityDetailDto,
   RuntimeInspectionResultDto,
   SourcePreviewDto,
+  MemoryUpdateInput,
   UpdateProjectConstitutionInput,
   UpdateProjectDesignSystemInput,
   UpdateIncidentRemediationPlanInput,
@@ -399,6 +403,7 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
       workflowRecords: Record<string, WorkflowRecordDto>;
     }
   >();
+  private localMemories = new Map<string, MemoryEntryDto[]>();
 
   private cloneValue<T>(value: T): T {
     return JSON.parse(JSON.stringify(value)) as T;
@@ -948,6 +953,48 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
     return queryTurnDetail(this.resolveEnvironmentId(environmentId), turnId);
   }
 
+  async memoryList(environmentId?: string): Promise<QueryResultDto<MemoryListDto>> {
+    const resolvedEnvironmentId = this.resolveEnvironmentId(environmentId);
+    const entries = this.getLocalMemories(resolvedEnvironmentId);
+    return {
+      contractVersion: 1,
+      domain: "memory",
+      operation: "memory.list",
+      kind: "query",
+      status: "ok",
+      data: {
+        entries: this.cloneValue(entries),
+        entryCount: entries.length
+      },
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding,
+        readModel: "operator-memory-list-v1"
+      }
+    };
+  }
+
+  async memoryDetail(memoryId: string, environmentId?: string): Promise<QueryResultDto<MemoryEntryDto>> {
+    const resolvedEnvironmentId = this.resolveEnvironmentId(environmentId);
+    const entry = this.getLocalMemories(resolvedEnvironmentId).find((item) => item.memoryId === memoryId);
+    if (!entry) {
+      throw new Error(`Unknown memory entry ${memoryId}.`);
+    }
+    return {
+      contractVersion: 1,
+      domain: "memory",
+      operation: "memory.detail",
+      kind: "query",
+      status: "ok",
+      data: this.cloneValue(entry),
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding,
+        readModel: "operator-memory-detail-v1"
+      }
+    };
+  }
+
   async createConversationThread(
     input: CreateConversationThreadInput
   ): Promise<CommandResultDto<ThreadSummaryDto>> {
@@ -964,6 +1011,76 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
       ...input,
       environmentId: this.resolveEnvironmentId(input.environmentId)
     });
+  }
+
+  async updateMemory(input: MemoryUpdateInput): Promise<CommandResultDto<MemoryEntryDto>> {
+    const environmentId = this.resolveEnvironmentId(input.environmentId);
+    const memories = this.getLocalMemories(environmentId);
+    const index = memories.findIndex((entry) => entry.memoryId === input.memoryId);
+    if (index < 0) {
+      throw new Error(`Unknown memory entry ${input.memoryId}.`);
+    }
+    const current = memories[index];
+    const nextCategory = (input.category ?? current.category).trim().toLowerCase();
+    const nextAttribute = (input.attribute ?? current.attribute).trim().toLowerCase().replace(/\s+/g, "-");
+    const nextMemoryId = `operator-memory-${nextCategory}-${nextAttribute}`;
+    const updated: MemoryEntryDto = {
+      ...current,
+      memoryId: nextMemoryId,
+      category: nextCategory,
+      attribute: nextAttribute,
+      value: input.value ?? current.value,
+      summary: input.summary ?? current.summary,
+      confidence: input.confidence ?? current.confidence ?? null,
+      updatedAt: new Date().toISOString()
+    };
+    memories.splice(index, 1, updated);
+    this.localMemories.set(
+      environmentId,
+      memories.sort((left, right) =>
+        String(right.updatedAt ?? right.recordedAt ?? "").localeCompare(
+          String(left.updatedAt ?? left.recordedAt ?? "")
+        )
+      )
+    );
+    return {
+      contractVersion: 1,
+      domain: "memory",
+      operation: "memory.update",
+      kind: "command",
+      status: "ok",
+      data: this.cloneValue(updated),
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding,
+        commandModel: "operator-memory-command-v1"
+      }
+    };
+  }
+
+  async deleteMemory(input: {
+    environmentId: string;
+    memoryId: string;
+  }): Promise<CommandResultDto<MemoryDeleteResultDto>> {
+    const environmentId = this.resolveEnvironmentId(input.environmentId);
+    const memories = this.getLocalMemories(environmentId).filter((entry) => entry.memoryId !== input.memoryId);
+    this.localMemories.set(environmentId, memories);
+    return {
+      contractVersion: 1,
+      domain: "memory",
+      operation: "memory.delete",
+      kind: "command",
+      status: "ok",
+      data: {
+        memoryId: input.memoryId,
+        deletedP: true
+      },
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding,
+        commandModel: "operator-memory-command-v1"
+      }
+    };
   }
 
   async sendConversationMessage(
@@ -1023,6 +1140,27 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
     return queryRuntimeSummary(this.resolveEnvironmentId(environmentId));
   }
 
+  private mockCalculatorSummary(environmentId?: string): CalculatorSummaryDto {
+    return {
+      availableModes: ["basic", "scientific", "programmer"],
+      defaultMode: "basic",
+      availableBases: [2, 8, 10, 16],
+      defaultBase: 10,
+      availableWordSizes: [8, 16, 32, 64],
+      defaultWordSize: 64,
+      availableAngleUnits: ["radians", "degrees"],
+      defaultAngleUnit: "radians",
+      currentExpression: "",
+      currentMode: "basic",
+      currentBase: 10,
+      currentWordSize: 64,
+      currentAngleUnit: "radians",
+      latestResult: null,
+      history: [],
+      summary: `Mock calculator summary for ${this.resolveEnvironmentId(environmentId)}.`
+    };
+  }
+
   async calculatorSummary(
     environmentId?: string
   ): Promise<QueryResultDto<CalculatorSummaryDto>> {
@@ -1032,22 +1170,37 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
       operation: "calculator.summary",
       kind: "query",
       status: "ok",
-      data: {
-        availableModes: ["basic", "scientific", "programmer"],
-        defaultMode: "basic",
-        availableBases: [2, 8, 10, 16],
-        defaultBase: 10,
-        availableWordSizes: [8, 16, 32, 64],
-        defaultWordSize: 64,
-        availableAngleUnits: ["radians", "degrees"],
-        defaultAngleUnit: "radians",
-        summary: `Mock calculator summary for ${this.resolveEnvironmentId(environmentId)}.`
-      },
+      data: this.mockCalculatorSummary(environmentId),
       metadata: {
         authority: "environment",
         binding: this.currentBinding
       }
     };
+  }
+
+  async setCalculatorExpression(input: { environmentId: string; expression: string }): Promise<CommandResultDto<CalculatorSummaryDto>> {
+    return { contractVersion: 1, domain: "calculator", operation: "calculator.set-expression", kind: "command", status: "ok", data: { ...this.mockCalculatorSummary(input.environmentId), currentExpression: input.expression }, metadata: { authority: "environment", binding: this.currentBinding } };
+  }
+  async appendCalculatorToken(input: { environmentId: string; token: string }): Promise<CommandResultDto<CalculatorSummaryDto>> {
+    return { contractVersion: 1, domain: "calculator", operation: "calculator.append-token", kind: "command", status: "ok", data: { ...this.mockCalculatorSummary(input.environmentId), currentExpression: input.token }, metadata: { authority: "environment", binding: this.currentBinding } };
+  }
+  async backspaceCalculator(environmentId: string): Promise<CommandResultDto<CalculatorSummaryDto>> {
+    return { contractVersion: 1, domain: "calculator", operation: "calculator.backspace", kind: "command", status: "ok", data: this.mockCalculatorSummary(environmentId), metadata: { authority: "environment", binding: this.currentBinding } };
+  }
+  async clearCalculator(environmentId: string): Promise<CommandResultDto<CalculatorSummaryDto>> {
+    return { contractVersion: 1, domain: "calculator", operation: "calculator.clear", kind: "command", status: "ok", data: this.mockCalculatorSummary(environmentId), metadata: { authority: "environment", binding: this.currentBinding } };
+  }
+  async setCalculatorMode(input: { environmentId: string; mode: string }): Promise<CommandResultDto<CalculatorSummaryDto>> {
+    return { contractVersion: 1, domain: "calculator", operation: "calculator.set-mode", kind: "command", status: "ok", data: { ...this.mockCalculatorSummary(input.environmentId), currentMode: input.mode as any }, metadata: { authority: "environment", binding: this.currentBinding } };
+  }
+  async setCalculatorBase(input: { environmentId: string; base: number }): Promise<CommandResultDto<CalculatorSummaryDto>> {
+    return { contractVersion: 1, domain: "calculator", operation: "calculator.set-base", kind: "command", status: "ok", data: { ...this.mockCalculatorSummary(input.environmentId), currentBase: input.base }, metadata: { authority: "environment", binding: this.currentBinding } };
+  }
+  async setCalculatorWordSize(input: { environmentId: string; wordSize: number }): Promise<CommandResultDto<CalculatorSummaryDto>> {
+    return { contractVersion: 1, domain: "calculator", operation: "calculator.set-word-size", kind: "command", status: "ok", data: { ...this.mockCalculatorSummary(input.environmentId), currentWordSize: input.wordSize }, metadata: { authority: "environment", binding: this.currentBinding } };
+  }
+  async setCalculatorAngleUnit(input: { environmentId: string; angleUnit: string }): Promise<CommandResultDto<CalculatorSummaryDto>> {
+    return { contractVersion: 1, domain: "calculator", operation: "calculator.set-angle-unit", kind: "command", status: "ok", data: { ...this.mockCalculatorSummary(input.environmentId), currentAngleUnit: input.angleUnit as any }, metadata: { authority: "environment", binding: this.currentBinding } };
   }
 
   async packageManagementSummary(
@@ -2155,6 +2308,42 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
     }
 
     return this.currentBinding?.environmentId ?? defaultEnvironmentId;
+  }
+
+  private getLocalMemories(environmentId: string): MemoryEntryDto[] {
+    const existing = this.localMemories.get(environmentId);
+    if (existing) {
+      return existing;
+    }
+
+    const seed: MemoryEntryDto[] = [
+      {
+        memoryId: "operator-memory-preference-preferred-language",
+        kind: "operator-memory",
+        category: "preference",
+        attribute: "preferred-language",
+        value: "Common Lisp",
+        summary: "The operator prefers Common Lisp when discussing implementation details.",
+        confidence: 0.92,
+        sourceTurnId: "turn-memory-seed-1",
+        recordedAt: "2026-05-07T14:22:00Z",
+        updatedAt: "2026-05-07T14:22:00Z"
+      },
+      {
+        memoryId: "operator-memory-working-style-progress-updates",
+        kind: "operator-memory",
+        category: "working-style",
+        attribute: "progress-updates",
+        value: "Report completion, percentage complete, and what comes next after each iteration.",
+        summary: "The operator wants explicit progress reporting on iterative work.",
+        confidence: 0.98,
+        sourceTurnId: "turn-memory-seed-2",
+        recordedAt: "2026-05-07T14:24:00Z",
+        updatedAt: "2026-05-07T14:24:00Z"
+      }
+    ];
+    this.localMemories.set(environmentId, seed);
+    return seed;
   }
 
   private workspaceToPanelId(workspace: WorkspaceId): DesktopPanelId {

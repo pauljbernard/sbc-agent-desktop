@@ -83,16 +83,43 @@
     (t
      (princ-to-string value))))
 
+(defun meaningful-environment-id-p (environment-id)
+  (and (stringp environment-id)
+       (> (length environment-id) 0)
+       (not (string= environment-id "live-environment"))))
+
+(defun assert-bridge-environment-match (environment requested-environment-id operation)
+  (when (and (meaningful-environment-id-p requested-environment-id)
+             (not (string= requested-environment-id
+                           (sbcl-agent-call "ENVIRONMENT-ID" environment))))
+    (error "Bridge environment mismatch for ~A: requested ~A but persisted ~A"
+           operation
+           requested-environment-id
+           (sbcl-agent-call "ENVIRONMENT-ID" environment))))
+
+(defun binding-transition-operation-p (operation)
+  (member operation '("environment.load-image" "environment.revert-image") :test #'string=))
+
 (defun load-or-create-bridge-environment (project-root state-path environment-id)
-  (declare (ignore environment-id))
   (let ((environment (if (probe-file state-path)
                          (handler-case
                              (sbcl-agent-call "LOAD-ENVIRONMENT" state-path)
-                           (error ()
-                             (sbcl-agent-call "MAKE-DEFAULT-ENVIRONMENT"
-                                              :storage-root (namestring project-root))))
+                           (error (condition)
+                             (if (meaningful-environment-id-p environment-id)
+                                 (error "Unable to load persisted environment ~A for requested binding ~A: ~A"
+                                        state-path
+                                        environment-id
+                                        condition)
+                                 (sbcl-agent-call "MAKE-DEFAULT-ENVIRONMENT"
+                                                  :storage-root (namestring project-root)))))
                          (sbcl-agent-call "MAKE-DEFAULT-ENVIRONMENT"
                                           :storage-root (namestring project-root)))))
+    (when (and (meaningful-environment-id-p environment-id)
+               (not (string= environment-id
+                             (sbcl-agent-call "ENVIRONMENT-ID" environment))))
+      (setf (symbol-value (sbcl-agent-symbol "*CURRENT-ENVIRONMENT*")) environment)
+      (bridge-session environment)
+      (bootstrap-desktop-environment environment))
     (setf (symbol-value (sbcl-agent-symbol "*CURRENT-ENVIRONMENT*")) environment)
     (bridge-session environment)
     (bootstrap-desktop-environment environment)))
@@ -434,6 +461,36 @@
                   entry))
             (if (listp attachments) attachments '()))))
 
+(defun request-record-plist (request-json key)
+  (let ((record (request-object-value request-json key)))
+    (cond
+      ((null record) nil)
+      ((listp record)
+       (normalize-request-record-value
+        (sbcl-agent-call "JSON-OBJECT->KEYWORD-PLIST" record)))
+      (t record))))
+
+(defun request-record-list-plists (request-json key)
+  (let ((records (request-object-value request-json key)))
+    (mapcar (lambda (entry)
+              (if (listp entry)
+                  (normalize-request-record-value
+                   (sbcl-agent-call "JSON-OBJECT->KEYWORD-PLIST" entry))
+                  entry))
+            (if (listp records) records '()))))
+
+(defun normalize-request-record-value (value)
+  (cond
+    ((and (stringp value)
+          (string= value "null"))
+     nil)
+    ((plist-like-p value)
+     (loop for (key val) on value by #'cddr
+           append (list key (normalize-request-record-value val))))
+    ((listp value)
+     (mapcar #'normalize-request-record-value value))
+    (t value)))
+
 (defun emit-json-line (object)
   (write-line (sbcl-agent-call "EMIT-JSON" (json-friendly object)))
   (finish-output))
@@ -467,7 +524,8 @@
 (defun last-id (items)
   (car (last items)))
 
-(defun record-conversation-send-failure (session thread-id summary)
+(defun record-conversation-send-failure (session thread-id summary
+                                         &key surface-context surface-actions)
   (let* ((thread (and thread-id
                       (sbcl-agent-call "FIND-THREAD" session thread-id)))
          (turn-id (and thread
@@ -505,7 +563,13 @@
                        assistant-message
                        :error-state summary
                        :status :failed
-                       :metadata (plist :bridge-error-p t)))
+                       :metadata (append (plist :bridge-error-p t)
+                                         (if surface-context
+                                             (list :surface-context surface-context)
+                                             '())
+                                         (if surface-actions
+                                             (list :surface-actions surface-actions)
+                                             '()))))
     (list :thread (and thread (sbcl-agent-call "THREAD-RECORD-SUMMARY" thread))
           :turn (and turn (sbcl-agent-call "TURN-RECORD-SUMMARY" turn))
           :assistant-message (and assistant-message
@@ -535,33 +599,14 @@
           (sbcl-agent-call "MAKE-PROVIDER" base-config)))))
 
 (defun conversation-say-service-response (environment session thread-id prompt options)
-  (let* ((provider (current-provider-for-prompt environment session prompt options))
-         (attachments (or (sbcl-agent-call "PLIST-VALUE" options :attachments nil) '()))
-         (result (sbcl-agent-call "RUN-CONVERSATION-TURN"
-                                  provider
-                                  session
-                                  prompt
-                                  :attachments attachments
-                                  :stream-p (and (sbcl-agent-call "OPTION-PRESENT-P" options :stream)
-                                                 (sbcl-agent-call "PLIST-VALUE" options :stream nil))
-                                  :source :say
-                                  :operator-mode :conversation))
-         (thread (and (listp result) (getf result :thread)))
-         (turn (and (listp result) (getf result :turn)))
-         (status (if (eq (getf turn :status) :awaiting-approval)
-                     :awaiting-approval
-                     :ok)))
-    (sbcl-agent-call "MAKE-SERVICE-RESPONSE"
-                     :execution
-                     :say
-                     :command
-                     result
-                     :status status
-                     :metadata (sbcl-agent-call "MAKE-SERVICE-METADATA"
-                                                :authority :environment
-                                                :session session
-                                                :thread-id (or (getf thread :id) thread-id)
-                                                :turn-id (getf turn :id)))))
+  (let ((provider (current-provider-for-prompt environment session prompt options)))
+    (sbcl-agent-call "COMMAND-CONVERSATION-EXECUTION-SERVICE"
+                     session
+                     provider
+                     prompt
+                     options
+                     :source :say
+                     :operator-mode :conversation)))
 
 (defun keywordish (value)
   (when (and value (> (length value) 0))
@@ -760,7 +805,8 @@
             :related-items related-items))))
 
 (defun service-response-for (environment operation environment-id request-json)
-  (declare (ignore environment-id))
+  (unless (string= operation "environment.load-image")
+    (assert-bridge-environment-match environment environment-id operation))
   (let ((environment environment))
     (cond
       ((string= operation "environment.summary")
@@ -1072,6 +1118,60 @@
                          form
                          :package package
                          :mutating mutating)))
+      ((string= operation "calculator.set-expression")
+       (let* ((session (bridge-session environment))
+              (expression (request-object-value request-json "expression")))
+         (unless expression
+           (error "calculator.set-expression requires an expression payload"))
+         (sbcl-agent-call "COMMAND-CALCULATOR-SET-EXPRESSION-SERVICE"
+                          session
+                          expression)))
+      ((string= operation "calculator.append-token")
+       (let* ((session (bridge-session environment))
+              (token (request-object-value request-json "token")))
+         (unless token
+           (error "calculator.append-token requires a token payload"))
+         (sbcl-agent-call "COMMAND-CALCULATOR-APPEND-TOKEN-SERVICE"
+                          session
+                          token)))
+      ((string= operation "calculator.backspace")
+       (sbcl-agent-call "COMMAND-CALCULATOR-BACKSPACE-SERVICE"
+                        (bridge-session environment)))
+      ((string= operation "calculator.clear")
+       (sbcl-agent-call "COMMAND-CALCULATOR-CLEAR-SERVICE"
+                        (bridge-session environment)))
+      ((string= operation "calculator.set-mode")
+       (let* ((session (bridge-session environment))
+              (mode (keywordish (request-object-value request-json "mode"))))
+         (unless mode
+           (error "calculator.set-mode requires a mode payload"))
+         (sbcl-agent-call "COMMAND-CALCULATOR-SET-MODE-SERVICE"
+                          session
+                          mode)))
+      ((string= operation "calculator.set-base")
+       (let* ((session (bridge-session environment))
+              (base (request-object-value request-json "base")))
+         (unless base
+           (error "calculator.set-base requires a base payload"))
+         (sbcl-agent-call "COMMAND-CALCULATOR-SET-BASE-SERVICE"
+                          session
+                          base)))
+      ((string= operation "calculator.set-word-size")
+       (let* ((session (bridge-session environment))
+              (word-size (request-object-value request-json "wordSize")))
+         (unless word-size
+           (error "calculator.set-word-size requires a wordSize payload"))
+         (sbcl-agent-call "COMMAND-CALCULATOR-SET-WORD-SIZE-SERVICE"
+                          session
+                          word-size)))
+      ((string= operation "calculator.set-angle-unit")
+       (let* ((session (bridge-session environment))
+              (angle-unit (keywordish (request-object-value request-json "angleUnit"))))
+         (unless angle-unit
+           (error "calculator.set-angle-unit requires an angleUnit payload"))
+         (sbcl-agent-call "COMMAND-CALCULATOR-SET-ANGLE-UNIT-SERVICE"
+                          session
+                          angle-unit)))
       ((string= operation "calculator.evaluate")
        (let* ((session (bridge-session environment))
               (expression (request-object-value request-json "expression"))
@@ -1157,9 +1257,17 @@
               (thread-id (request-object-value request-json "threadId"))
               (prompt (request-object-value request-json "prompt"))
               (attachments (request-attachment-plists request-json "attachments"))
-              (options (if attachments
-                           (list :attachments attachments)
-                           '())))
+              (surface-context (request-record-plist request-json "surfaceContext"))
+              (surface-actions (request-record-list-plists request-json "surfaceActions"))
+              (options (append (if attachments
+                                   (list :attachments attachments)
+                                   '())
+                               (if surface-context
+                                   (list :surface-context surface-context)
+                                   '())
+                               (if surface-actions
+                                   (list :surface-actions surface-actions)
+                                   '()))))
          (unless thread-id
            (error "conversation.send-message requires a threadId payload"))
          (unless prompt
@@ -1174,7 +1282,9 @@
                               :command
                               (record-conversation-send-failure session
                                                                 thread-id
-                                                                (princ-to-string condition))
+                                                                (princ-to-string condition)
+                                                                :surface-context surface-context
+                                                                :surface-actions surface-actions)
                               :status :error
                               :metadata (sbcl-agent-call "MAKE-SERVICE-METADATA"
                                                          :authority :environment
@@ -1185,9 +1295,17 @@
               (thread-id (request-object-value request-json "threadId"))
               (prompt (request-object-value request-json "prompt"))
               (attachments (request-attachment-plists request-json "attachments"))
+              (surface-context (request-record-plist request-json "surfaceContext"))
+              (surface-actions (request-record-list-plists request-json "surfaceActions"))
               (options (append '(:stream t)
                                (if attachments
                                    (list :attachments attachments)
+                                   '())
+                               (if surface-context
+                                   (list :surface-context surface-context)
+                                   '())
+                               (if surface-actions
+                                   (list :surface-actions surface-actions)
                                    '()))))
          (unless thread-id
            (error "conversation.send-message-stream requires a threadId payload"))
@@ -1198,7 +1316,7 @@
                            (emit-stream-frame :event (provider-event-stream-payload event)))))
            (progv (list (sbcl-agent-symbol "*STREAM-EVENT-LISTENER*"))
                   (list listener)
-             (handler-case
+               (handler-case
                  (conversation-say-service-response environment session thread-id prompt options)
                (error (condition)
                  (sbcl-agent-call "MAKE-SERVICE-RESPONSE"
@@ -1207,7 +1325,9 @@
                                   :command
                                   (record-conversation-send-failure session
                                                                     thread-id
-                                                                    (princ-to-string condition))
+                                                                    (princ-to-string condition)
+                                                                    :surface-context surface-context
+                                                                    :surface-actions surface-actions)
                                   :status :error
                                   :metadata (sbcl-agent-call "MAKE-SERVICE-METADATA"
                                                              :authority :environment
@@ -1223,6 +1343,40 @@
          (sbcl-agent-call "QUERY-CONVERSATION-TURN-DETAIL-SERVICE"
                           (bridge-session environment)
                           request-id)))
+      ((string= operation "memory.list")
+       (sbcl-agent-call "QUERY-MEMORY-LIST-SERVICE"
+                        (bridge-session environment)))
+      ((string= operation "memory.detail")
+       (let ((request-id (request-object-value request-json "memoryId")))
+         (sbcl-agent-call "QUERY-MEMORY-DETAIL-SERVICE"
+                          (bridge-session environment)
+                          request-id)))
+      ((string= operation "memory.update")
+       (let* ((session (bridge-session environment))
+              (memory-id (request-object-value request-json "memoryId"))
+              (category (request-object-value request-json "category"))
+              (attribute (request-object-value request-json "attribute"))
+              (value (request-object-value request-json "value"))
+              (summary (request-object-value request-json "summary"))
+              (confidence (request-object-value request-json "confidence")))
+         (unless memory-id
+           (error "memory.update requires a memoryId payload"))
+         (sbcl-agent-call "COMMAND-MEMORY-UPDATE-SERVICE"
+                          session
+                          memory-id
+                          :category category
+                          :attribute attribute
+                          :value value
+                          :summary summary
+                          :confidence confidence)))
+      ((string= operation "memory.delete")
+       (let* ((session (bridge-session environment))
+              (memory-id (request-object-value request-json "memoryId")))
+         (unless memory-id
+           (error "memory.delete requires a memoryId payload"))
+         (sbcl-agent-call "COMMAND-MEMORY-DELETE-SERVICE"
+                          session
+                          memory-id)))
       ((string= operation "artifact.list")
        (let ((session (bridge-session environment)))
          (sbcl-agent-call "MAKE-SERVICE-QUERY-RESPONSE"
@@ -1798,10 +1952,12 @@
                                                              :authority :environment
                                                              :environment environment))))))
       (let ((persisted-environment
-              (handler-case
-                  (sbcl-agent-call "ENSURE-ENVIRONMENT")
-                (error ()
-                  environment))))
+              (if (binding-transition-operation-p operation)
+                  (handler-case
+                      (sbcl-agent-call "ENSURE-ENVIRONMENT")
+                    (error ()
+                      environment))
+                  environment)))
         (handler-case
             (sbcl-agent-call "SAVE-ENVIRONMENT" persisted-environment state-path)
         (error ()

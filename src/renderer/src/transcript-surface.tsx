@@ -1,11 +1,17 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { BrowserDataTable } from "./browser-data-table";
 import { Badge, PanelHeader, toneForCommandStatus, transcriptRecencyLabel } from "./surface-support";
 
 export interface TranscriptSurfaceEntry {
   key: string;
   timestamp: string;
-  source: "workspace" | "listener" | "event";
+  source:
+    | "workspace"
+    | "listener"
+    | "conversation"
+    | "event"
+    | "environment-console"
+    | "host-console";
   title: string;
   summary: string;
   preview?: string | null;
@@ -19,6 +25,10 @@ export interface TranscriptSurfaceEntry {
 
 export function TranscriptSurface({
   transcriptEntries,
+  selectedSourceFilter,
+  setSelectedSourceFilter,
+  selectedEntryKey,
+  setSelectedEntryKey,
   setWorkspaceDraft,
   openConversationRepl,
   openConversationContext,
@@ -27,6 +37,10 @@ export function TranscriptSurface({
   openInspectorSurface
 }: {
   transcriptEntries: TranscriptSurfaceEntry[];
+  selectedSourceFilter: "all" | TranscriptSurfaceEntry["source"];
+  setSelectedSourceFilter: (value: "all" | TranscriptSurfaceEntry["source"]) => void;
+  selectedEntryKey: string | null;
+  setSelectedEntryKey: (value: string | null) => void;
   setWorkspaceDraft: (value: string) => void;
   openConversationRepl: (form: string) => Promise<void>;
   openConversationContext: (threadId: string, turnId?: string | null) => Promise<void>;
@@ -34,7 +48,6 @@ export function TranscriptSurface({
   openListener: (form: string) => Promise<void>;
   openInspectorSurface: () => Promise<void>;
 }) {
-  const [selectedSourceFilter, setSelectedSourceFilter] = useState<"all" | TranscriptSurfaceEntry["source"]>("all");
   const filteredTranscriptEntries = useMemo(
     () =>
       selectedSourceFilter === "all"
@@ -42,7 +55,6 @@ export function TranscriptSurface({
         : transcriptEntries.filter((entry) => entry.source === selectedSourceFilter),
     [selectedSourceFilter, transcriptEntries]
   );
-  const [selectedEntryKey, setSelectedEntryKey] = useState<string | null>(filteredTranscriptEntries[0]?.key ?? null);
 
   useEffect(() => {
     const nextEntryKey = filteredTranscriptEntries[0]?.key ?? null;
@@ -58,63 +70,35 @@ export function TranscriptSurface({
     filteredTranscriptEntries.find((entry) => entry.key === selectedEntryKey) ??
     filteredTranscriptEntries[0] ??
     null;
-  const transcriptSourceGroups = useMemo(
+  const transcriptSourceOptions = useMemo(
     () =>
-      (["workspace", "listener", "event"] as const)
-        .map((source) => {
-          const entries = filteredTranscriptEntries.filter((entry) => entry.source === source);
-          return {
-            source,
-            count: entries.length,
-            latestTitle: entries[0]?.title ?? "No current entries",
-            latestTimestamp: entries[0]?.timestamp ?? "No timestamp",
-            latestRecency: entries[0] ? transcriptRecencyLabel(entries[0].timestamp) : "Retained",
-            families: Array.from(new Set(entries.map((entry) => entry.family).filter((value): value is string => Boolean(value)))).slice(0, 3)
-          };
-        })
-        .filter((group) => group.count > 0),
-    [filteredTranscriptEntries]
+      Array.from(new Set(transcriptEntries.map((entry) => entry.source))).sort((left, right) =>
+        left.localeCompare(right)
+      ),
+    [transcriptEntries]
   );
-
   return (
     <div className="transcript-journey">
       <div className="runtime-grid">
-        <section className="panel runtime-session-panel">
+        <section className="panel runtime-scope-panel">
           <PanelHeader
-            title="Transcript Stream"
-            subtitle="Keep durable listener output, workspace results, and environment events visible in one place so system feedback does not disappear inside whichever surface produced it."
+            title="Transcript Entries"
+            subtitle="Transcript entries stay durable enough to rehydrate scratch work, resume direct evaluation, or pivot into evidentiary observation."
           />
-          <div className="signal-digest-grid runtime-session-digest">
-            <div className="signal-digest-card">
-              <span className="context-label">Entries</span>
-              <strong>{filteredTranscriptEntries.length}</strong>
-              <p>{filteredTranscriptEntries[0]?.summary ?? "No durable transcript entries have been retained yet."}</p>
-            </div>
-            <div className="signal-digest-card">
-              <span className="context-label">Latest Source</span>
-              <strong>{selectedEntry?.source ?? "transcript"}</strong>
-              <p>{selectedEntry?.title ?? "Workspace, listener, and event output will aggregate here."}</p>
-            </div>
-            <div className="signal-digest-card">
-              <span className="context-label">Recency</span>
-              <strong>{selectedEntry ? transcriptRecencyLabel(selectedEntry.timestamp) : "Retained"}</strong>
-              <p>{selectedEntry?.timestamp ?? "New transcript entries will expose their ambient timing here."}</p>
-            </div>
-            <div className="signal-digest-card">
-              <span className="context-label">Inspector</span>
-              <strong>Universal</strong>
-              <p>The transcript should remain an ambient surface, with deeper object and execution detail still handed off to the inspector.</p>
-            </div>
-          </div>
           <div className="browser-action-strip">
-            {(["all", "workspace", "listener", "event"] as const).map((source) => (
+            {(["all", ...transcriptSourceOptions] as const).map((source) => (
               <button
                 className={selectedSourceFilter === source ? "starter-chip active" : "starter-chip"}
                 key={source}
                 onClick={() => setSelectedSourceFilter(source)}
                 type="button"
               >
-                {source === "all" ? "All Sources" : source[0].toUpperCase() + source.slice(1)}
+                {source === "all"
+                  ? "All Sources"
+                  : source
+                      .split("-")
+                      .map((part) => part[0].toUpperCase() + part.slice(1))
+                      .join(" ")}
               </button>
             ))}
           </div>
@@ -126,13 +110,6 @@ export function TranscriptSurface({
               Open Observation
             </button>
           </div>
-        </section>
-
-        <section className="panel runtime-scope-panel">
-          <PanelHeader
-            title="Transcript Entries"
-            subtitle="Transcript entries stay durable enough to rehydrate scratch work, resume direct evaluation, or pivot into evidentiary observation."
-          />
           <BrowserDataTable
             key="transcript-entries"
             columnTemplate="minmax(0, 0.8fr) minmax(0, 0.9fr) minmax(0, 1.1fr) minmax(0, 1.6fr)"
@@ -166,7 +143,7 @@ export function TranscriptSurface({
             ]}
             emptyMessage="No transcript entries are currently available."
             filterLabel="Source"
-            filterOptions={Array.from(new Set(transcriptEntries.map((row) => row.source))).map((value) => ({ label: value, value }))}
+            filterOptions={transcriptSourceOptions.map((value) => ({ label: value, value }))}
             getFilterValue={(row) => row.source}
             getRowKey={(row) => row.key}
             onSelect={(row) => setSelectedEntryKey(row.key)}
@@ -174,40 +151,6 @@ export function TranscriptSurface({
             searchPlaceholder="Search transcript entries"
             selectedKey={selectedEntryKey}
           />
-        </section>
-
-        <section className="panel runtime-history-panel">
-          <PanelHeader
-            title="Source Rhythm"
-            subtitle="Transcript should read as an ambient stream with visible source clusters, not only as a flat chronological table."
-          />
-          {transcriptSourceGroups.length > 0 ? (
-            <div className="runtime-history-list">
-              {transcriptSourceGroups.map((group) => (
-                <div className="runtime-history-entry" key={`transcript-group:${group.source}`}>
-                  <div className="runtime-history-entry-top">
-                    <Badge tone="steady">{group.source}</Badge>
-                    <span className="runtime-result-op">{group.latestRecency}</span>
-                  </div>
-                  <strong>{group.latestTitle}</strong>
-                  <p>{`${group.count} retained ${group.count === 1 ? "entry" : "entries"} currently contribute to this source lane. Latest activity: ${group.latestTimestamp}.`}</p>
-                  <div className="ref-list">
-                    {group.families.length > 0 ? (
-                      group.families.map((family) => (
-                        <span className="thread-flag" key={`transcript-family:${group.source}:${family}`}>
-                          {family}
-                        </span>
-                      ))
-                    ) : (
-                      <span className="thread-flag">ambient</span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="list-empty">Source grouping appears once transcript entries begin accumulating across the environment.</p>
-          )}
         </section>
 
         <section className="panel runtime-result-panel">

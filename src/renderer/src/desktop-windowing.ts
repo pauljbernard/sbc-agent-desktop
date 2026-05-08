@@ -125,6 +125,12 @@ export const DEFAULT_DESKTOP_WINDOW_FRAMES: Record<string, DesktopWindowFrame> =
     y: 24,
     width: 98,
     height: 82
+  },
+  "window:memory-surface": {
+    x: 94,
+    y: 22,
+    width: 102,
+    height: 82
   }
 };
 

@@ -114,6 +114,12 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("query:turn-detail", (_event, turnId: string, environmentId?: string) =>
     hostAdapter.turnDetail(turnId, environmentId)
   );
+  ipcMain.handle("query:memory-list", (_event, environmentId?: string) =>
+    hostAdapter.memoryList(environmentId)
+  );
+  ipcMain.handle("query:memory-detail", (_event, memoryId: string, environmentId?: string) =>
+    hostAdapter.memoryDetail(memoryId, environmentId)
+  );
   ipcMain.handle("query:runtime-summary", (_event, environmentId?: string) =>
     hostAdapter.runtimeSummary(environmentId)
   );
@@ -169,6 +175,30 @@ export function registerIpcHandlers(): void {
   );
   ipcMain.handle("command:evaluate-calculator", (_event, input) =>
     hostAdapter.evaluateCalculator(input)
+  );
+  ipcMain.handle("command:set-calculator-expression", (_event, input) =>
+    hostAdapter.setCalculatorExpression(input)
+  );
+  ipcMain.handle("command:append-calculator-token", (_event, input) =>
+    hostAdapter.appendCalculatorToken(input)
+  );
+  ipcMain.handle("command:backspace-calculator", (_event, environmentId: string) =>
+    hostAdapter.backspaceCalculator(environmentId)
+  );
+  ipcMain.handle("command:clear-calculator", (_event, environmentId: string) =>
+    hostAdapter.clearCalculator(environmentId)
+  );
+  ipcMain.handle("command:set-calculator-mode", (_event, input) =>
+    hostAdapter.setCalculatorMode(input)
+  );
+  ipcMain.handle("command:set-calculator-base", (_event, input) =>
+    hostAdapter.setCalculatorBase(input)
+  );
+  ipcMain.handle("command:set-calculator-word-size", (_event, input) =>
+    hostAdapter.setCalculatorWordSize(input)
+  );
+  ipcMain.handle("command:set-calculator-angle-unit", (_event, input) =>
+    hostAdapter.setCalculatorAngleUnit(input)
   );
   ipcMain.handle("command:write-source-file", (_event, input) =>
     hostAdapter.writeSourceFile(input)
@@ -241,6 +271,12 @@ export function registerIpcHandlers(): void {
   );
   ipcMain.handle("command:update-conversation-thread", (_event, input) =>
     hostAdapter.updateConversationThread(input)
+  );
+  ipcMain.handle("command:update-memory", (_event, input) =>
+    hostAdapter.updateMemory(input)
+  );
+  ipcMain.handle("command:delete-memory", (_event, input) =>
+    hostAdapter.deleteMemory(input)
   );
   ipcMain.handle("command:send-conversation-message", (_event, input) =>
     hostAdapter.sendConversationMessage(input, (streamEvent) => {

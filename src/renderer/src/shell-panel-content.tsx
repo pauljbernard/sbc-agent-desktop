@@ -28,6 +28,7 @@ interface ShellNavigationPanelProps {
   navigateToProjectsSurface: () => void;
   navigateToRecoverySection: (sectionId: string) => void;
   navigateToTranscriptSurface: () => void;
+  navigateToMemorySurface: () => void;
   navigateToWorkspace: (workspaceId: WorkspaceId) => void;
   navigateToWorkspaceSurface: () => void;
   operateSections: ShellNavigationSectionItem[];
@@ -60,6 +61,7 @@ export function ShellNavigationPanel({
   navigateToProjectsSurface,
   navigateToRecoverySection,
   navigateToTranscriptSurface,
+  navigateToMemorySurface,
   navigateToWorkspace,
   navigateToWorkspaceSurface,
   operateSections,
@@ -111,6 +113,10 @@ export function ShellNavigationPanel({
                     }
                     if (workspace.id === "transcript") {
                       navigateToTranscriptSurface();
+                      return;
+                    }
+                    if (workspace.id === "memory") {
+                      navigateToMemorySurface();
                       return;
                     }
                     if (workspace.id === "runtime") {

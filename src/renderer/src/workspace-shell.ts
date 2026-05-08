@@ -28,6 +28,7 @@ export const workspaceOrder: Array<{ id: WorkspaceId; label: string; primary: bo
   { id: "editor", label: "Editor", primary: true },
   { id: "workspace", label: "Workspace", primary: true },
   { id: "transcript", label: "Transcript", primary: true },
+  { id: "memory", label: "Memory", primary: true },
   { id: "browser", label: "Browser", primary: true },
   { id: "configuration", label: "Configuration", primary: true },
   { id: "runtime", label: "Execution", primary: false },

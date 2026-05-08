@@ -1,7 +1,14 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
   ConfigureProviderProfileInput,
+  CalculatorAppendTokenInput,
+  CalculatorEvaluateInput,
   CalculatorResultDto,
+  CalculatorSetAngleUnitInput,
+  CalculatorSetBaseInput,
+  CalculatorSetExpressionInput,
+  CalculatorSetModeInput,
+  CalculatorSetWordSizeInput,
   CalculatorSummaryDto,
   CommandResultDto,
   DesktopActionInput,
@@ -13,6 +20,11 @@ import type {
   EnvironmentEventDto,
   EventSubscriptionHandle,
   EventSubscriptionInput,
+  MemoryDeleteInput,
+  MemoryDeleteResultDto,
+  MemoryEntryDto,
+  MemoryListDto,
+  MemoryUpdateInput,
   ProviderProfileSummaryDto,
   QueryResultDto,
   SbclAgentDesktopApi,
@@ -96,6 +108,10 @@ const api: SbclAgentDesktopApi = {
       ipcRenderer.invoke("query:thread-detail", threadId, environmentId),
     turnDetail: (turnId: string, environmentId?: string) =>
       ipcRenderer.invoke("query:turn-detail", turnId, environmentId),
+    memoryList: (environmentId?: string): Promise<QueryResultDto<MemoryListDto>> =>
+      ipcRenderer.invoke("query:memory-list", environmentId),
+    memoryDetail: (memoryId: string, environmentId?: string): Promise<QueryResultDto<MemoryEntryDto>> =>
+      ipcRenderer.invoke("query:memory-detail", memoryId, environmentId),
     runtimeSummary: (environmentId?: string) => ipcRenderer.invoke("query:runtime-summary", environmentId),
     runtimeTelemetrySnapshot: (environmentId?: string) =>
       ipcRenderer.invoke("query:runtime-telemetry-snapshot", environmentId),
@@ -152,12 +168,32 @@ const api: SbclAgentDesktopApi = {
     steerWorkItem: (input) => ipcRenderer.invoke("command:steer-work-item", input),
     createConversationThread: (input) => ipcRenderer.invoke("command:create-conversation-thread", input),
     updateConversationThread: (input) => ipcRenderer.invoke("command:update-conversation-thread", input),
+    updateMemory: (input: MemoryUpdateInput): Promise<CommandResultDto<MemoryEntryDto>> =>
+      ipcRenderer.invoke("command:update-memory", input),
+    deleteMemory: (input: MemoryDeleteInput): Promise<CommandResultDto<MemoryDeleteResultDto>> =>
+      ipcRenderer.invoke("command:delete-memory", input),
     sendConversationMessage: (input) => ipcRenderer.invoke("command:send-conversation-message", input),
     extractConversationAttachmentText: (input) =>
       ipcRenderer.invoke("command:extract-conversation-attachment-text", input),
     evaluateInContext: (input) => ipcRenderer.invoke("command:evaluate-in-context", input),
-    evaluateCalculator: (input): Promise<CommandResultDto<CalculatorResultDto>> =>
+    evaluateCalculator: (input: CalculatorEvaluateInput): Promise<CommandResultDto<CalculatorResultDto>> =>
       ipcRenderer.invoke("command:evaluate-calculator", input),
+    setCalculatorExpression: (input: CalculatorSetExpressionInput): Promise<CommandResultDto<CalculatorSummaryDto>> =>
+      ipcRenderer.invoke("command:set-calculator-expression", input),
+    appendCalculatorToken: (input: CalculatorAppendTokenInput): Promise<CommandResultDto<CalculatorSummaryDto>> =>
+      ipcRenderer.invoke("command:append-calculator-token", input),
+    backspaceCalculator: (environmentId: string): Promise<CommandResultDto<CalculatorSummaryDto>> =>
+      ipcRenderer.invoke("command:backspace-calculator", environmentId),
+    clearCalculator: (environmentId: string): Promise<CommandResultDto<CalculatorSummaryDto>> =>
+      ipcRenderer.invoke("command:clear-calculator", environmentId),
+    setCalculatorMode: (input: CalculatorSetModeInput): Promise<CommandResultDto<CalculatorSummaryDto>> =>
+      ipcRenderer.invoke("command:set-calculator-mode", input),
+    setCalculatorBase: (input: CalculatorSetBaseInput): Promise<CommandResultDto<CalculatorSummaryDto>> =>
+      ipcRenderer.invoke("command:set-calculator-base", input),
+    setCalculatorWordSize: (input: CalculatorSetWordSizeInput): Promise<CommandResultDto<CalculatorSummaryDto>> =>
+      ipcRenderer.invoke("command:set-calculator-word-size", input),
+    setCalculatorAngleUnit: (input: CalculatorSetAngleUnitInput): Promise<CommandResultDto<CalculatorSummaryDto>> =>
+      ipcRenderer.invoke("command:set-calculator-angle-unit", input),
     stageSourceChange: (input) => ipcRenderer.invoke("command:stage-source-change", input),
     writeSourceFile: (input) => ipcRenderer.invoke("command:write-source-file", input),
     reloadSourceFile: (input) => ipcRenderer.invoke("command:reload-source-file", input),

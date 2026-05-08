@@ -5,8 +5,14 @@ import type {
   ApprovalRequestSummaryDto,
   ArtifactDetailDto,
   ArtifactSummaryDto,
+  CalculatorAppendTokenInput,
   CalculatorEvaluateInput,
   CalculatorResultDto,
+  CalculatorSetAngleUnitInput,
+  CalculatorSetBaseInput,
+  CalculatorSetExpressionInput,
+  CalculatorSetModeInput,
+  CalculatorSetWordSizeInput,
   CalculatorSummaryDto,
   BindingDto,
   BindProjectTestingHarnessInput,
@@ -45,6 +51,11 @@ import type {
   IncidentDetailDto,
   IntentDetailDto,
   IncidentSummaryDto,
+  MemoryDeleteInput,
+  MemoryDeleteResultDto,
+  MemoryEntryDto,
+  MemoryListDto,
+  MemoryUpdateInput,
   PackageBrowserDto,
   PackageManagementCommandResultDto,
   PackageManagementSummaryDto,
@@ -171,12 +182,16 @@ export interface SbclAgentHostAdapter {
   threadList(environmentId?: string): Promise<QueryResultDto<ThreadSummaryDto[]>>;
   threadDetail(threadId: string, environmentId?: string): Promise<QueryResultDto<ThreadDetailDto>>;
   turnDetail(turnId: string, environmentId?: string): Promise<QueryResultDto<TurnDetailDto>>;
+  memoryList(environmentId?: string): Promise<QueryResultDto<MemoryListDto>>;
+  memoryDetail(memoryId: string, environmentId?: string): Promise<QueryResultDto<MemoryEntryDto>>;
   createConversationThread(
     input: CreateConversationThreadInput
   ): Promise<CommandResultDto<ThreadSummaryDto>>;
   updateConversationThread(
     input: UpdateConversationThreadInput
   ): Promise<CommandResultDto<ThreadSummaryDto>>;
+  updateMemory(input: MemoryUpdateInput): Promise<CommandResultDto<MemoryEntryDto>>;
+  deleteMemory(input: MemoryDeleteInput): Promise<CommandResultDto<MemoryDeleteResultDto>>;
   sendConversationMessage(
     input: SendConversationMessageInput,
     onEvent?: (event: EnvironmentEventDto) => void
@@ -188,6 +203,14 @@ export interface SbclAgentHostAdapter {
   }): Promise<string | null>;
   runtimeSummary(environmentId?: string): Promise<QueryResultDto<RuntimeSummaryDto>>;
   calculatorSummary(environmentId?: string): Promise<QueryResultDto<CalculatorSummaryDto>>;
+  setCalculatorExpression(input: CalculatorSetExpressionInput): Promise<CommandResultDto<CalculatorSummaryDto>>;
+  appendCalculatorToken(input: CalculatorAppendTokenInput): Promise<CommandResultDto<CalculatorSummaryDto>>;
+  backspaceCalculator(environmentId: string): Promise<CommandResultDto<CalculatorSummaryDto>>;
+  clearCalculator(environmentId: string): Promise<CommandResultDto<CalculatorSummaryDto>>;
+  setCalculatorMode(input: CalculatorSetModeInput): Promise<CommandResultDto<CalculatorSummaryDto>>;
+  setCalculatorBase(input: CalculatorSetBaseInput): Promise<CommandResultDto<CalculatorSummaryDto>>;
+  setCalculatorWordSize(input: CalculatorSetWordSizeInput): Promise<CommandResultDto<CalculatorSummaryDto>>;
+  setCalculatorAngleUnit(input: CalculatorSetAngleUnitInput): Promise<CommandResultDto<CalculatorSummaryDto>>;
   runtimeTelemetrySnapshot(environmentId?: string): Promise<QueryResultDto<RuntimeTelemetrySnapshotDto>>;
   runtimeInspectSymbol(input: {
     environmentId: string;
