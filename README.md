@@ -97,6 +97,12 @@ The two diagrams below capture the current architectural frame that the rest of 
 
 ![Governance architecture](docs/GovernanceArchitecture.png)
 
+## Current Desktop Snapshot
+
+The current `Surface` desktop is shown below. It illustrates the live multi-surface shell model: docked rails, floating workspace residents, the central stage, and the inspector remaining visible at the same time.
+
+![Surface desktop snapshot](docs/Desktop.jpg)
+
 ## Repository Structure
 
 ```text

@@ -26,6 +26,12 @@ It is designed to help you work across:
 - incidents, evidence, and reconciliation
 - source, runtime, and workflow context at the same time
 
+## Current Desktop Snapshot
+
+The current `Surface` desktop looks like this in practice:
+
+![Surface desktop snapshot](Desktop.jpg)
+
 ## What Changed Recently
 
 The desktop now supports a stronger shell model than the older documentation implied:

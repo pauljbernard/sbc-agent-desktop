@@ -64,6 +64,10 @@ On first launch, expect three things:
 2. `Surface` may start in mock-backed mode if a live host is not configured
 3. some workspaces will show placeholder or mock environment content until a live host is bound
 
+The current desktop shell looks like this:
+
+![Surface desktop snapshot](Desktop.jpg)
+
 ## Mock Mode Vs Live Mode
 
 `Surface` has two main host-adapter modes:

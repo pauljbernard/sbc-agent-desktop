@@ -12,6 +12,10 @@ The `Surface` shell is organized around a stable frame:
 - a right rail
 - a compact footer status dock
 
+Here is the current desktop shell in its multi-surface form:
+
+![Surface desktop snapshot](Desktop.jpg)
+
 ## Shell Header
 
 The header identifies the product and keeps shell continuity visible across workspace changes.
