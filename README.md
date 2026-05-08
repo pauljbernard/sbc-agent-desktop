@@ -93,25 +93,25 @@ The four diagrams below capture the current architectural frame that the rest of
 
 This diagram explains the architectural premise that makes `Surface` different from a conventional desktop for an external agent: the agent and the environment share one live runtime, so observation and action are environment-native rather than indirect.
 
-![Realtime introspective environment architecture](docs/RealtimeIntrospectiveEnvironmentArchitecture.png)
+<img src="docs/RealtimeIntrospectiveEnvironmentArchitecture.png" alt="Realtime introspective environment architecture" style="display:block;max-width:100%;height:auto;margin:1rem auto;" />
 
 ### Execution Kernel Architecture
 
-![Execution kernel architecture](docs/KernelArchitecture.png)
+<img src="docs/KernelArchitecture.png" alt="Execution kernel architecture" style="display:block;max-width:100%;height:auto;margin:1rem auto;" />
 
 ### Conversational Context Architecture
 
-![Conversational context architecture](docs/ConversationalContextArchitecture.png)
+<img src="docs/ConversationalContextArchitecture.png" alt="Conversational context architecture" style="display:block;max-width:100%;height:auto;margin:1rem auto;" />
 
 ### Governance Architecture
 
-![Governance architecture](docs/GovernanceArchitecture.png)
+<img src="docs/GovernanceArchitecture.png" alt="Governance architecture" style="display:block;max-width:100%;height:auto;margin:1rem auto;" />
 
 ## Current Desktop Snapshot
 
 The current `Surface` desktop is shown below. It illustrates the live multi-surface shell model: docked rails, floating workspace residents, the central stage, and the inspector remaining visible at the same time.
 
-![Surface desktop snapshot](docs/Desktop.jpg)
+<img src="docs/Desktop.jpg" alt="Surface desktop snapshot" style="display:block;max-width:100%;height:auto;margin:1rem auto;" />
 
 ## Repository Structure
 

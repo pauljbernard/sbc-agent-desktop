@@ -42,13 +42,13 @@ Agents can inspect, evaluate, mutate, stage, and explain work across multiple la
 
 The diagram below shows the architectural distinction that drives the whole system. `sbcl-agent` and `Surface` are not arranged like a traditional external agent supervising a target environment from the outside. The agent executes inside the same live SBCL environment that holds runtime state, transcript, memory, governance, evidence, and desktop state.
 
-![Realtime introspective environment architecture](RealtimeIntrospectiveEnvironmentArchitecture.png)
+<img src="RealtimeIntrospectiveEnvironmentArchitecture.png" alt="Realtime introspective environment architecture" style="display:block;max-width:100%;height:auto;margin:1rem auto;" />
 
 ## Execution Kernel Architecture
 
 At the center of that environment is the execution kernel: `invoke`, `inspect`, and `control` govern how runtime work happens, how state is read, and how policy-mediated intervention occurs.
 
-![Execution kernel architecture](KernelArchitecture.png)
+<img src="KernelArchitecture.png" alt="Execution kernel architecture" style="display:block;max-width:100%;height:auto;margin:1rem auto;" />
 
 ## The System Keeps Three Realities Together
 
@@ -132,7 +132,7 @@ That means a conversation is not just "discussion about the work." It can be par
 
 The conversation layer does not send only the current prompt to the model. It assembles live context from the Surface desktop, the SBCL environment, transcript history, and deliberate operator memory before a turn is executed.
 
-![Conversational context architecture](ConversationalContextArchitecture.png)
+<img src="ConversationalContextArchitecture.png" alt="Conversational context architecture" style="display:block;max-width:100%;height:auto;margin:1rem auto;" />
 
 ## The Browser Is A Live Image Browser
 
@@ -201,7 +201,7 @@ The goal is not bureaucracy. The goal is continuity:
 
 Governance is part of the operating environment itself. Runtime actions, approvals, work-items, incidents, evidence, and recovery form one continuous loop rather than being split across unrelated external systems.
 
-![Governance architecture](GovernanceArchitecture.png)
+<img src="GovernanceArchitecture.png" alt="Governance architecture" style="display:block;max-width:100%;height:auto;margin:1rem auto;" />
 
 ## Why This Matters For Agentic Development
 
