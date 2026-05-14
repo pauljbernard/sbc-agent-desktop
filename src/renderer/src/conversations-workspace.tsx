@@ -21,8 +21,14 @@ type ConversationSection = "threads" | "turns" | "draft" | "repl";
 
 export type ConversationsWorkspaceProps = {
   activateConversationInspectorSection: (section: ConversationSection) => void;
+  actorSystemPanel: Record<string, unknown> | null;
   threads: ThreadSummaryDto[];
   conversationDraft: string;
+  conversationRecoveryHandoff: {
+    source: "incident-restart";
+    incidentId: string;
+    restartLabel: string;
+  } | null;
   environmentFocusLabel: string;
   environmentFocusTitle: string;
   environmentFocusSummary: string;
@@ -75,8 +81,10 @@ export type ConversationsWorkspaceProps = {
 
 export function ConversationsWorkspace({
   activateConversationInspectorSection,
+  actorSystemPanel,
   threads,
   conversationDraft,
+  conversationRecoveryHandoff,
   environmentFocusLabel,
   environmentFocusTitle,
   environmentFocusSummary,
@@ -503,6 +511,22 @@ export function ConversationsWorkspace({
                     </div>
                     <Badge tone="steady">draft focus</Badge>
                   </div>
+                  {conversationRecoveryHandoff ? (
+                    <div className="signal-detail-list">
+                      <div className="signal-detail-row">
+                        <span>Recovery Source</span>
+                        <strong>{conversationRecoveryHandoff.source}</strong>
+                      </div>
+                      <div className="signal-detail-row">
+                        <span>Incident</span>
+                        <strong>{conversationRecoveryHandoff.incidentId}</strong>
+                      </div>
+                      <div className="signal-detail-row">
+                        <span>Restart</span>
+                        <strong>{conversationRecoveryHandoff.restartLabel}</strong>
+                      </div>
+                    </div>
+                  ) : null}
                   {draftFocusActions.length > 0 ? (
                     <div className="browser-action-strip">
                       {draftFocusActions.map((action) => (
@@ -546,6 +570,7 @@ export function ConversationsWorkspace({
                   <DetailRow label="Governance" value="Enforced" />
                 </dl>
                 <RuntimeWorkspace
+                  actorSystemPanel={actorSystemPanel}
                   createReplSession={createReplSession}
                   currentReplSessionId={currentReplSessionId}
                   evaluateRuntimeForm={evaluateRuntimeForm}

@@ -6967,7 +6967,7 @@ body.shell-inspector-resizing {
   min-height: 0;
   overflow-y: auto;
   padding-right: 4px;
-  justify-content: flex-end;
+  justify-content: flex-start;
 }
 
 .thread-row,
@@ -7701,6 +7701,282 @@ body.shell-inspector-resizing {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.actor-system-digest {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.actor-system-topline {
+  display: grid;
+  gap: 10px;
+}
+
+.actor-system-flags {
+  margin-top: 0;
+}
+
+.actor-system-detail-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  gap: 10px;
+  min-height: 0;
+  min-width: 0;
+}
+
+.actor-system-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.actor-system-summary-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.actor-system-summary-card h4 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.actor-system-summary-card-wide {
+  grid-column: 1 / -1;
+}
+
+.actor-system-summary-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.actor-system-summary-metrics div {
+  display: grid;
+  gap: 4px;
+}
+
+.actor-system-summary-metrics strong {
+  font-size: 1.1rem;
+}
+
+.actor-system-summary-metrics span {
+  color: var(--text-muted);
+  font-size: 0.86rem;
+}
+
+.actor-system-compact-list {
+  gap: 8px;
+}
+
+.actor-system-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.actor-system-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.actor-system-tab.is-active {
+  border-color: rgba(78, 226, 209, 0.26);
+  background: rgba(78, 226, 209, 0.1);
+}
+
+.actor-system-tab span:first-child {
+  font-weight: 600;
+}
+
+.actor-system-section-header {
+  margin-bottom: 0;
+}
+
+.actor-graph-shell {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.actor-workflow-shell {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.actor-graph-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.actor-graph-zoom-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.actor-graph-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  flex: 1 1 auto;
+  gap: 12px;
+  min-height: 0;
+  align-items: stretch;
+}
+
+.actor-graph-canvas-wrap {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background:
+    radial-gradient(circle at top, rgba(78, 226, 209, 0.06), transparent 36%),
+    linear-gradient(180deg, rgba(14, 22, 30, 0.94), rgba(10, 16, 22, 0.98));
+  overflow: auto;
+}
+
+.actor-graph-canvas {
+  display: block;
+  cursor: grab;
+}
+
+.actor-graph-canvas:active {
+  cursor: grabbing;
+}
+
+.actor-graph-bg {
+  fill: rgba(0, 0, 0, 0.1);
+}
+
+.actor-graph-edge {
+  stroke: rgba(134, 170, 194, 0.42);
+  stroke-width: 2;
+}
+
+.actor-workflow-edge-path {
+  fill: none;
+  stroke: rgba(110, 192, 194, 0.42);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+
+.actor-workflow-edge.is-hovered .actor-workflow-edge-path {
+  stroke: rgba(78, 226, 209, 0.88);
+  stroke-width: 3;
+}
+
+.actor-workflow-edge-label {
+  fill: rgba(183, 195, 209, 0.86);
+  font-size: 11px;
+  text-anchor: middle;
+}
+
+.actor-workflow-lane-label {
+  fill: rgba(198, 210, 222, 0.8);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.actor-graph-node {
+  cursor: move;
+}
+
+.actor-workflow-node .actor-graph-node-card {
+  transition: fill 120ms ease, stroke 120ms ease, filter 120ms ease;
+}
+
+.actor-workflow-node.is-sender .actor-graph-node-card {
+  fill: rgba(24, 43, 57, 0.96);
+  stroke: rgba(78, 226, 209, 0.28);
+}
+
+.actor-workflow-node.is-receiver .actor-graph-node-card {
+  fill: rgba(39, 31, 47, 0.96);
+  stroke: rgba(244, 178, 103, 0.3);
+}
+
+.actor-workflow-node.is-hovered .actor-graph-node-card {
+  filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.28));
+}
+
+.actor-graph-node-card {
+  fill: rgba(21, 33, 44, 0.96);
+  stroke: rgba(133, 163, 189, 0.22);
+  stroke-width: 1.5;
+  transition: fill 120ms ease, stroke 120ms ease, filter 120ms ease;
+}
+
+.actor-graph-node.is-hovered .actor-graph-node-card {
+  fill: rgba(28, 48, 58, 0.98);
+  stroke: rgba(78, 226, 209, 0.5);
+  filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.28));
+}
+
+.actor-graph-node-title {
+  fill: rgba(241, 245, 249, 0.96);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.actor-graph-node-meta {
+  fill: rgba(183, 195, 209, 0.8);
+  font-size: 11px;
+}
+
+.actor-graph-inspector {
+  display: grid;
+  align-content: start;
+  min-height: 0;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.desktop-window-browser-surface .actor-system-panel {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+.desktop-window-browser-surface .actor-system-panel .actor-system-detail-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.actor-graph-inspector h4 {
+  margin: 0;
+  font-size: 0.96rem;
 }
 
 .supervision-card {

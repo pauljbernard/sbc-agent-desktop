@@ -78,6 +78,12 @@ export const DEFAULT_DESKTOP_WINDOW_FRAMES: Record<string, DesktopWindowFrame> =
     width: 96,
     height: 78
   },
+  "window:actor-system-surface": {
+    x: 92,
+    y: 18,
+    width: 104,
+    height: 82
+  },
   "window:projects-surface": {
     x: 86,
     y: 18,

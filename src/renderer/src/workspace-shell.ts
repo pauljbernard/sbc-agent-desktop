@@ -22,21 +22,19 @@ export const hostedApps: HostedAppDescriptor[] = [
 ];
 
 export const workspaceOrder: Array<{ id: WorkspaceId; label: string; primary: boolean }> = [
-  { id: "environment", label: "Operate", primary: true },
+  { id: "environment", label: "Notifications", primary: true },
   { id: "projects", label: "Projects", primary: true },
   { id: "conversations", label: "Conversations", primary: true },
-  { id: "editor", label: "Editor", primary: true },
-  { id: "workspace", label: "Workspace", primary: true },
-  { id: "transcript", label: "Transcript", primary: true },
   { id: "memory", label: "Memory", primary: true },
   { id: "browser", label: "Browser", primary: true },
   { id: "configuration", label: "Configuration", primary: true },
+  { id: "editor", label: "Editor", primary: false },
+  { id: "workspace", label: "Workspace", primary: false },
   { id: "runtime", label: "Execution", primary: false },
   { id: "incidents", label: "Recovery", primary: false },
   { id: "artifacts", label: "Evidence", primary: false },
   { id: "work", label: "Execution Detail", primary: false },
-  { id: "activity", label: "Evidence Detail", primary: false },
-  { id: "approvals", label: "Approval Detail", primary: false }
+  { id: "activity", label: "Evidence Detail", primary: false }
 ];
 
 export const keyboardWorkspaceOrder = workspaceOrder
@@ -93,6 +91,8 @@ export function canonicalWorkspace(workspaceId: WorkspaceId): WorkspaceId {
 
 export function topLevelJourneyWorkspace(workspaceId: WorkspaceId): WorkspaceId {
   switch (workspaceId) {
+    case "transcript":
+      return "browser";
     case "runtime":
     case "incidents":
     case "artifacts":

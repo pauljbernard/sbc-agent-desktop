@@ -11,11 +11,11 @@ import type {
   WorkItemDetailDto,
   WorkItemSummaryDto
 } from "../../shared/contracts";
-import { JourneyStageStrip } from "./journey-support";
 import { RuntimeWorkspace } from "./runtime-workspace";
 import { Badge } from "./surface-support";
 
 export type ExecutionWorkspaceProps = {
+  actorSystemPanel: Record<string, unknown> | null;
   runtimeSummary: RuntimeSummaryDto | null;
   runtimeForm: string;
   setRuntimeForm: (value: string) => void;
@@ -56,6 +56,7 @@ export function ExecutionWorkspace(props: ExecutionWorkspaceProps) {
   return (
     <div className="execution-journey">
       <RuntimeWorkspace
+        actorSystemPanel={props.actorSystemPanel}
         createReplSession={props.createReplSession}
         currentReplSessionId={props.currentReplSessionId}
         evaluateRuntimeForm={props.evaluateRuntimeForm}
@@ -81,42 +82,18 @@ export function ExecutionWorkspace(props: ExecutionWorkspaceProps) {
         switchReplSession={props.switchReplSession}
       />
 
-      <JourneyStageStrip
-        eyebrow="Execution Flow"
-        summary="Execution should move through live image inspection, governed work reconciliation, and explicit decisions without turning back into queue-driven SDLC navigation."
-        steps={[
-          {
-            id: "inspect-runtime",
-            title: "Inspect Runtime",
-            summary: "Confirm current package, mutation pressure, and available inspection scopes in the live image.",
-            tone: props.runtimeSummary?.activeMutations ? "warning" : "active"
-          },
-          {
-            id: "reconcile-work",
-            title: "Reconcile Work",
-            summary: "Work stays attached to validation and closure so the operator can see what still prevents trustworthy continuation.",
-            tone: props.workItems.some((item) => item.state === "blocked") ? "warning" : "steady"
-          },
-          {
-            id: "apply-decisions",
-            title: "Apply Decisions",
-            summary: "Approval decisions remain part of execution context. When there is no approval gate, the desktop should state that explicitly and let execution continue.",
-            tone: props.approvalRequests.length > 0 ? "warning" : "active"
-          }
-        ]}
-        title="Execution Journey"
-      />
       <section className="panel execution-objective-panel">
         <div className="panel-header">
           <div>
-            <p className="eyebrow">Current Execution Objective</p>
-            <h3>{selectedWorkTitle}</h3>
+            <h3>Execution</h3>
+            <p className="panel-subtitle">Listener state, current work, and approval pressure.</p>
           </div>
           <Badge tone={props.selectedWorkItem ? toneForWorkState(props.selectedWorkItem.state) : "steady"}>
             {props.selectedWorkItem?.state ?? "unscoped"}
           </Badge>
         </div>
-        <p className="lead-copy">{executionObjective}</p>
+        <p className="lead-copy">{selectedWorkTitle}</p>
+        <p>{executionObjective}</p>
         <div className="signal-digest-grid execution-objective-digest">
           <div className="signal-digest-card">
             <span className="context-label">Runtime</span>

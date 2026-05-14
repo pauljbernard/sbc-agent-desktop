@@ -2,6 +2,8 @@ import type {
   ApprovalDecisionDto,
   ApprovalDecisionInput,
   ApprovalRequestDto,
+  ApproveActorMessageInput,
+  ApproveApprovalInput,
   ApprovalRequestSummaryDto,
   ArtifactDetailDto,
   ArtifactSummaryDto,
@@ -19,6 +21,9 @@ import type {
   CommandResultDto,
   ConsoleLogQueryInput,
   ConsoleLogStreamDto,
+  ConversationLatencySummaryDto,
+  ConversationWorkspaceDto,
+  ConfigureMcpServerInput,
   ConfigureProviderProfileInput,
   AppendProjectArchitectureDecisionInput,
   AppendProjectFeatureSpecificationInput,
@@ -43,6 +48,7 @@ import type {
   EnvironmentImageRecordDto,
   EnvironmentImageRegistryDto,
   EnvironmentEventDto,
+  EnvironmentBootstrapDto,
   EventSubscriptionInput,
   EnvironmentStatusDto,
   EnvironmentSummaryDto,
@@ -57,8 +63,12 @@ import type {
   MemoryListDto,
   MemoryUpdateInput,
   PackageBrowserDto,
+  RuntimeSymbolBrowserPageDto,
   PackageManagementCommandResultDto,
   PackageManagementSummaryDto,
+  DesktopTaskManifestDto,
+  DesktopTaskRecordDto,
+  McpServerConfigDto,
   ProjectDetailDto,
   ProjectListDto,
   ProjectTestingHarnessDto,
@@ -70,6 +80,7 @@ import type {
   RuntimeSummaryDto,
   RuntimeTelemetrySnapshotDto,
   RollbackWorkItemInput,
+  RemoveMcpServerInput,
   QuarantineWorkItemInput,
   ResumeWorkItemInput,
   SendConversationMessageInput,
@@ -80,6 +91,7 @@ import type {
   SteerWorkItemInput,
   ThreadDetailDto,
   ThreadSummaryDto,
+  TranscriptWorkspaceDto,
   TurnDetailDto,
   UpdateProjectConstitutionInput,
   UpdateProjectDesignSystemInput,
@@ -167,7 +179,17 @@ export interface SbclAgentHostAdapter {
   environmentStatus(environmentId?: string): Promise<QueryResultDto<EnvironmentStatusDto>>;
   workspaceSummary(environmentId?: string): Promise<QueryResultDto<WorkspaceSummaryDto>>;
   desktopModel(environmentId?: string): Promise<QueryResultDto<DesktopModelDto>>;
+  environmentBootstrap(environmentId?: string): Promise<QueryResultDto<EnvironmentBootstrapDto>>;
   environmentEvents(input: EventSubscriptionInput): Promise<QueryResultDto<EnvironmentEventDto[]>>;
+  transcriptWorkspace(input: {
+    environmentId?: string;
+    families?: string[];
+    visibility?: string[];
+    eventLimit?: number;
+    includeEvents?: boolean;
+    includeEnvironmentConsole?: boolean;
+    consoleLimit?: number;
+  }): Promise<QueryResultDto<TranscriptWorkspaceDto>>;
   consoleLogStream(input: ConsoleLogQueryInput): Promise<QueryResultDto<ConsoleLogStreamDto>>;
   diagnosticReportList(environmentId?: string): Promise<QueryResultDto<DiagnosticReportSummaryDto[]>>;
   diagnosticReportDetail(
@@ -179,9 +201,18 @@ export interface SbclAgentHostAdapter {
     artifactId: string,
     environmentId?: string
   ): Promise<QueryResultDto<ArtifactDetailDto>>;
+  conversationWorkspace(input: {
+    environmentId?: string;
+    threadId?: string | null;
+    turnId?: string | null;
+  }): Promise<QueryResultDto<ConversationWorkspaceDto>>;
   threadList(environmentId?: string): Promise<QueryResultDto<ThreadSummaryDto[]>>;
   threadDetail(threadId: string, environmentId?: string): Promise<QueryResultDto<ThreadDetailDto>>;
   turnDetail(turnId: string, environmentId?: string): Promise<QueryResultDto<TurnDetailDto>>;
+  conversationLatency(
+    turnId: string,
+    environmentId?: string
+  ): Promise<QueryResultDto<ConversationLatencySummaryDto>>;
   memoryList(environmentId?: string): Promise<QueryResultDto<MemoryListDto>>;
   memoryDetail(memoryId: string, environmentId?: string): Promise<QueryResultDto<MemoryEntryDto>>;
   createConversationThread(
@@ -195,6 +226,12 @@ export interface SbclAgentHostAdapter {
   sendConversationMessage(
     input: SendConversationMessageInput,
     onEvent?: (event: EnvironmentEventDto) => void
+  ): Promise<CommandResultDto<SendConversationMessageResultDto>>;
+  approveActorMessage(
+    input: ApproveActorMessageInput
+  ): Promise<CommandResultDto<SendConversationMessageResultDto>>;
+  approveApproval(
+    input: ApproveApprovalInput
   ): Promise<CommandResultDto<SendConversationMessageResultDto>>;
   extractConversationAttachmentText(input: {
     name: string;
@@ -227,6 +264,15 @@ export interface SbclAgentHostAdapter {
     environmentId: string;
     packageName?: string;
   }): Promise<QueryResultDto<PackageBrowserDto>>;
+  runtimeSymbolPage(input: {
+    environmentId: string;
+    packageScope?: string | null;
+    kinds?: Array<"function" | "variable" | "macro" | "class" | "generic-function" | "unknown">;
+    visibility?: "external" | "internal" | "all";
+    search?: string;
+    offset?: number;
+    limit?: number;
+  }): Promise<QueryResultDto<RuntimeSymbolBrowserPageDto>>;
   fileSystemDirectory(input?: {
     path?: string;
   }): Promise<QueryResultDto<FileSystemDirectoryListingDto>>;
@@ -245,6 +291,11 @@ export interface SbclAgentHostAdapter {
     environmentId: string;
     form: string;
     packageName?: string;
+    recoveryLaunch?: {
+      source: "incident-restart";
+      incidentId: string;
+      restartLabel: string;
+    } | null;
   }): Promise<CommandResultDto<RuntimeEvalResultDto>>;
   evaluateCalculator(
     input: CalculatorEvaluateInput
@@ -293,6 +344,36 @@ export interface SbclAgentHostAdapter {
   ): Promise<QueryResultDto<WorkflowRecordDto>>;
   providerProfiles(environmentId?: string): Promise<QueryResultDto<ProviderProfileSummaryDto>>;
   packageManagementSummary(environmentId?: string): Promise<QueryResultDto<PackageManagementSummaryDto>>;
+  desktopTaskManifests(environmentId?: string): Promise<QueryResultDto<DesktopTaskManifestDto[]>>;
+  desktopTaskRecords(environmentId?: string): Promise<QueryResultDto<DesktopTaskRecordDto[]>>;
+  desktopTaskPendingApproval(environmentId?: string): Promise<QueryResultDto<Record<string, unknown>>>;
+  desktopTaskActorFlow(input?: {
+    environmentId?: string;
+    sessionId?: string;
+    approvalId?: string;
+    pendingActionId?: string;
+    actorMessageId?: string;
+    scopeId?: string;
+    latestOnlyP?: boolean;
+  }): Promise<QueryResultDto<Record<string, unknown>>>;
+  desktopTaskActorSystemPanel(input?: {
+    environmentId?: string;
+    sessionId?: string;
+  }): Promise<QueryResultDto<Record<string, unknown>>>;
+  desktopTaskActorTrace(input?: {
+    environmentId?: string;
+    actorRole?: string;
+    actorMessageId?: string;
+    phase?: string;
+    latestOnlyP?: boolean;
+    deadLettersOnlyP?: boolean;
+  }): Promise<QueryResultDto<Record<string, unknown>[]>>;
+  desktopTaskDeadLetterQueue(input?: {
+    environmentId?: string;
+    actorRole?: string;
+  }): Promise<QueryResultDto<Record<string, unknown>[]>>;
+  mcpServerConfigs(environmentId?: string): Promise<QueryResultDto<McpServerConfigDto[]>>;
+  mcpServerConfig(serverId: string, environmentId?: string): Promise<QueryResultDto<McpServerConfigDto>>;
   focusWorkspace(workspace: WorkspaceId): Promise<void>;
   getDesktopPreferences(): Promise<DesktopPreferencesDto>;
   setDesktopPreferences(patch: Partial<DesktopPreferencesDto>): Promise<DesktopPreferencesDto>;
@@ -303,6 +384,10 @@ export interface SbclAgentHostAdapter {
   updateProviderRouting(
     input: UpdateProviderRoutingInput
   ): Promise<CommandResultDto<ProviderProfileSummaryDto>>;
+  configureMcpServer(input: ConfigureMcpServerInput): Promise<CommandResultDto<McpServerConfigDto>>;
+  removeMcpServer(
+    input: RemoveMcpServerInput
+  ): Promise<CommandResultDto<{ id: string; removedP: boolean }>>;
   installQuicklispPackage(input: {
     environmentId: string;
     systemName: string;

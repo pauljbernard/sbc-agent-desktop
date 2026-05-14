@@ -24,6 +24,7 @@ export function ListenerWorkbenchApp({
   setRuntimeInspectorPackage,
   inspectRuntimeSymbol,
   runtimeResult,
+  actorSystemPanel,
   isEvaluating,
   isInspectingRuntime,
   openInspectorSurface,
@@ -65,6 +66,7 @@ export function ListenerWorkbenchApp({
         </div>
       </section>
       <RuntimeWorkspace
+        actorSystemPanel={actorSystemPanel}
         createReplSession={createReplSession}
         currentReplSessionId={currentReplSessionId}
         evaluateRuntimeForm={evaluateRuntimeForm}

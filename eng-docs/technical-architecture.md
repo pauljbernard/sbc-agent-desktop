@@ -37,19 +37,60 @@ The system should be organized into four layers:
 
 Before breaking the desktop into services and adaptation layers, it helps to name the deeper architectural boundary: `Surface` is not hosting a remote agent that acts on an external target. It is projecting one live environment whose runtime, agent, memory, governance, and UI state are all introspectively available inside the same execution world.
 
-<img src="../docs/RealtimeIntrospectiveEnvironmentArchitecture.png" alt="Realtime introspective environment architecture" style="display:block;max-width:100%;height:auto;margin:1rem auto;" />
+```mermaid
+flowchart LR
+    Agent["Integrated Agent"]
+    Runtime["SBCL Environment"]
+    Source["Source Truth"]
+    Image["Image Truth"]
+    Workflow["Workflow Truth"]
+
+    Agent <--> Runtime
+    Runtime --> Source
+    Runtime --> Image
+    Runtime --> Workflow
+```
 
 ### Execution Kernel Architecture
 
 The kernel diagram below shows the architectural center that Surface is hosting: one environment, an execution kernel organized around `invoke`, `inspect`, and `control`, and a stable service boundary consumed by the desktop and other clients.
 
-<img src="../docs/KernelArchitecture.png" alt="Execution kernel architecture" style="display:block;max-width:100%;height:auto;margin:1rem auto;" />
+```mermaid
+flowchart TB
+    React["Surface Desktop"]
+    Actor["Actor System"]
+    Kernel["Governed Kernel"]
+    Runtime["SBCL / Common Lisp"]
+
+    React --> Actor
+    Actor --> Kernel
+    Kernel --> Runtime
+```
 
 ### Conversational Context Architecture
 
 The following diagram shows how Surface assembles context for a conversation turn from the current UI state, the live SBCL environment, transcript history, and deliberate operator memory before provider execution.
 
-<img src="../docs/ConversationalContextArchitecture.png" alt="Conversational context architecture" style="display:block;max-width:100%;height:auto;margin:1rem auto;" />
+```mermaid
+flowchart LR
+    UI["Surface UI"]
+    Chat["ContextChatActor"]
+    Thread["thread / turn state"]
+    Retrieval["retrieval dossier"]
+    Runtime["runtime state"]
+    Policy["policy posture"]
+    Provider["provider execution"]
+
+    UI --> Chat
+    Chat --> Thread
+    Chat --> Retrieval
+    Chat --> Runtime
+    Chat --> Policy
+    Thread --> Provider
+    Retrieval --> Provider
+    Runtime --> Provider
+    Policy --> Provider
+```
 
 For the federated employee/contractor node model, the desktop is additionally locked to a strict boundary:
 
@@ -204,7 +245,28 @@ Recommended Electron ownership:
 
 The governance model is not an after-the-fact audit lane. It is part of the execution architecture itself, linking policy, approval, validation, incidents, evidence, and recovery to the same environment and operator surfaces.
 
-<img src="../docs/GovernanceArchitecture.png" alt="Governance architecture" style="display:block;max-width:100%;height:auto;margin:1rem auto;" />
+```mermaid
+sequenceDiagram
+    participant UI as Surface UI
+    participant Chat as ContextChatActor
+    participant Gov as GovernanceActor
+    participant Runtime as RuntimeActor
+    participant Kernel as Governed Kernel
+
+    UI->>Chat: submit intent
+    Chat->>Gov: RequestExecution
+    Gov->>Runtime: AuthorizeRuntimeEvaluation
+    Runtime->>Kernel: invoke
+    Kernel-->>Runtime: result / evidence
+    Runtime-->>Chat: reply
+    Chat-->>UI: project governed outcome
+```
+
+The canonical architecture references now live in the main repository docs:
+
+- [`sbcl-agent` architecture](../../sbcl-agent/docs/architecture.md)
+- [`sbcl-agent` actor runtime](../../sbcl-agent/docs/robust-actor-kernel-architecture.md)
+- [`sbcl-agent` actor system surface](../../sbcl-agent/docs/actor-system-panel.md)
 
 ### Event Flow
 

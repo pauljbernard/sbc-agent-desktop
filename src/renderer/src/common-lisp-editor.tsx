@@ -1483,9 +1483,6 @@ export function CommonLispEditor({
       pendingLocalValuesRef.current.delete(value);
       return;
     }
-    if (view.hasFocus) {
-      return;
-    }
     if (pendingLocalValuesRef.current.has(value)) {
       return;
     }

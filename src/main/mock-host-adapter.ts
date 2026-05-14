@@ -18,9 +18,14 @@ import type {
   CalculatorResultDto,
   CalculatorSummaryDto,
   CommandResultDto,
+  ApproveActorMessageInput,
+  ConfigureMcpServerInput,
   ConfigureProviderProfileInput,
   ConsoleLogQueryInput,
   ConsoleLogStreamDto,
+  ConversationLatencySummaryDto,
+  TranscriptWorkspaceDto,
+  ConversationWorkspaceDto,
   CreateIntentInput,
   CreateProjectInput,
   CreateConversationThreadInput,
@@ -37,6 +42,7 @@ import type {
   DesktopPreferencesDto,
   DesktopRestoreInput,
   DesktopRestoreResultDto,
+  EnvironmentBootstrapDto,
   EnvironmentImageRecordDto,
   EnvironmentImageRegistryDto,
   EnvironmentEventDto,
@@ -60,9 +66,15 @@ import type {
   ThreadSummaryDto,
   QueryResultDto,
   PackageBrowserDto,
+  RuntimeSymbolBrowserPageDto,
+  RuntimeSymbolBrowserPageInput,
   PackageManagementCommandResultDto,
   PackageManagementSummaryDto,
+  DesktopTaskManifestDto,
+  DesktopTaskRecordDto,
+  McpServerConfigDto,
   QuarantineWorkItemInput,
+  RemoveMcpServerInput,
   ResumeWorkItemInput,
   RuntimeTelemetrySnapshotDto,
   RollbackWorkItemInput,
@@ -129,6 +141,7 @@ import {
   queryPackageManagementSummary,
   queryRuntimeEntityDetail,
   queryRuntimeInspectSymbol,
+  queryRuntimeSymbolPage,
   queryRuntimeSummary,
   queryRuntimeTelemetrySnapshot,
   querySourcePreview,
@@ -391,6 +404,140 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
     },
     lastRoute: null
   };
+
+  private desktopTaskManifestCatalog: DesktopTaskManifestDto[] = [
+    {
+      id: "editor/append-text",
+      target: "editor",
+      operation: "append-text",
+      capability: "workspace-write",
+      description: "Append text into the active editor buffer through the governed desktop task protocol.",
+      requestSchema: { payload: { text: "string" } },
+      resultSchema: { summary: "string" },
+      approvalPolicy: "workspace-write",
+      executionMode: "synchronous",
+      retryPolicy: { retryableP: false, maxAttempts: 1 },
+      backendKind: "internal",
+      backendRef: null,
+      version: 1,
+      tags: ["editor", "governed", "write"],
+      discoverableP: true,
+      metadata: null
+    },
+    {
+      id: "calculator/evaluate-expression",
+      target: "calculator",
+      operation: "evaluate-expression",
+      capability: "calculator-control",
+      description: "Evaluate a calculator expression through the governed desktop task protocol.",
+      requestSchema: { payload: { expression: "string" } },
+      resultSchema: { value: "string" },
+      approvalPolicy: "calculator-control",
+      executionMode: "synchronous",
+      retryPolicy: { retryableP: true, maxAttempts: 2, backoffSeconds: 1 },
+      backendKind: "internal",
+      backendRef: null,
+      version: 1,
+      tags: ["calculator", "governed"],
+      discoverableP: true,
+      metadata: null
+    }
+  ];
+
+  private mcpServerConfigCatalog: McpServerConfigDto[] = [
+    {
+      id: "mcp-example-server",
+      name: "Example MCP",
+      transport: "stdio",
+      command: "example-mcp",
+      arguments: ["--serve"],
+      environmentVariables: { LOG_LEVEL: "info" },
+      workingDirectory: "/tmp",
+      endpoint: null,
+      capabilities: ["editor", "calculator"],
+      retryPolicy: { retryableP: true, maxAttempts: 3, backoffSeconds: 5 },
+      healthStatus: "healthy",
+      enabledP: true,
+      discoverableP: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      operationCount: 0,
+      operations: [],
+      metadata: null
+    }
+  ];
+
+  private desktopTaskRecordCatalog: DesktopTaskRecordDto[] = [
+    {
+      id: "desktop-task-record-editor-approval",
+      protocolVersion: 1,
+      requestId: "desktop-task-request-editor-approval",
+      requester: "context-chat",
+      target: "editor",
+      operation: "append-text",
+      capability: "workspace-write",
+      backendKind: "internal",
+      backendRef: null,
+      status: "awaiting-approval",
+      governanceStatus: "governance-pending",
+      approvalStatus: "awaiting-approval",
+      retryPolicy: { retryableP: false, maxAttempts: 1 },
+      retryCount: 0,
+      maxAttempts: 1,
+      retryableP: false,
+      idempotencyKey: "editor-append-main",
+      threadId: "thread-default",
+      turnId: "turn-editor-approval",
+      conversationOperationId: "conversation-op-editor-approval",
+      actorMessageId: "actor-message-editor-approval",
+      actorSlice: "context-chat-editor-v1",
+      actorMessage: {
+        id: "actor-message-editor-approval",
+        sender: { role: "context-chat" },
+        receiver: { role: "editor" },
+        state: "awaiting-approval"
+      },
+      requestMetadata: { text: "(+ 1 1)", bufferId: "editor-buffer-project-live-environment-main" },
+      createdAt: new Date().toISOString(),
+      approvedAt: null,
+      startedAt: null,
+      completedAt: null,
+      lastError: null,
+      resolution: null,
+      result: null,
+      metadata: { summary: "Append text to the active editor buffer." }
+    },
+    {
+      id: "desktop-task-record-calculator-complete",
+      protocolVersion: 1,
+      requestId: "desktop-task-request-calculator-complete",
+      requester: "context-chat",
+      target: "calculator",
+      operation: "evaluate-expression",
+      capability: "calculator-control",
+      backendKind: "internal",
+      backendRef: null,
+      status: "completed",
+      governanceStatus: "governed",
+      approvalStatus: "not-required",
+      retryPolicy: { retryableP: true, maxAttempts: 2, backoffSeconds: 1 },
+      retryCount: 0,
+      maxAttempts: 2,
+      retryableP: true,
+      idempotencyKey: "calculator-2-plus-2",
+      threadId: "thread-default",
+      turnId: "turn-calculator-complete",
+      conversationOperationId: "conversation-op-calculator-complete",
+      createdAt: new Date().toISOString(),
+      approvedAt: null,
+      startedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+      lastError: null,
+      resolution: { manifestId: "calculator/evaluate-expression" },
+      result: { summary: "Evaluated expression successfully.", value: "4" },
+      metadata: { summary: "Calculate 2 + 2." }
+    }
+  ];
 
   private localProjects = new Map<string, ProjectDetailDto>();
   private localWorkspaces = new Map<
@@ -899,6 +1046,30 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
     };
   }
 
+  async environmentBootstrap(environmentId?: string): Promise<QueryResultDto<EnvironmentBootstrapDto>> {
+    const resolvedEnvironmentId = this.resolveEnvironmentId(environmentId);
+    const [summary, status, workspaceSummary, desktopModel] = await Promise.all([
+      this.environmentSummary(resolvedEnvironmentId),
+      this.environmentStatus(resolvedEnvironmentId),
+      this.workspaceSummary(resolvedEnvironmentId),
+      this.desktopModel(resolvedEnvironmentId)
+    ]);
+    return {
+      contractVersion: 1,
+      domain: "environment",
+      operation: "environment.bootstrap",
+      kind: "query",
+      status: "ok",
+      data: {
+        summary: summary.data,
+        status: status.data,
+        workspaceSummary: workspaceSummary.data,
+        desktopModel: desktopModel.data
+      },
+      metadata: summary.metadata
+    };
+  }
+
   async environmentEvents(
     input: EventSubscriptionInput
   ): Promise<QueryResultDto<EnvironmentEventDto[]>> {
@@ -906,6 +1077,53 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
       ...input,
       environmentId: this.resolveEnvironmentId(input.environmentId)
     });
+  }
+
+  async transcriptWorkspace(input: {
+    environmentId?: string;
+    families?: string[];
+    visibility?: string[];
+    eventLimit?: number;
+    includeEvents?: boolean;
+    includeEnvironmentConsole?: boolean;
+    consoleLimit?: number;
+  }): Promise<QueryResultDto<TranscriptWorkspaceDto>> {
+    const environmentId = this.resolveEnvironmentId(input.environmentId);
+    const eventsResult =
+      input.includeEvents === false
+        ? null
+        : queryEnvironmentEvents({
+            environmentId,
+            families: input.families,
+            visibility: input.visibility,
+            limit: input.eventLimit
+          });
+    const environmentConsoleResult =
+      input.includeEnvironmentConsole === false
+        ? null
+        : queryConsoleLogStream({
+            environmentId,
+            plane: "environment",
+            limit: input.consoleLimit
+          });
+    return {
+      contractVersion: 1,
+      domain: "observation",
+      operation: "transcript.workspace",
+      kind: "query",
+      status: "ok",
+      data: {
+        events: eventsResult?.data ?? [],
+        environmentConsole: environmentConsoleResult?.data ?? null
+      },
+      metadata:
+        eventsResult?.metadata ??
+        environmentConsoleResult?.metadata ?? {
+          authority: "environment",
+          binding: { environmentId },
+          readModel: "transcript-workspace-v1"
+        }
+    };
   }
 
   async consoleLogStream(
@@ -941,6 +1159,37 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
     return queryArtifactDetail(this.resolveEnvironmentId(environmentId), artifactId);
   }
 
+  async conversationWorkspace(input: {
+    environmentId?: string;
+    threadId?: string | null;
+    turnId?: string | null;
+  }): Promise<QueryResultDto<ConversationWorkspaceDto>> {
+    const resolvedEnvironmentId = this.resolveEnvironmentId(input.environmentId);
+    const threadsResult = queryThreadList(resolvedEnvironmentId);
+    const selectedThreadId = input.threadId ?? threadsResult.data[0]?.threadId ?? null;
+    const selectedThreadResult = selectedThreadId
+      ? queryThreadDetail(resolvedEnvironmentId, selectedThreadId)
+      : null;
+    const selectedTurnId =
+      input.turnId ?? selectedThreadResult?.data.turns[0]?.turnId ?? null;
+    const selectedTurnResult = selectedTurnId
+      ? queryTurnDetail(resolvedEnvironmentId, selectedTurnId)
+      : null;
+    return {
+      contractVersion: 1,
+      domain: "conversation",
+      operation: "conversation.workspace",
+      kind: "query",
+      status: "ok",
+      data: {
+        threads: threadsResult.data,
+        selectedThread: selectedThreadResult?.data ?? null,
+        selectedTurn: selectedTurnResult?.data ?? null
+      },
+      metadata: threadsResult.metadata
+    };
+  }
+
   async threadList(environmentId?: string) {
     return queryThreadList(this.resolveEnvironmentId(environmentId));
   }
@@ -951,6 +1200,33 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
 
   async turnDetail(turnId: string, environmentId?: string) {
     return queryTurnDetail(this.resolveEnvironmentId(environmentId), turnId);
+  }
+
+  async conversationLatency(turnId: string, environmentId?: string): Promise<QueryResultDto<ConversationLatencySummaryDto>> {
+    return {
+      contractVersion: 1,
+      domain: "conversation",
+      operation: "conversation.latency",
+      kind: "query",
+      status: "ok",
+      data: {
+        turnId,
+        sampleCount: 0,
+        samples: [],
+        requestBuilt: null,
+        firstStream: null,
+        responseComplete: null,
+        providerPhases: []
+      },
+      metadata: {
+        authority: "environment",
+        binding: {
+          environmentId: this.resolveEnvironmentId(environmentId),
+          sessionId: this.currentBinding?.sessionId ?? null
+        },
+        readModel: "conversation-latency-v1"
+      }
+    };
   }
 
   async memoryList(environmentId?: string): Promise<QueryResultDto<MemoryListDto>> {
@@ -1110,6 +1386,100 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
     });
   }
 
+  async approveActorMessage(
+    _input: ApproveActorMessageInput
+  ): Promise<CommandResultDto<SendConversationMessageResultDto>> {
+    const now = new Date().toISOString();
+    const record = this.desktopTaskRecordCatalog.find(
+      (entry) => entry.actorMessageId === _input.actorMessageId
+    );
+    if (!record) {
+      return {
+        contractVersion: 1,
+        domain: "desktop-task",
+        operation: "approve-message",
+        kind: "command",
+        status: "error",
+        data: {
+          threadId: "thread-default",
+          turnId: "turn-default",
+          assistantMessage: "Unknown actor message.",
+          summary: "Unknown actor message.",
+          desktopTaskResults: [],
+          taskRecordSummaries: []
+        },
+        metadata: { authority: "environment", binding: this.currentBinding }
+      };
+    }
+    record.status = "completed";
+    record.governanceStatus = "governed";
+    record.approvalStatus = "approved";
+    record.approvedAt = now;
+    record.startedAt = now;
+    record.completedAt = now;
+    record.result = {
+      status: "completed",
+      summary: "Appended text to the active editor buffer.",
+      invocationResult: {
+        text: "(+ 1 1)",
+        scopeId: "project-live",
+        bufferId: "editor-buffer-project-live-environment-main",
+        packageName: "cl-user"
+      }
+    };
+    return {
+      contractVersion: 1,
+      domain: "desktop-task",
+      operation: "approve-message",
+      kind: "command",
+      status: "ok",
+      data: {
+        threadId: record.threadId ?? "thread-default",
+        turnId: record.turnId ?? "turn-default",
+        assistantMessage: "Appended (+ 1 1) to the editor now.",
+        summary: "Appended text to the active editor buffer.",
+        desktopTaskResults: [
+          {
+            requestId: record.requestId,
+            target: record.target,
+            operation: record.operation,
+            status: record.status,
+            result: record.result
+          }
+        ],
+        taskRecordSummaries: [this.cloneValue({ ...record } as Record<string, unknown>)]
+      },
+      metadata: { authority: "environment", binding: this.currentBinding }
+    };
+  }
+
+  async approveApproval(
+    input: { environmentId: string; approvalId: string; sessionId?: string | null }
+  ): Promise<CommandResultDto<SendConversationMessageResultDto>> {
+    const record = this.desktopTaskRecordCatalog.find(
+      (entry) => String(entry.approvalId ?? "") === input.approvalId
+    );
+    if (!record?.actorMessageId) {
+      return {
+        contractVersion: 1,
+        domain: "desktop-task",
+        operation: "approve-approval",
+        kind: "command",
+        status: "error",
+        data: {
+          threadId: "thread-default",
+          turnId: "turn-default",
+          assistantMessage: "Unknown approval id.",
+          summary: "Unknown approval id.",
+          desktopTaskResults: [],
+          taskRecordSummaries: []
+        },
+        metadata: { authority: "environment", binding: this.currentBinding }
+      };
+    }
+    return this.approveActorMessage({ environmentId: input.environmentId, actorMessageId: record.actorMessageId });
+  }
+
   async extractConversationAttachmentText(input: {
     name: string;
     mediaType: string;
@@ -1248,6 +1618,13 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
     });
   }
 
+  async runtimeSymbolPage(input: RuntimeSymbolBrowserPageInput): Promise<QueryResultDto<RuntimeSymbolBrowserPageDto>> {
+    return queryRuntimeSymbolPage({
+      ...input,
+      environmentId: this.resolveEnvironmentId(input.environmentId)
+    });
+  }
+
   async fileSystemDirectory(input?: {
     path?: string;
   }): Promise<QueryResultDto<FileSystemDirectoryListingDto>> {
@@ -1356,6 +1733,11 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
     environmentId: string;
     form: string;
     packageName?: string;
+    recoveryLaunch?: {
+      source: "incident-restart";
+      incidentId: string;
+      restartLabel: string;
+    } | null;
   }) {
     return commandEvaluateInContext(input);
   }
@@ -2157,6 +2539,385 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
     return this.providerQueryResult();
   }
 
+  async desktopTaskManifests(_environmentId?: string): Promise<QueryResultDto<DesktopTaskManifestDto[]>> {
+    return {
+      contractVersion: 1,
+      domain: "desktop-task",
+      operation: "manifest-list",
+      kind: "query",
+      status: "ok",
+      data: this.cloneValue(this.desktopTaskManifestCatalog),
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding,
+        readModel: "desktop-task-manifest-list-v1"
+      }
+    };
+  }
+
+  async desktopTaskRecords(_environmentId?: string): Promise<QueryResultDto<DesktopTaskRecordDto[]>> {
+    return {
+      contractVersion: 1,
+      domain: "desktop-task",
+      operation: "record-list",
+      kind: "query",
+      status: "ok",
+      data: this.cloneValue(this.desktopTaskRecordCatalog),
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding,
+        readModel: "desktop-task-record-list-v1"
+      }
+    };
+  }
+
+  async desktopTaskPendingApproval(_environmentId?: string): Promise<QueryResultDto<Record<string, unknown>>> {
+    const pendingRecord = this.desktopTaskRecordCatalog.find(
+      (record) => String(record.approvalStatus ?? "").toLowerCase() === "awaiting-approval"
+    );
+    return {
+      contractVersion: 1,
+      domain: "desktop-task",
+      operation: "pending-approval",
+      kind: "query",
+      status: "ok",
+      data: pendingRecord
+        ? {
+            turnId: pendingRecord.turnId ?? null,
+            recordIds: [pendingRecord.id],
+            policyIds: [],
+            receiverRoles: [String(pendingRecord.target ?? "unknown").toLowerCase()],
+            actorMessageIds: pendingRecord.actorMessageId ? [pendingRecord.actorMessageId] : [],
+            actorMessages: pendingRecord.actorMessage ? [pendingRecord.actorMessage] : []
+          }
+        : {},
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding,
+        readModel: "desktop-task-pending-approval-v1"
+      }
+    };
+  }
+
+  async desktopTaskActorFlow(input?: {
+    environmentId?: string;
+    sessionId?: string;
+    approvalId?: string;
+    pendingActionId?: string;
+    actorMessageId?: string;
+    scopeId?: string;
+    latestOnlyP?: boolean;
+  }): Promise<QueryResultDto<Record<string, unknown>>> {
+    const pendingRecord = this.desktopTaskRecordCatalog.find(
+      (record) =>
+        String(record.approvalStatus ?? "").toLowerCase() === "awaiting-approval" &&
+        (input?.sessionId == null || record.requestMetadata?.sessionId === input.sessionId) &&
+        (input?.approvalId == null || record.requestMetadata?.approvalId === input.approvalId || record.id === input.approvalId) &&
+        (input?.pendingActionId == null || record.requestMetadata?.pendingActionId === input.pendingActionId) &&
+        (input?.actorMessageId == null || record.actorMessageId === input.actorMessageId)
+    ) ?? this.desktopTaskRecordCatalog.find(
+      (record) => String(record.approvalStatus ?? "").toLowerCase() === "awaiting-approval"
+    );
+    const sessionId =
+      pendingRecord?.requestMetadata?.sessionId ??
+      input?.sessionId ??
+      this.currentBinding?.sessionId ??
+      null;
+    const approvalId = pendingRecord?.requestMetadata?.approvalId ?? input?.approvalId ?? null;
+    const pendingActionId = pendingRecord?.requestMetadata?.pendingActionId ?? input?.pendingActionId ?? null;
+    const actorMessageId = pendingRecord?.actorMessageId ?? input?.actorMessageId ?? null;
+    const threadId = pendingRecord?.threadId ?? null;
+    const pendingRequests =
+      pendingRecord == null
+        ? []
+        : [
+            {
+              approvalId,
+              sessionId,
+              pendingActionId,
+              actorMessageId,
+              threadId,
+              target: pendingRecord.target,
+              operation: pendingRecord.operation,
+              approvalStatus: pendingRecord.approvalStatus,
+              status: pendingRecord.status
+            }
+          ];
+    const pendingApproval =
+      pendingRecord == null
+        ? {}
+        : {
+            sessionId,
+            approvalId,
+            approvalIds: approvalId ? [approvalId] : [],
+            pendingActionId,
+            actorMessageId,
+            actorMessageIds: actorMessageId ? [actorMessageId] : [],
+            threadId,
+            policyIds: [],
+            requests: pendingRequests
+          };
+    return {
+      contractVersion: 1,
+      domain: "desktop-task",
+      operation: "actor-flow",
+      kind: "query",
+      status: "ok",
+      data: {
+        sessionId,
+        approvalId,
+        pendingActionId,
+        actorMessageId,
+        pendingApproval,
+        contextChatMailbox: {
+          sessionId,
+          messageCount: pendingRecord ? 1 : 0,
+          messages: pendingRequests
+        },
+        contextChatApprovalInbox: {
+          sessionId,
+          requestCount: pendingRecord ? 1 : 0,
+          requests: pendingRequests
+        },
+        governanceInbox: {
+          sessionId,
+          requestCount: pendingRecord ? 1 : 0,
+          requests: pendingRequests
+        },
+        governanceDecisions: {
+          sessionId,
+          decisionCount: 0,
+          decisions: []
+        },
+        editorPendingMutations: {
+          sessionId,
+          mutationCount: pendingRecord ? 1 : 0,
+          mutations: pendingRequests
+        },
+        editorAuthorizations: {
+          sessionId,
+          authorizationCount: 0,
+          authorizations: []
+        }
+      },
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding,
+        readModel: "desktop-task-actor-flow-v1"
+      }
+    };
+  }
+
+  async desktopTaskActorSystemPanel(input?: {
+    environmentId?: string;
+    sessionId?: string;
+  }): Promise<QueryResultDto<Record<string, unknown>>> {
+    const sessionId = input?.sessionId ?? this.currentBinding?.sessionId ?? null;
+    const pendingRecord = this.desktopTaskRecordCatalog.find(
+      (record) =>
+        String(record.approvalStatus ?? "").toLowerCase() === "awaiting-approval" &&
+        (sessionId == null || record.requestMetadata?.sessionId === sessionId)
+    );
+    const incidentCount = pendingRecord ? 1 : 0;
+    return {
+      contractVersion: 1,
+      domain: "desktop-task",
+      operation: "actor-system-panel",
+      kind: "query",
+      status: "ok",
+      data: {
+        rootActorId: "actor/actor-system",
+        sessionId,
+        actorCount: 4,
+        actors: [
+          {
+            id: "actor/actor-system",
+            role: "actor-system",
+            parentActorId: null,
+            metrics: {
+              inboxDepth: 0,
+              outboxDepth: 0,
+              openSupervisionIncidentCount: 0
+            }
+          },
+          {
+            id: `actor/context-chat/${sessionId ?? "mock"}`,
+            role: "context-chat",
+            parentActorId: "actor/actor-system",
+            metrics: {
+              inboxDepth: 1,
+              outboxDepth: 1,
+              openSupervisionIncidentCount: 0
+            }
+          },
+          {
+            id: `actor/governance/${sessionId ?? "mock"}`,
+            role: "governance",
+            parentActorId: "actor/actor-system",
+            metrics: {
+              inboxDepth: pendingRecord ? 1 : 0,
+              outboxDepth: 0,
+              openSupervisionIncidentCount: incidentCount
+            }
+          },
+          {
+            id: `actor/runtime/${sessionId ?? "mock"}`,
+            role: "runtime",
+            parentActorId: "actor/actor-system",
+            metrics: {
+              inboxDepth: 0,
+              outboxDepth: 0,
+              openSupervisionIncidentCount: 0
+            }
+          }
+        ],
+        hierarchyEdgeCount: 3,
+        hierarchyEdges: [
+          { parentActorId: "actor/actor-system", childActorId: `actor/context-chat/${sessionId ?? "mock"}` },
+          { parentActorId: "actor/actor-system", childActorId: `actor/governance/${sessionId ?? "mock"}` },
+          { parentActorId: "actor/actor-system", childActorId: `actor/runtime/${sessionId ?? "mock"}` }
+        ],
+        workflowEdgeCount: pendingRecord ? 2 : 0,
+        workflowEdges:
+          pendingRecord == null
+            ? []
+            : [
+                {
+                  fromActorId: `actor/context-chat/${sessionId ?? "mock"}`,
+                  toActorId: `actor/governance/${sessionId ?? "mock"}`,
+                  fromRole: "context-chat",
+                  toRole: "governance",
+                  target: pendingRecord.target,
+                  operation: pendingRecord.operation,
+                  messageCount: 1,
+                  recentCount: 1,
+                  failedCount: 0
+                },
+                {
+                  fromActorId: `actor/governance/${sessionId ?? "mock"}`,
+                  toActorId: `actor/runtime/${sessionId ?? "mock"}`,
+                  fromRole: "governance",
+                  toRole: "runtime",
+                  target: "runtime",
+                  operation: "evaluate-form",
+                  messageCount: 1,
+                  recentCount: 1,
+                  failedCount: 0
+                }
+              ],
+        supervisionIncidents: {
+          incidentCount,
+          incidents:
+            pendingRecord == null
+              ? []
+              : [
+                  {
+                    incidentId: "mock-actor-incident-1",
+                    actorId: `actor/governance/${sessionId ?? "mock"}`,
+                    actorRole: "governance",
+                    parentActorId: "actor/actor-system",
+                    openP: true
+                  }
+                ]
+        }
+      },
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding,
+        readModel: "desktop-task-actor-system-panel-v1"
+      }
+    };
+  }
+
+  async desktopTaskActorTrace(_input?: {
+    environmentId?: string;
+    actorRole?: string;
+    actorMessageId?: string;
+    phase?: string;
+    latestOnlyP?: boolean;
+    deadLettersOnlyP?: boolean;
+  }): Promise<QueryResultDto<Record<string, unknown>[]>> {
+    return {
+      contractVersion: 1,
+      domain: "desktop-task",
+      operation: "actor-trace",
+      kind: "query",
+      status: "ok",
+      data: [],
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding,
+        readModel: "desktop-task-actor-trace-v1"
+      }
+    };
+  }
+
+  async desktopTaskDeadLetterQueue(_input?: {
+    environmentId?: string;
+    actorRole?: string;
+  }): Promise<QueryResultDto<Record<string, unknown>[]>> {
+    return {
+      contractVersion: 1,
+      domain: "desktop-task",
+      operation: "dead-letter-queue",
+      kind: "query",
+      status: "ok",
+      data: [],
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding,
+        readModel: "desktop-task-dead-letter-queue-v1"
+      }
+    };
+  }
+
+  async mcpServerConfigs(_environmentId?: string): Promise<QueryResultDto<McpServerConfigDto[]>> {
+    return {
+      contractVersion: 1,
+      domain: "desktop-task",
+      operation: "mcp-server-list",
+      kind: "query",
+      status: "ok",
+      data: this.cloneValue(
+        this.mcpServerConfigCatalog.map((config) => ({
+          ...config,
+          operationCount: config.operations.length
+        }))
+      ),
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding,
+        readModel: "desktop-task-mcp-server-list-v1"
+      }
+    };
+  }
+
+  async mcpServerConfig(
+    serverId: string,
+    _environmentId?: string
+  ): Promise<QueryResultDto<McpServerConfigDto>> {
+    const config = this.mcpServerConfigCatalog.find((entry) => entry.id === serverId);
+    if (!config) {
+      throw new Error(`Unknown MCP server ${serverId}.`);
+    }
+    return {
+      contractVersion: 1,
+      domain: "desktop-task",
+      operation: "mcp-server-detail",
+      kind: "query",
+      status: "ok",
+      data: this.cloneValue({
+        ...config,
+        operationCount: config.operations.length
+      }),
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding,
+        readModel: "desktop-task-mcp-server-detail-v1"
+      }
+    };
+  }
+
   async focusWorkspace(workspace: WorkspaceId): Promise<void> {
     this.preferences.lastWorkspace = workspace;
   }
@@ -2220,6 +2981,70 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
   ): Promise<CommandResultDto<ProviderProfileSummaryDto>> {
     this.providerSummary.routingMode = input.mode;
     return this.providerCommandResult();
+  }
+
+  async configureMcpServer(
+    input: ConfigureMcpServerInput
+  ): Promise<CommandResultDto<McpServerConfigDto>> {
+    const existing = input.serverId
+      ? this.mcpServerConfigCatalog.find((entry) => entry.id === input.serverId) ?? null
+      : null;
+    const next: McpServerConfigDto = {
+      id: existing?.id ?? `mcp-${input.name.toLowerCase().replace(/\s+/g, "-")}`,
+      name: input.name,
+      transport: input.transport,
+      command: input.command ?? null,
+      arguments: input.arguments ?? [],
+      environmentVariables: input.environmentVariables ?? null,
+      workingDirectory: input.workingDirectory ?? null,
+      endpoint: input.endpoint ?? null,
+      capabilities: input.capabilities ?? [],
+      retryPolicy: input.retryPolicy ?? null,
+      healthStatus: input.healthStatus ?? "unknown",
+      enabledP: input.enabledP ?? true,
+      discoverableP: input.discoverableP ?? true,
+      createdAt: existing?.createdAt ?? new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      operationCount: existing?.operations.length ?? 0,
+      operations: existing?.operations ?? [],
+      metadata: null
+    };
+    this.mcpServerConfigCatalog = [
+      ...this.mcpServerConfigCatalog.filter((entry) => entry.id !== next.id),
+      next
+    ];
+    return {
+      contractVersion: 1,
+      domain: "desktop-task",
+      operation: "configure-mcp-server",
+      kind: "command",
+      status: "ok",
+      data: this.cloneValue(next),
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding,
+        commandModel: "desktop-task-mcp-server-command-v1"
+      }
+    };
+  }
+
+  async removeMcpServer(
+    input: RemoveMcpServerInput
+  ): Promise<CommandResultDto<{ id: string; removedP: boolean }>> {
+    this.mcpServerConfigCatalog = this.mcpServerConfigCatalog.filter((entry) => entry.id !== input.serverId);
+    return {
+      contractVersion: 1,
+      domain: "desktop-task",
+      operation: "remove-mcp-server",
+      kind: "command",
+      status: "ok",
+      data: { id: input.serverId, removedP: true },
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding,
+        commandModel: "desktop-task-mcp-server-command-v1"
+      }
+    };
   }
 
   async installQuicklispPackage(input: {

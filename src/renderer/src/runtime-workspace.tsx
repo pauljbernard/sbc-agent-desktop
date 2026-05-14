@@ -10,6 +10,7 @@ import type {
 } from "../../shared/contracts";
 import { BrowserDataTable } from "./browser-data-table";
 import { Badge, PanelHeader, toneForCommandStatus } from "./surface-support";
+import { ActorSystemPanel } from "./workspace-support-components";
 
 export type RuntimeWorkspaceProps = {
   replSessions: ReplSessionProfileDto[];
@@ -31,6 +32,7 @@ export type RuntimeWorkspaceProps = {
   setRuntimeInspectorPackage: (value: string) => void;
   inspectRuntimeSymbol: () => Promise<void>;
   runtimeResult: CommandResultDto<RuntimeEvalResultDto> | null;
+  actorSystemPanel: Record<string, unknown> | null;
   isEvaluating: boolean;
   isInspectingRuntime: boolean;
   openInspectorSurface: () => Promise<void>;
@@ -57,6 +59,7 @@ export function RuntimeWorkspace({
   setRuntimeInspectorPackage,
   inspectRuntimeSymbol,
   runtimeResult,
+  actorSystemPanel,
   isEvaluating,
   isInspectingRuntime,
   openInspectorSurface,
@@ -380,6 +383,22 @@ export function RuntimeWorkspace({
             </div>
             <p className="lead-copy">{runtimeResult.data.summary}</p>
             {runtimeResult.data.valuePreview ? <pre className="runtime-preview">{runtimeResult.data.valuePreview}</pre> : null}
+            {runtimeResult.data.recoveryLaunch ? (
+              <div className="signal-detail-list">
+                <div className="signal-detail-row">
+                  <span>Recovery Source</span>
+                  <strong>{runtimeResult.data.recoveryLaunch.source}</strong>
+                </div>
+                <div className="signal-detail-row">
+                  <span>Incident</span>
+                  <strong>{runtimeResult.data.recoveryLaunch.incidentId}</strong>
+                </div>
+                <div className="signal-detail-row">
+                  <span>Restart</span>
+                  <strong>{runtimeResult.data.recoveryLaunch.restartLabel}</strong>
+                </div>
+              </div>
+            ) : null}
             <div className="ref-list">
               {runtimeResult.data.operationId ? <span className="thread-flag">{runtimeResult.data.operationId}</span> : null}
               {runtimeResult.data.approvalId ? <span className="thread-flag">{runtimeResult.data.approvalId}</span> : null}
@@ -409,6 +428,13 @@ export function RuntimeWorkspace({
                 <pre className="runtime-history-form">{entry.form}</pre>
                 <p>{entry.summary}</p>
                 {entry.valuePreview ? <pre className="runtime-preview">{entry.valuePreview}</pre> : null}
+                {entry.recoveryLaunch ? (
+                  <div className="ref-list">
+                    <span className="thread-flag">{entry.recoveryLaunch.source}</span>
+                    <span className="thread-flag">{entry.recoveryLaunch.incidentId}</span>
+                    <span className="thread-flag">{entry.recoveryLaunch.restartLabel}</span>
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>
@@ -441,6 +467,8 @@ export function RuntimeWorkspace({
         <p className="lead-copy">{runtimeSummary.divergencePosture}</p>
         <p className="mission-support">{runtimeSummary.sourceRelationship}</p>
       </section>
+
+      <ActorSystemPanel actorSystemPanel={actorSystemPanel} />
     </div>
   );
 }

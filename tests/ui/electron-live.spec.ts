@@ -358,6 +358,29 @@ async function openBrowserManualInspect(page: Page): Promise<{
   };
 }
 
+async function openBrowserSymbols(
+  page: Page,
+  options?: {
+    lane?: "Generic Functions" | "Classes" | "Macros" | "Functions" | "Variables";
+    packageName?: string;
+  }
+): Promise<{
+  pane: Locator;
+  rows: Locator;
+}> {
+  await openWorkspaceSubpage(page, "Browser", "Symbols");
+  const pane = page.locator(".browser-domain-pane");
+  const toolbar = pane.locator(".browser-domain-toolbar").first();
+  const lane = options?.lane ?? "Functions";
+  const packageName = options?.packageName ?? "COMMON-LISP";
+
+  await toolbar.locator("select").nth(0).selectOption({ label: lane });
+  await toolbar.locator("select").nth(1).selectOption(packageName);
+
+  const rows = pane.locator(".browser-symbol-panel .browser-table-body .browser-table-row");
+  return { pane, rows };
+}
+
 async function openConversationTurnTabIfPresent(page: Page): Promise<void> {
   const turnTab = page.getByRole("tab", { name: "Turn", exact: true });
   if (await turnTab.isVisible().catch(() => false)) {
@@ -366,25 +389,25 @@ async function openConversationTurnTabIfPresent(page: Page): Promise<void> {
 }
 
 async function openOperateJourneys(page: Page): Promise<void> {
-  await openWorkspaceSubpage(page, "Operate", "Journeys");
-  await expect(operateQueuePanel(page)).toContainText("Ranked Governed Queue", { timeout: 15000 });
+  await openWorkspaceSubpage(page, "Actions", "Actions Board");
+  await expect(operateQueuePanel(page)).toContainText("Actions", { timeout: 15000 });
 }
 
 async function openOperateEvidence(page: Page): Promise<void> {
-  await openWorkspaceSubpage(page, "Operate", "Evidence");
-  await expect(operateEvidencePanel(page)).toContainText("Evidence Table", { timeout: 15000 });
+  await openWorkspace(page, "Artifacts");
+  await expect(operateEvidencePanel(page)).toContainText("Evidence", { timeout: 15000 });
 }
 
 function operateQueuePanel(page: Page) {
-  return page.locator(".operate-table-panel").filter({ hasText: "Ranked Governed Queue" }).first();
+  return page.locator(".operate-table-panel").filter({ hasText: "Actions" }).first();
 }
 
 function operateJourneyPanel(page: Page) {
-  return page.locator(".operate-table-panel").filter({ hasText: "Journey Queue" }).first();
+  return page.locator(".operate-table-panel").filter({ hasText: "Actions" }).first();
 }
 
 function operateEvidencePanel(page: Page) {
-  return page.locator(".operate-table-panel").filter({ hasText: "Evidence Table" }).first();
+  return page.locator(".evidence-journey").first();
 }
 
 function operateDetailPanel(page: Page) {
@@ -3169,6 +3192,142 @@ test.describe("live sbcl-agent desktop shell", () => {
     }
   });
 
+  test("renders captured runtime condition detail for the selected incident", async () => {
+    const { app, page } = await launchDesktop();
+    try {
+      await openWorkspace(page, "Incidents");
+      const incidentList = page.locator(".incidents-list-panel");
+      await expect(incidentList).toContainText("Runtime reload interrupted", { timeout: 15000 });
+
+      await incidentList.locator(".thread-row").filter({ hasText: "Runtime reload interrupted" }).first().click();
+
+      const detailPanel = page.locator(".incident-detail-panel");
+      await expect(detailPanel).toContainText("Runtime Failure Detail", { timeout: 15000 });
+      await expect(detailPanel).toContainText("Condition Type", { timeout: 15000 });
+      await expect(detailPanel).toContainText("Interrupted while reconciling runtime image state.", { timeout: 15000 });
+      await expect(detailPanel).toContainText("Restarts", { timeout: 15000 });
+
+      const inspector = workspaceInspector(page);
+      await inspector.getByRole("tab", { name: "Runtime", exact: true }).click();
+      await expect(inspector).toContainText("Condition Type", { timeout: 15000 });
+      await expect(inspector).toContainText("Interrupted while reconciling runtime image state.", { timeout: 15000 });
+      await expect(inspector).toContainText("No restart suggestions were captured for this incident.", { timeout: 15000 });
+    } finally {
+      await closeDesktop(app, page);
+    }
+  });
+
+  test("renders captured restart suggestions for the selected incident", async () => {
+    const { app, page } = await launchDesktop();
+    try {
+      await openWorkspace(page, "Incidents");
+      const incidentList = page.locator(".incidents-list-panel");
+      await expect(incidentList).toContainText("Runtime reload interrupted", { timeout: 15000 });
+
+      await incidentList.locator(".thread-row").filter({ hasText: "Runtime reload interrupted" }).first().click();
+
+      const detailPanel = page.locator(".incident-detail-panel");
+      await expect(detailPanel).toContainText("Restart Suggestions", { timeout: 15000 });
+      await expect(detailPanel).toContainText("Continue recovery from the current checkpoint", { timeout: 15000 });
+      await expect(detailPanel).toContainText("Abort and return to governed review", { timeout: 15000 });
+
+      const inspector = workspaceInspector(page);
+      await inspector.getByRole("tab", { name: "Runtime", exact: true }).click();
+      await expect(inspector).toContainText("Continue recovery from the current checkpoint", { timeout: 15000 });
+      await expect(inspector).toContainText("Abort and return to governed review", { timeout: 15000 });
+    } finally {
+      await closeDesktop(app, page);
+    }
+  });
+
+  test("opens a recovery-focused conversation draft from an incident restart suggestion", async () => {
+    const { app, page } = await launchDesktop();
+    try {
+      await openWorkspace(page, "Incidents");
+      const incidentList = page.locator(".incidents-list-panel");
+      await expect(incidentList).toContainText("Runtime reload interrupted", { timeout: 15000 });
+
+      await incidentList.locator(".thread-row").filter({ hasText: "Runtime reload interrupted" }).first().click();
+
+      const detailPanel = page.locator(".incident-detail-panel");
+      await detailPanel.getByRole("button", { name: /Continue recovery from the current checkpoint/i }).click();
+
+      const composer = page.locator(".conversation-draft-editor").first();
+      await expect(composer).toBeVisible({ timeout: 15000 });
+      await expect(composer).toHaveValue(/Prioritize the captured restart suggestion: "Continue recovery from the current checkpoint"\./, {
+        timeout: 15000
+      });
+      await expect(composer).toHaveValue(/Review incident .* as the active recovery focus\./, { timeout: 15000 });
+      await expect(page.locator("body")).toContainText("Recovery Source", { timeout: 15000 });
+      await expect(page.locator("body")).toContainText("incident-restart", { timeout: 15000 });
+      await expect(page.locator("body")).toContainText("Continue recovery from the current checkpoint", {
+        timeout: 15000
+      });
+    } finally {
+      await closeDesktop(app, page);
+    }
+  });
+
+  test("opens a restart-focused listener workbench from an incident restart suggestion", async () => {
+    const { app, page } = await launchDesktop();
+    try {
+      await openWorkspace(page, "Incidents");
+      const incidentList = page.locator(".incidents-list-panel");
+      await expect(incidentList).toContainText("Runtime reload interrupted", { timeout: 15000 });
+
+      await incidentList.locator(".thread-row").filter({ hasText: "Runtime reload interrupted" }).first().click();
+
+      const detailPanel = page.locator(".incident-detail-panel");
+      await detailPanel.getByRole("button", { name: "Open In Listener", exact: true }).first().click();
+
+      const workbench = page.locator(".desktop-window-workbench-textarea");
+      await expect(workbench).toBeVisible({ timeout: 15000 });
+      await expect(workbench).toHaveValue(/Prioritized restart: Continue recovery from the current checkpoint/, {
+        timeout: 15000
+      });
+      await expect(workbench).toHaveValue(/:incident-id "incident-/, { timeout: 15000 });
+    } finally {
+      await closeDesktop(app, page);
+    }
+  });
+
+  test("preserves visible recovery provenance after restart-focused listener evaluation", async () => {
+    const { app, page } = await launchDesktop();
+    try {
+      await openWorkspace(page, "Incidents");
+      const incidentList = page.locator(".incidents-list-panel");
+      await expect(incidentList).toContainText("Runtime reload interrupted", { timeout: 15000 });
+
+      await incidentList.locator(".thread-row").filter({ hasText: "Runtime reload interrupted" }).first().click();
+
+      const detailPanel = page.locator(".incident-detail-panel");
+      await detailPanel.getByRole("button", { name: "Open In Listener", exact: true }).first().click();
+
+      const workbench = page.locator(".desktop-window-workbench-textarea");
+      await expect(workbench).toBeVisible({ timeout: 15000 });
+      await expect(workbench).toHaveValue(/Prioritized restart: Continue recovery from the current checkpoint/, {
+        timeout: 15000
+      });
+
+      const evalPanel = page.locator(".runtime-eval-panel");
+      await evalPanel.scrollIntoViewIfNeeded();
+      await evalPanel.getByRole("button", { name: "Run Form", exact: true }).focus();
+      await page.keyboard.press("Enter");
+
+      const resultPanel = page.locator(".runtime-result-panel");
+      await expect(resultPanel).toContainText("Recovery Source", { timeout: 15000 });
+      await expect(resultPanel).toContainText("incident-restart", { timeout: 15000 });
+      await expect(resultPanel).toContainText("Restart", { timeout: 15000 });
+      await expect(resultPanel).toContainText("Continue recovery from the current checkpoint", { timeout: 15000 });
+
+      const historyPanel = page.locator(".runtime-history-panel");
+      await expect(historyPanel).toContainText("incident-restart", { timeout: 15000 });
+      await expect(historyPanel).toContainText("Continue recovery from the current checkpoint", { timeout: 15000 });
+    } finally {
+      await closeDesktop(app, page);
+    }
+  });
+
   test("keeps dashboard direct actions specific to the selected object type", async () => {
     const { app, page } = await launchDesktop({
       SBCL_AGENT_DESKTOP_SCENARIO: "mixed-pressure"
@@ -3192,6 +3351,46 @@ test.describe("live sbcl-agent desktop shell", () => {
       await expect(detailPanel).toContainText("Desktop attention model refinement");
       await expect(detailPanel.getByRole("button", { name: "Open Work", exact: true })).toBeVisible();
       await expect(detailPanel.getByRole("button", { name: "Open Recovery", exact: true })).toHaveCount(0);
+    } finally {
+      await closeDesktop(app, page);
+    }
+  });
+
+  test("renders canonical actions rows with populated timestamps for governed objects", async () => {
+    const { app, page } = await launchDesktop({
+      SBCL_AGENT_DESKTOP_SCENARIO: "mixed-pressure"
+    });
+    try {
+      await openOperateJourneys(page);
+
+      const targets = await page.evaluate(async () => {
+        const summary = await window.sbclAgentDesktop.query.environmentSummary();
+        const environmentId = summary.data.environmentId;
+        const [approvals, incidents, workItems] = await Promise.all([
+          window.sbclAgentDesktop.query.approvalRequestList(environmentId),
+          window.sbclAgentDesktop.query.incidentList(environmentId),
+          window.sbclAgentDesktop.query.workItemList(environmentId)
+        ]);
+
+        return {
+          approvalTitle: approvals.data[0]?.title ?? null,
+          incidentTitle: incidents.data.find((item) => item.state !== "resolved")?.title ?? null,
+          workTitle:
+            workItems.data.find((item) => item.state === "blocked" || item.state === "quarantined")?.title ?? null
+        };
+      });
+
+      const titles = [targets.approvalTitle, targets.incidentTitle, targets.workTitle].filter(
+        (value): value is string => Boolean(value)
+      );
+      expect(titles.length).toBeGreaterThan(0);
+
+      const rows = operateJourneyPanel(page).locator(".browser-table-body .browser-table-row");
+      for (const title of titles) {
+        const matchingRows = rows.filter({ hasText: title });
+        await expect(matchingRows).toHaveCount(1, { timeout: 15000 });
+        await expect(matchingRows.first()).not.toContainText("—");
+      }
     } finally {
       await closeDesktop(app, page);
     }
@@ -3660,6 +3859,46 @@ test.describe("live sbcl-agent desktop shell", () => {
       await expect(page.locator(".browser-domain-pane")).toContainText("Generic Functions");
       await expect(page.locator(".browser-domain-pane")).toContainText("internal");
       await expect(packageInput).toHaveValue("COMMON-LISP");
+    } finally {
+      await closeDesktop(app, page);
+    }
+  });
+
+  test("renders visible symbol rows in the browser symbols domain for a selected package", async () => {
+    const { app, page } = await launchDesktop();
+    try {
+      const { pane, rows } = await openBrowserSymbols(page, {
+        lane: "Functions",
+        packageName: "COMMON-LISP"
+      });
+
+      await expect(pane).toContainText("Functions", { timeout: 15000 });
+      await expect(pane).not.toContainText("No matching symbols in this lane.", { timeout: 15000 });
+      await expect.poll(async () => await rows.count(), { timeout: 15000 }).toBeGreaterThan(0);
+      await expect(rows.first()).toBeVisible({ timeout: 15000 });
+      await expect(rows.first()).toContainText("COMMON-LISP", { timeout: 15000 });
+    } finally {
+      await closeDesktop(app, page);
+    }
+  });
+
+  test("renders runtime object facets for browser inspector focus", async () => {
+    const { app, page } = await launchDesktop();
+    try {
+      const { symbolInput, packageInput, modeSelect, browseButton } = await openBrowserManualInspect(page);
+
+      await symbolInput.fill("*PACKAGE*");
+      await packageInput.fill("SBCL-AGENT-USER");
+      await modeSelect.selectOption("describe");
+      await browseButton.focus();
+      await page.keyboard.press("Enter");
+
+      const embeddedInspector = page.locator("aside.inspector.inspector-embedded").first();
+      await embeddedInspector.getByRole("tab", { name: "Detail", exact: true }).click();
+      await expect(embeddedInspector).toContainText("Object Kind", { timeout: 15000 });
+      await expect(embeddedInspector).toContainText("Entity Kind", { timeout: 15000 });
+      await expect(embeddedInspector).toContainText("Home Package", { timeout: 15000 });
+      await expect(embeddedInspector).toContainText("Related Items", { timeout: 15000 });
     } finally {
       await closeDesktop(app, page);
     }

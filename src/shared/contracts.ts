@@ -422,6 +422,7 @@ export interface ReplSessionHistoryEntryDto {
   status: CommandResultDto<RuntimeEvalResultDto>["status"];
   summary: string;
   valuePreview?: string | null;
+  recoveryLaunch?: RuntimeEvalResultDto["recoveryLaunch"];
 }
 
 export interface EditorBufferStateDto {
@@ -550,6 +551,7 @@ export interface IncidentSummaryDto {
   title: string;
   severity: "low" | "moderate" | "high" | "critical";
   state: "open" | "recovering" | "resolved";
+  updatedAt: string | null;
 }
 
 export interface IncidentRemediationPlanDto {
@@ -561,6 +563,28 @@ export interface IncidentRemediationPlanDto {
   blockers: string[];
 }
 
+export interface RuntimeConditionSlotDto {
+  name: string;
+  boundp: boolean;
+  printed?: string | null;
+  type?: string | null;
+}
+
+export interface RuntimeConditionDetailDto {
+  type?: string | null;
+  message: string;
+  printed?: string | null;
+  class?: string | null;
+  restartCount: number;
+  slotCount?: number | null;
+  slots: RuntimeConditionSlotDto[];
+}
+
+export interface RuntimeRestartSuggestionDto {
+  name?: string | null;
+  label: string;
+}
+
 export interface IncidentDetailDto {
   incidentId: string;
   title: string;
@@ -568,11 +592,14 @@ export interface IncidentDetailDto {
   severity: IncidentSummaryDto["severity"];
   state: IncidentSummaryDto["state"];
   runtimeId?: string | null;
+  linkedThreadId?: string | null;
   recoveryState: "awaiting_acknowledgement" | "active_recovery" | "closure_pending" | "resolved";
   recoverySummary: string;
   nextAction: string;
   blockedReason?: string | null;
   remediationPlan: IncidentRemediationPlanDto | null;
+  conditionDetail: RuntimeConditionDetailDto | null;
+  restartSuggestions: RuntimeRestartSuggestionDto[];
   artifactIds: string[];
   linkedEntities: LinkedEntityRefDto[];
   traceNeighborhood?: ProjectTraceNeighborhoodDto | null;
@@ -584,6 +611,7 @@ export interface ApprovalRequestSummaryDto {
   title: string;
   summary: string;
   state: "awaiting" | "approved" | "denied";
+  createdAt: string | null;
 }
 
 export interface ApprovalRequestDto {
@@ -816,11 +844,27 @@ export interface SendConversationMessageInput {
   surfaceActions?: Array<Record<string, unknown>>;
 }
 
+export interface ApproveActorMessageInput {
+  environmentId: string;
+  actorMessageId: string;
+}
+
+export interface ApproveApprovalInput {
+  environmentId: string;
+  approvalId: string;
+  sessionId?: string | null;
+}
+
 export interface SendConversationMessageResultDto {
   threadId: string;
   turnId: string;
   assistantMessage: string;
   summary: string;
+  desktopTaskResults?: Array<Record<string, unknown>>;
+  taskRecordSummaries?: Array<Record<string, unknown>>;
+  pendingApproval?: Record<string, unknown> | null;
+  runtimeReply?: Record<string, unknown> | null;
+  actorFlow?: Record<string, unknown> | null;
 }
 
 export interface ConversationStreamEventDto {
@@ -975,6 +1019,83 @@ export interface PackageManagementCommandResultDto {
   exitCode?: number | null;
 }
 
+export interface DesktopTaskManifestDto {
+  id: string;
+  target: string;
+  operation: string;
+  capability?: string | null;
+  description?: string | null;
+  requestSchema?: Record<string, unknown> | null;
+  resultSchema?: Record<string, unknown> | null;
+  approvalPolicy?: string | null;
+  executionMode?: string | null;
+  retryPolicy?: Record<string, unknown> | null;
+  backendKind?: string | null;
+  backendRef?: string | null;
+  version?: number | null;
+  tags: string[];
+  discoverableP: boolean;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface McpServerConfigDto {
+  id: string;
+  name: string;
+  transport: string;
+  command?: string | null;
+  arguments: string[];
+  environmentVariables?: Record<string, string> | null;
+  workingDirectory?: string | null;
+  endpoint?: string | null;
+  capabilities: string[];
+  retryPolicy?: Record<string, unknown> | null;
+  healthStatus?: string | null;
+  enabledP: boolean;
+  discoverableP: boolean;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  operationCount: number;
+  operations: DesktopTaskManifestDto[];
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface DesktopTaskRecordDto {
+  id: string;
+  protocolVersion?: number | null;
+  requestId?: string | null;
+  requester?: string | null;
+  target: string;
+  operation: string;
+  capability?: string | null;
+  backendKind?: string | null;
+  backendRef?: string | null;
+  status: string;
+  governanceStatus?: string | null;
+  approvalStatus?: string | null;
+  approvalId?: string | null;
+  sessionId?: string | null;
+  retryPolicy?: Record<string, unknown> | null;
+  retryCount?: number | null;
+  maxAttempts?: number | null;
+  retryableP?: boolean | null;
+  idempotencyKey?: string | null;
+  threadId?: string | null;
+  turnId?: string | null;
+  conversationOperationId?: string | null;
+  actorMessageId?: string | null;
+  actorSlice?: string | null;
+  actorMessage?: Record<string, unknown> | null;
+  requestMetadata?: Record<string, unknown> | null;
+  createdAt?: string | null;
+  approvedAt?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  lastError?: Record<string, unknown> | null;
+  resolution?: Record<string, unknown> | null;
+  result?: Record<string, unknown> | null;
+  metadata?: Record<string, unknown> | null;
+}
+
 export interface RuntimeTelemetryProcessDto {
   processId: string;
   kind: "runtime" | "task" | "worker" | "compatibility-process";
@@ -1109,6 +1230,11 @@ export interface RuntimeEvalResultDto {
   outcome: "ok" | "awaiting_approval" | "failed";
   summary: string;
   valuePreview?: string | null;
+  recoveryLaunch?: {
+    source: "incident-restart";
+    incidentId: string;
+    restartLabel: string;
+  } | null;
   operationId?: string | null;
   artifactIds: string[];
   approvalId?: string | null;
@@ -1171,6 +1297,8 @@ export interface RuntimeEntityDetailDto {
     | "macro"
     | "function"
     | "variable"
+    | "package"
+    | "object"
     | "unknown";
   signature?: string | null;
   summary: string;
@@ -1191,6 +1319,33 @@ export interface PackageBrowserDto {
   useList: string[];
   externalSymbols: PackageBrowserSymbolDto[];
   internalSymbols: PackageBrowserSymbolDto[];
+  summary: string;
+}
+
+export interface RuntimeSymbolBrowserPageInput {
+  environmentId: string;
+  packageScope?: string | null;
+  kinds?: Array<PackageBrowserSymbolDto["kind"]>;
+  visibility?: PackageBrowserSymbolDto["visibility"] | "all";
+  search?: string;
+  offset?: number;
+  limit?: number;
+}
+
+export interface RuntimeSymbolBrowserEntryDto extends PackageBrowserSymbolDto {
+  packageName: string;
+}
+
+export interface RuntimeSymbolBrowserPageDto {
+  packageScope: string | null;
+  availablePackages: string[];
+  nicknames: string[];
+  useList: string[];
+  totalCount: number;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+  items: RuntimeSymbolBrowserEntryDto[];
   summary: string;
 }
 
@@ -1298,6 +1453,7 @@ export interface WorkItemSummaryDto {
   workItemId: string;
   title: string;
   state: "active" | "waiting" | "blocked" | "quarantined" | "closable";
+  updatedAt: string | null;
   waitingReason?: string | null;
   approvalCount: number;
   incidentCount: number;
@@ -1372,6 +1528,11 @@ export interface EvaluateInContextInput {
   environmentId: string;
   form: string;
   packageName?: string;
+  recoveryLaunch?: {
+    source: "incident-restart";
+    incidentId: string;
+    restartLabel: string;
+  } | null;
 }
 
 export interface ThreadDetailDto {
@@ -1382,6 +1543,46 @@ export interface ThreadDetailDto {
   messages: MessageDto[];
   turns: TurnSummaryDto[];
   linkedEntities: LinkedEntityRefDto[];
+}
+
+export interface ConversationWorkspaceDto {
+  threads: ThreadSummaryDto[];
+  selectedThread: ThreadDetailDto | null;
+  selectedTurn: TurnDetailDto | null;
+}
+
+export interface ConversationLatencySampleDto {
+  kind: string;
+  timestamp: string;
+  payload: Record<string, unknown> | null;
+}
+
+export interface ConversationProviderPhaseTimingDto {
+  timestamp: string;
+  phase?: string | null;
+  payload: Record<string, unknown>;
+}
+
+export interface ConversationLatencySummaryDto {
+  turnId?: string | null;
+  sampleCount: number;
+  samples: ConversationLatencySampleDto[];
+  requestBuilt: Record<string, unknown> | null;
+  firstStream: Record<string, unknown> | null;
+  responseComplete: Record<string, unknown> | null;
+  providerPhases: ConversationProviderPhaseTimingDto[];
+}
+
+export interface TranscriptWorkspaceDto {
+  events: EnvironmentEventDto[];
+  environmentConsole: ConsoleLogStreamDto | null;
+}
+
+export interface EnvironmentBootstrapDto {
+  summary: EnvironmentSummaryDto;
+  status: EnvironmentStatusDto;
+  workspaceSummary: WorkspaceSummaryDto;
+  desktopModel: DesktopModelDto;
 }
 
 export interface TurnDetailDto {
@@ -1650,6 +1851,28 @@ export interface UpdateProviderRoutingInput {
   mode: ProviderRoutingMode;
 }
 
+export interface ConfigureMcpServerInput {
+  environmentId: string;
+  serverId?: string | null;
+  name: string;
+  transport: "stdio" | "http";
+  command?: string | null;
+  arguments?: string[] | null;
+  environmentVariables?: Record<string, string> | null;
+  workingDirectory?: string | null;
+  endpoint?: string | null;
+  capabilities?: string[] | null;
+  retryPolicy?: Record<string, unknown> | null;
+  healthStatus?: string | null;
+  enabledP?: boolean | null;
+  discoverableP?: boolean | null;
+}
+
+export interface RemoveMcpServerInput {
+  environmentId: string;
+  serverId: string;
+}
+
 export interface DesktopPreferencesDto {
   lastWorkspace: WorkspaceId;
   selectedBrowserDomain?: string;
@@ -1832,6 +2055,7 @@ export interface EventSubscriptionInput {
   fromCursor?: number;
   families?: string[];
   visibility?: string[];
+  limit?: number;
 }
 
 export interface EnvironmentEventDto {
@@ -1872,7 +2096,17 @@ export interface QueryApi {
   environmentStatus(environmentId?: string): Promise<QueryResultDto<EnvironmentStatusDto>>;
   workspaceSummary(environmentId?: string): Promise<QueryResultDto<WorkspaceSummaryDto>>;
   desktopModel(environmentId?: string): Promise<QueryResultDto<DesktopModelDto>>;
+  environmentBootstrap(environmentId?: string): Promise<QueryResultDto<EnvironmentBootstrapDto>>;
   environmentEvents(input: EventSubscriptionInput): Promise<QueryResultDto<EnvironmentEventDto[]>>;
+  transcriptWorkspace(input: {
+    environmentId?: string;
+    families?: string[];
+    visibility?: string[];
+    eventLimit?: number;
+    includeEvents?: boolean;
+    includeEnvironmentConsole?: boolean;
+    consoleLimit?: number;
+  }): Promise<QueryResultDto<TranscriptWorkspaceDto>>;
   consoleLogStream(input: ConsoleLogQueryInput): Promise<QueryResultDto<ConsoleLogStreamDto>>;
   diagnosticReportList(environmentId?: string): Promise<QueryResultDto<DiagnosticReportSummaryDto[]>>;
   diagnosticReportDetail(
@@ -1881,9 +2115,18 @@ export interface QueryApi {
   ): Promise<QueryResultDto<DiagnosticReportDetailDto>>;
   artifactList(environmentId?: string): Promise<QueryResultDto<ArtifactSummaryDto[]>>;
   artifactDetail(artifactId: string, environmentId?: string): Promise<QueryResultDto<ArtifactDetailDto>>;
+  conversationWorkspace(input: {
+    environmentId?: string;
+    threadId?: string | null;
+    turnId?: string | null;
+  }): Promise<QueryResultDto<ConversationWorkspaceDto>>;
   threadList(environmentId?: string): Promise<QueryResultDto<ThreadSummaryDto[]>>;
   threadDetail(threadId: string, environmentId?: string): Promise<QueryResultDto<ThreadDetailDto>>;
   turnDetail(turnId: string, environmentId?: string): Promise<QueryResultDto<TurnDetailDto>>;
+  conversationLatency(
+    turnId: string,
+    environmentId?: string
+  ): Promise<QueryResultDto<ConversationLatencySummaryDto>>;
   runtimeSummary(environmentId?: string): Promise<QueryResultDto<RuntimeSummaryDto>>;
   runtimeTelemetrySnapshot(environmentId?: string): Promise<QueryResultDto<RuntimeTelemetrySnapshotDto>>;
   runtimeInspectSymbol(
@@ -1898,6 +2141,7 @@ export interface QueryApi {
     environmentId: string;
     packageName?: string;
   }): Promise<QueryResultDto<PackageBrowserDto>>;
+  runtimeSymbolPage(input: RuntimeSymbolBrowserPageInput): Promise<QueryResultDto<RuntimeSymbolBrowserPageDto>>;
   fileSystemDirectory(input?: FileSystemDirectoryInput): Promise<QueryResultDto<FileSystemDirectoryListingDto>>;
   sourcePreview(input: SourcePreviewInput): Promise<QueryResultDto<SourcePreviewDto>>;
   approvalRequestList(environmentId?: string): Promise<QueryResultDto<ApprovalRequestSummaryDto[]>>;
@@ -1918,6 +2162,36 @@ export interface QueryApi {
   memoryDetail(memoryId: string, environmentId?: string): Promise<QueryResultDto<MemoryEntryDto>>;
   providerProfiles(environmentId?: string): Promise<QueryResultDto<ProviderProfileSummaryDto>>;
   packageManagementSummary(environmentId?: string): Promise<QueryResultDto<PackageManagementSummaryDto>>;
+  desktopTaskManifests(environmentId?: string): Promise<QueryResultDto<DesktopTaskManifestDto[]>>;
+  desktopTaskRecords(environmentId?: string): Promise<QueryResultDto<DesktopTaskRecordDto[]>>;
+  desktopTaskPendingApproval(environmentId?: string): Promise<QueryResultDto<Record<string, unknown>>>;
+  desktopTaskActorFlow(input?: {
+    environmentId?: string;
+    sessionId?: string;
+    approvalId?: string;
+    pendingActionId?: string;
+    actorMessageId?: string;
+    scopeId?: string;
+    latestOnlyP?: boolean;
+  }): Promise<QueryResultDto<Record<string, unknown>>>;
+  desktopTaskActorSystemPanel(input?: {
+    environmentId?: string;
+    sessionId?: string;
+  }): Promise<QueryResultDto<Record<string, unknown>>>;
+  desktopTaskActorTrace(input?: {
+    environmentId?: string;
+    actorRole?: string;
+    actorMessageId?: string;
+    phase?: string;
+    latestOnlyP?: boolean;
+    deadLettersOnlyP?: boolean;
+  }): Promise<QueryResultDto<Record<string, unknown>[]>>;
+  desktopTaskDeadLetterQueue(input?: {
+    environmentId?: string;
+    actorRole?: string;
+  }): Promise<QueryResultDto<Record<string, unknown>[]>>;
+  mcpServerConfigs(environmentId?: string): Promise<QueryResultDto<McpServerConfigDto[]>>;
+  mcpServerConfig(serverId: string, environmentId?: string): Promise<QueryResultDto<McpServerConfigDto>>;
   calculatorSummary(environmentId?: string): Promise<QueryResultDto<CalculatorSummaryDto>>;
 }
 
@@ -1984,6 +2258,12 @@ export interface CommandApi {
   sendConversationMessage(
     input: SendConversationMessageInput
   ): Promise<CommandResultDto<SendConversationMessageResultDto>>;
+  approveActorMessage(
+    input: ApproveActorMessageInput
+  ): Promise<CommandResultDto<SendConversationMessageResultDto>>;
+  approveApproval(
+    input: ApproveApprovalInput
+  ): Promise<CommandResultDto<SendConversationMessageResultDto>>;
   extractConversationAttachmentText(input: {
     name: string;
     mediaType: string;
@@ -2020,6 +2300,10 @@ export interface CommandApi {
   updateProviderRouting(
     input: UpdateProviderRoutingInput
   ): Promise<CommandResultDto<ProviderProfileSummaryDto>>;
+  configureMcpServer(input: ConfigureMcpServerInput): Promise<CommandResultDto<McpServerConfigDto>>;
+  removeMcpServer(
+    input: RemoveMcpServerInput
+  ): Promise<CommandResultDto<{ id: string; removedP: boolean }>>;
   installQuicklispPackage(input: {
     environmentId: string;
     systemName: string;

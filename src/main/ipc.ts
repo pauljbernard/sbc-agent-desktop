@@ -91,7 +91,11 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("query:desktop-model", (_event, environmentId?: string) =>
     hostAdapter.desktopModel(environmentId)
   );
+  ipcMain.handle("query:environment-bootstrap", (_event, environmentId?: string) =>
+    hostAdapter.environmentBootstrap(environmentId)
+  );
   ipcMain.handle("query:environment-events", (_event, input) => hostAdapter.environmentEvents(input));
+  ipcMain.handle("query:transcript-workspace", (_event, input) => hostAdapter.transcriptWorkspace(input));
   ipcMain.handle("query:console-log-stream", (_event, input) => hostAdapter.consoleLogStream(input));
   ipcMain.handle("query:diagnostic-report-list", (_event, environmentId?: string) =>
     hostAdapter.diagnosticReportList(environmentId)
@@ -105,6 +109,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("query:artifact-detail", (_event, artifactId: string, environmentId?: string) =>
     hostAdapter.artifactDetail(artifactId, environmentId)
   );
+  ipcMain.handle("query:conversation-workspace", (_event, input) =>
+    hostAdapter.conversationWorkspace(input)
+  );
   ipcMain.handle("query:thread-list", (_event, environmentId?: string) =>
     hostAdapter.threadList(environmentId)
   );
@@ -113,6 +120,9 @@ export function registerIpcHandlers(): void {
   );
   ipcMain.handle("query:turn-detail", (_event, turnId: string, environmentId?: string) =>
     hostAdapter.turnDetail(turnId, environmentId)
+  );
+  ipcMain.handle("query:conversation-latency", (_event, turnId: string, environmentId?: string) =>
+    hostAdapter.conversationLatency(turnId, environmentId)
   );
   ipcMain.handle("query:memory-list", (_event, environmentId?: string) =>
     hostAdapter.memoryList(environmentId)
@@ -133,6 +143,7 @@ export function registerIpcHandlers(): void {
     hostAdapter.runtimeEntityDetail(input)
   );
   ipcMain.handle("query:package-browser", (_event, input) => hostAdapter.packageBrowser(input));
+  ipcMain.handle("query:runtime-symbol-page", (_event, input) => hostAdapter.runtimeSymbolPage(input));
   ipcMain.handle("query:file-system-directory", (_event, input) => hostAdapter.fileSystemDirectory(input));
   ipcMain.handle("query:source-preview", (_event, input) => hostAdapter.sourcePreview(input));
   ipcMain.handle("query:approval-request-list", (_event, environmentId?: string) =>
@@ -166,6 +177,46 @@ export function registerIpcHandlers(): void {
   );
   ipcMain.handle("query:package-management-summary", (_event, environmentId?: string) =>
     hostAdapter.packageManagementSummary(environmentId)
+  );
+  ipcMain.handle("query:desktop-task-manifests", (_event, environmentId?: string) =>
+    hostAdapter.desktopTaskManifests(environmentId)
+  );
+  ipcMain.handle("query:desktop-task-records", (_event, environmentId?: string) =>
+    hostAdapter.desktopTaskRecords(environmentId)
+  );
+  ipcMain.handle("query:desktop-task-pending-approval", (_event, environmentId?: string) =>
+    hostAdapter.desktopTaskPendingApproval(environmentId)
+  );
+  ipcMain.handle(
+    "query:desktop-task-actor-flow",
+    (_event, input?: {
+      environmentId?: string;
+      sessionId?: string;
+      approvalId?: string;
+      pendingActionId?: string;
+      actorMessageId?: string;
+      scopeId?: string;
+      latestOnlyP?: boolean;
+    }) => hostAdapter.desktopTaskActorFlow(input)
+  );
+  ipcMain.handle(
+    "query:desktop-task-actor-system-panel",
+    (_event, input?: {
+      environmentId?: string;
+      sessionId?: string;
+    }) => hostAdapter.desktopTaskActorSystemPanel(input)
+  );
+  ipcMain.handle("query:desktop-task-actor-trace", (_event, input?: { environmentId?: string; actorRole?: string; actorMessageId?: string; phase?: string; latestOnlyP?: boolean; deadLettersOnlyP?: boolean }) =>
+    hostAdapter.desktopTaskActorTrace(input)
+  );
+  ipcMain.handle("query:desktop-task-dlq", (_event, input?: { environmentId?: string; actorRole?: string }) =>
+    hostAdapter.desktopTaskDeadLetterQueue(input)
+  );
+  ipcMain.handle("query:mcp-server-configs", (_event, environmentId?: string) =>
+    hostAdapter.mcpServerConfigs(environmentId)
+  );
+  ipcMain.handle("query:mcp-server-config", (_event, serverId: string, environmentId?: string) =>
+    hostAdapter.mcpServerConfig(serverId, environmentId)
   );
   ipcMain.handle("query:calculator-summary", (_event, environmentId?: string) =>
     hostAdapter.calculatorSummary(environmentId)
@@ -278,12 +329,38 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("command:delete-memory", (_event, input) =>
     hostAdapter.deleteMemory(input)
   );
-  ipcMain.handle("command:send-conversation-message", (_event, input) =>
-    hostAdapter.sendConversationMessage(input, (streamEvent) => {
+  ipcMain.handle("command:send-conversation-message", async (_event, input) => {
+    let lastEnvironmentCursor: number | undefined;
+    try {
+      const baselineEvents = await hostAdapter.environmentEvents({
+        environmentId: input.environmentId,
+        limit: 1
+      });
+      lastEnvironmentCursor = baselineEvents.data[baselineEvents.data.length - 1]?.cursor;
+    } catch {
+      lastEnvironmentCursor = undefined;
+    }
+
+    const result = await hostAdapter.sendConversationMessage(input, (streamEvent) => {
       emitDesktopEvent(streamEvent);
       _event.sender.send("conversation:stream-event", streamEvent);
-    })
-  );
+    });
+
+    try {
+      const postCommandEvents = await hostAdapter.environmentEvents({
+        environmentId: input.environmentId,
+        fromCursor: lastEnvironmentCursor,
+        limit: 200
+      });
+      for (const event of postCommandEvents.data) {
+        emitDesktopEvent(event);
+      }
+    } catch {
+      // Keep command completion resilient even if event fanout refresh fails.
+    }
+
+    return result;
+  });
   ipcMain.handle("command:extract-conversation-attachment-text", (_event, input) =>
     hostAdapter.extractConversationAttachmentText(input)
   );
@@ -299,6 +376,12 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("command:desktop-restore", (_event, input) =>
     hostAdapter.desktopRestore(input)
   );
+  ipcMain.handle("command:approve-actor-message", (_event, input) =>
+    hostAdapter.approveActorMessage(input)
+  );
+  ipcMain.handle("command:approve-approval", (_event, input) =>
+    hostAdapter.approveApproval(input)
+  );
   ipcMain.handle("command:approve-request", (_event, input) => hostAdapter.approveRequest(input));
   ipcMain.handle("command:deny-request", (_event, input) => hostAdapter.denyRequest(input));
   ipcMain.handle("command:configure-provider-profile", (_event, input) =>
@@ -309,6 +392,12 @@ export function registerIpcHandlers(): void {
   );
   ipcMain.handle("command:update-provider-routing", (_event, input) =>
     hostAdapter.updateProviderRouting(input)
+  );
+  ipcMain.handle("command:configure-mcp-server", (_event, input) =>
+    hostAdapter.configureMcpServer(input)
+  );
+  ipcMain.handle("command:remove-mcp-server", (_event, input) =>
+    hostAdapter.removeMcpServer(input)
   );
   ipcMain.handle("command:install-quicklisp-package", (_event, input) =>
     hostAdapter.installQuicklispPackage(input)

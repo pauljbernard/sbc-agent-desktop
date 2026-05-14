@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
   ConfigureProviderProfileInput,
+  ConfigureMcpServerInput,
   CalculatorAppendTokenInput,
   CalculatorEvaluateInput,
   CalculatorResultDto,
@@ -27,6 +28,10 @@ import type {
   MemoryUpdateInput,
   ProviderProfileSummaryDto,
   QueryResultDto,
+  McpServerConfigDto,
+  DesktopTaskManifestDto,
+  DesktopTaskRecordDto,
+  RemoveMcpServerInput,
   SbclAgentDesktopApi,
   UpdateProviderRoutingInput,
   UseProviderProfileInput,
@@ -94,7 +99,10 @@ const api: SbclAgentDesktopApi = {
       ipcRenderer.invoke("query:workspace-summary", environmentId),
     desktopModel: (environmentId?: string) =>
       ipcRenderer.invoke("query:desktop-model", environmentId),
+    environmentBootstrap: (environmentId?: string) =>
+      ipcRenderer.invoke("query:environment-bootstrap", environmentId),
     environmentEvents: (input) => ipcRenderer.invoke("query:environment-events", input),
+    transcriptWorkspace: (input) => ipcRenderer.invoke("query:transcript-workspace", input),
     consoleLogStream: (input) => ipcRenderer.invoke("query:console-log-stream", input),
     diagnosticReportList: (environmentId?: string) =>
       ipcRenderer.invoke("query:diagnostic-report-list", environmentId),
@@ -103,11 +111,14 @@ const api: SbclAgentDesktopApi = {
     artifactList: (environmentId?: string) => ipcRenderer.invoke("query:artifact-list", environmentId),
     artifactDetail: (artifactId: string, environmentId?: string) =>
       ipcRenderer.invoke("query:artifact-detail", artifactId, environmentId),
+    conversationWorkspace: (input) => ipcRenderer.invoke("query:conversation-workspace", input),
     threadList: (environmentId?: string) => ipcRenderer.invoke("query:thread-list", environmentId),
     threadDetail: (threadId: string, environmentId?: string) =>
       ipcRenderer.invoke("query:thread-detail", threadId, environmentId),
     turnDetail: (turnId: string, environmentId?: string) =>
       ipcRenderer.invoke("query:turn-detail", turnId, environmentId),
+    conversationLatency: (turnId: string, environmentId?: string) =>
+      ipcRenderer.invoke("query:conversation-latency", turnId, environmentId),
     memoryList: (environmentId?: string): Promise<QueryResultDto<MemoryListDto>> =>
       ipcRenderer.invoke("query:memory-list", environmentId),
     memoryDetail: (memoryId: string, environmentId?: string): Promise<QueryResultDto<MemoryEntryDto>> =>
@@ -118,6 +129,7 @@ const api: SbclAgentDesktopApi = {
     runtimeInspectSymbol: (input) => ipcRenderer.invoke("query:runtime-inspect-symbol", input),
     runtimeEntityDetail: (input) => ipcRenderer.invoke("query:runtime-entity-detail", input),
     packageBrowser: (input) => ipcRenderer.invoke("query:package-browser", input),
+    runtimeSymbolPage: (input) => ipcRenderer.invoke("query:runtime-symbol-page", input),
     fileSystemDirectory: (input) => ipcRenderer.invoke("query:file-system-directory", input),
     sourcePreview: (input) => ipcRenderer.invoke("query:source-preview", input),
     approvalRequestList: (environmentId?: string) =>
@@ -138,6 +150,33 @@ const api: SbclAgentDesktopApi = {
       ipcRenderer.invoke("query:provider-profiles", environmentId),
     packageManagementSummary: (environmentId?: string) =>
       ipcRenderer.invoke("query:package-management-summary", environmentId),
+    desktopTaskManifests: (environmentId?: string): Promise<QueryResultDto<DesktopTaskManifestDto[]>> =>
+      ipcRenderer.invoke("query:desktop-task-manifests", environmentId),
+    desktopTaskRecords: (environmentId?: string): Promise<QueryResultDto<DesktopTaskRecordDto[]>> =>
+      ipcRenderer.invoke("query:desktop-task-records", environmentId),
+    desktopTaskPendingApproval: (environmentId?: string) =>
+      ipcRenderer.invoke("query:desktop-task-pending-approval", environmentId),
+    desktopTaskActorFlow: (input?: {
+      environmentId?: string;
+      sessionId?: string;
+      approvalId?: string;
+      pendingActionId?: string;
+      actorMessageId?: string;
+      scopeId?: string;
+      latestOnlyP?: boolean;
+    }) => ipcRenderer.invoke("query:desktop-task-actor-flow", input),
+    desktopTaskActorSystemPanel: (input?: {
+      environmentId?: string;
+      sessionId?: string;
+    }) => ipcRenderer.invoke("query:desktop-task-actor-system-panel", input),
+    desktopTaskActorTrace: (input?: { environmentId?: string; actorRole?: string; actorMessageId?: string; phase?: string; latestOnlyP?: boolean; deadLettersOnlyP?: boolean }) =>
+      ipcRenderer.invoke("query:desktop-task-actor-trace", input),
+    desktopTaskDeadLetterQueue: (input?: { environmentId?: string; actorRole?: string }) =>
+      ipcRenderer.invoke("query:desktop-task-dlq", input),
+    mcpServerConfigs: (environmentId?: string): Promise<QueryResultDto<McpServerConfigDto[]>> =>
+      ipcRenderer.invoke("query:mcp-server-configs", environmentId),
+    mcpServerConfig: (serverId: string, environmentId?: string): Promise<QueryResultDto<McpServerConfigDto>> =>
+      ipcRenderer.invoke("query:mcp-server-config", serverId, environmentId),
     calculatorSummary: (environmentId?: string): Promise<QueryResultDto<CalculatorSummaryDto>> =>
       ipcRenderer.invoke("query:calculator-summary", environmentId)
   },
@@ -173,6 +212,8 @@ const api: SbclAgentDesktopApi = {
     deleteMemory: (input: MemoryDeleteInput): Promise<CommandResultDto<MemoryDeleteResultDto>> =>
       ipcRenderer.invoke("command:delete-memory", input),
     sendConversationMessage: (input) => ipcRenderer.invoke("command:send-conversation-message", input),
+    approveActorMessage: (input) => ipcRenderer.invoke("command:approve-actor-message", input),
+    approveApproval: (input) => ipcRenderer.invoke("command:approve-approval", input),
     extractConversationAttachmentText: (input) =>
       ipcRenderer.invoke("command:extract-conversation-attachment-text", input),
     evaluateInContext: (input) => ipcRenderer.invoke("command:evaluate-in-context", input),
@@ -208,6 +249,10 @@ const api: SbclAgentDesktopApi = {
       ipcRenderer.invoke("command:use-provider-profile", input),
     updateProviderRouting: (input: UpdateProviderRoutingInput) =>
       ipcRenderer.invoke("command:update-provider-routing", input),
+    configureMcpServer: (input: ConfigureMcpServerInput) =>
+      ipcRenderer.invoke("command:configure-mcp-server", input),
+    removeMcpServer: (input: RemoveMcpServerInput) =>
+      ipcRenderer.invoke("command:remove-mcp-server", input),
     installQuicklispPackage: (input) => ipcRenderer.invoke("command:install-quicklisp-package", input),
     runQlotCommand: (input) => ipcRenderer.invoke("command:run-qlot-command", input),
     addSourceRegistryEntry: (input) => ipcRenderer.invoke("command:add-source-registry-entry", input),

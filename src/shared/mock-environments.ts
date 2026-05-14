@@ -38,6 +38,9 @@ import type {
   RuntimeEvalResultDto,
   RuntimeEntityDetailDto,
   RuntimeInspectionResultDto,
+  RuntimeSymbolBrowserEntryDto,
+  RuntimeSymbolBrowserPageDto,
+  RuntimeSymbolBrowserPageInput,
   RuntimeSummaryDto,
   RuntimeTelemetrySnapshotDto,
   SendConversationMessageInput,
@@ -284,7 +287,8 @@ const environments: Record<string, MockEnvironmentRecord> = {
         requestId: "approval-binding-shift",
         title: "Persist environment binding",
         summary: "Approval required to make the current desktop binding durable.",
-        state: "awaiting"
+        state: "awaiting",
+        createdAt: "2026-04-18T13:40:00Z"
       }
     ]),
     artifactDetails: {
@@ -333,11 +337,22 @@ const environments: Record<string, MockEnvironmentRecord> = {
         severity: "high",
         state: "recovering",
         runtimeId: "runtime-local-dev",
+        linkedThreadId: "thread-runtime-guard",
         recoveryState: "active_recovery",
         recoverySummary: "Recovery is in progress. Evidence exists, but closure is still withheld pending approval and reconciliation.",
         nextAction: "Review approval state and confirm the resumed binding path is safe.",
         blockedReason: "Closure remains blocked until approval and colder validation complete.",
         remediationPlan: null,
+        conditionDetail: {
+          type: "SIMPLE-ERROR",
+          message: "Guarded runtime mutation requires operator review.",
+          printed: "Guarded runtime mutation requires operator review.",
+          class: "SIMPLE-ERROR",
+          restartCount: 1,
+          slotCount: 0,
+          slots: []
+        },
+        restartSuggestions: [{ name: "USE-DEFAULT", label: "Use default" }],
         artifactIds: ["artifact-runtime-audit", "artifact-transport-spec"],
         linkedEntities: [
           { entityType: "operation", entityId: "op-persist-binding", label: "Persist binding operation" },
@@ -380,6 +395,7 @@ const environments: Record<string, MockEnvironmentRecord> = {
         workItemId: "work-item-host-binding",
         title: "Persist governed desktop binding",
         state: "blocked",
+        updatedAt: "2026-04-18T14:18:00Z",
         waitingReason: "Awaiting approval before durable binding persistence may continue.",
         approvalCount: 1,
         incidentCount: 1,
@@ -391,6 +407,7 @@ const environments: Record<string, MockEnvironmentRecord> = {
         workItemId: "work-item-runtime-audit",
         title: "Reconcile runtime audit output",
         state: "waiting",
+        updatedAt: "2026-04-18T14:06:00Z",
         waitingReason: "Evidence is present, but colder validation is still pending.",
         approvalCount: 0,
         incidentCount: 0,
@@ -584,7 +601,8 @@ const environments: Record<string, MockEnvironmentRecord> = {
           incidentId: "incident-runtime-guard",
           title: "Runtime guard interruption",
           severity: "high",
-          state: "recovering"
+          state: "recovering",
+          updatedAt: "2026-04-18T14:12:00Z"
         }
       ]),
       approvals: approvals([
@@ -592,7 +610,8 @@ const environments: Record<string, MockEnvironmentRecord> = {
           requestId: "approval-binding-shift",
           title: "Persist environment binding",
           summary: "Approval required to make the current desktop binding durable.",
-          state: "awaiting"
+          state: "awaiting",
+          createdAt: "2026-04-18T13:40:00Z"
         }
       ]),
       alignmentState: {
@@ -1027,11 +1046,25 @@ const environments: Record<string, MockEnvironmentRecord> = {
         severity: "critical",
         state: "open",
         runtimeId: "runtime-recovery-lab",
+        linkedThreadId: "thread-recovery-a",
         recoveryState: "awaiting_acknowledgement",
         recoverySummary: "The incident is open and waiting for explicit recovery acknowledgement before restart paths continue.",
         nextAction: "Inspect the condition report and choose a recovery workflow.",
         blockedReason: "Runtime mutation remains suspended pending operator acknowledgement.",
         remediationPlan: null,
+        conditionDetail: {
+          type: "SIMPLE-ERROR",
+          message: "Image mutation diverged under governed recovery.",
+          printed: "Image mutation diverged under governed recovery.",
+          class: "SIMPLE-ERROR",
+          restartCount: 2,
+          slotCount: 0,
+          slots: []
+        },
+        restartSuggestions: [
+          { name: "ABORT", label: "Abort" },
+          { name: "USE-VALUE", label: "Use value" }
+        ],
         artifactIds: ["artifact-condition-report"],
         linkedEntities: [
           { entityType: "incident", entityId: "incident-image-divergence", label: "Image divergence under recovery" },
@@ -1064,11 +1097,22 @@ const environments: Record<string, MockEnvironmentRecord> = {
         severity: "moderate",
         state: "recovering",
         runtimeId: "runtime-recovery-lab",
+        linkedThreadId: "thread-recovery-a",
         recoveryState: "closure_pending",
         recoverySummary: "Recovery workflow is underway, but closure is blocked on review and reconciliation.",
         nextAction: "Complete evidence review and clear quarantine conditions.",
         blockedReason: "Workflow closure is waiting for evidence-backed confirmation.",
         remediationPlan: null,
+        conditionDetail: {
+          type: "SIMPLE-CONDITION",
+          message: "Workflow remains quarantined pending recovery confirmation.",
+          printed: "Workflow remains quarantined pending recovery confirmation.",
+          class: "SIMPLE-CONDITION",
+          restartCount: 1,
+          slotCount: 0,
+          slots: []
+        },
+        restartSuggestions: [{ name: "CONTINUE", label: "Continue" }],
         artifactIds: ["artifact-condition-report"],
         linkedEntities: [
           { entityType: "incident", entityId: "incident-workflow-quarantine", label: "Workflow quarantine pending review" },
@@ -1089,6 +1133,7 @@ const environments: Record<string, MockEnvironmentRecord> = {
         workItemId: "work-item-recovery-a",
         title: "Close recovery evidence loop",
         state: "quarantined",
+        updatedAt: "2026-04-21T10:42:00Z",
         waitingReason: "Workflow closure is withheld while recovery evidence is reviewed.",
         approvalCount: 0,
         incidentCount: 2,
@@ -1215,13 +1260,15 @@ const environments: Record<string, MockEnvironmentRecord> = {
           incidentId: "incident-image-divergence",
           title: "Image divergence under recovery",
           severity: "critical",
-          state: "open"
+          state: "open",
+          updatedAt: "2026-04-21T10:39:00Z"
         },
         {
           incidentId: "incident-workflow-quarantine",
           title: "Workflow quarantine pending review",
           severity: "moderate",
-          state: "recovering"
+          state: "recovering",
+          updatedAt: "2026-04-21T10:41:00Z"
         }
       ]),
       approvals: approvals([])
@@ -2573,6 +2620,52 @@ export function queryPackageBrowser(input: {
   };
 }
 
+export function queryRuntimeSymbolPage(input: RuntimeSymbolBrowserPageInput): QueryResultDto<RuntimeSymbolBrowserPageDto> {
+  const packageResult = queryPackageBrowser({
+    environmentId: input.environmentId,
+    packageName: input.packageScope ?? undefined
+  });
+  const packageScope = input.packageScope ?? null;
+  const visibility = input.visibility ?? "all";
+  const allowedKinds = input.kinds ?? [];
+  const search = input.search?.trim().toLowerCase() ?? "";
+  const offset = Math.max(0, input.offset ?? 0);
+  const limit = Math.max(1, input.limit ?? 32);
+  const allItems: RuntimeSymbolBrowserEntryDto[] = [
+    ...packageResult.data.externalSymbols.map((entry) => ({ ...entry, packageName: packageResult.data.packageName })),
+    ...packageResult.data.internalSymbols.map((entry) => ({ ...entry, packageName: packageResult.data.packageName }))
+  ].filter((entry) => {
+    const matchesVisibility = visibility === "all" || entry.visibility === visibility;
+    const matchesKind = allowedKinds.length === 0 || allowedKinds.includes(entry.kind);
+    const matchesSearch =
+      search.length === 0 ||
+      entry.symbol.toLowerCase().includes(search) ||
+      entry.packageName.toLowerCase().includes(search);
+    return matchesVisibility && matchesKind && matchesSearch;
+  });
+  const items = allItems.slice(offset, offset + limit);
+  return {
+    contractVersion: 1,
+    domain: "runtime",
+    operation: "runtime.symbol_page",
+    kind: "query",
+    status: "ok",
+    data: {
+      packageScope,
+      availablePackages: packageResult.data.availablePackages,
+      nicknames: packageResult.data.nicknames,
+      useList: packageResult.data.useList,
+      totalCount: allItems.length,
+      offset,
+      limit,
+      hasMore: offset + limit < allItems.length,
+      items,
+      summary: packageScope ? `${packageScope} symbol browser page.` : "Mock symbol browser page."
+    },
+    metadata: packageResult.metadata
+  };
+}
+
 export function querySourcePreview(input: {
   environmentId: string;
   path: string;
@@ -2680,6 +2773,11 @@ export function commandEvaluateInContext(input: {
   environmentId: string;
   form: string;
   packageName?: string;
+  recoveryLaunch?: {
+    source: "incident-restart";
+    incidentId: string;
+    restartLabel: string;
+  } | null;
 }): CommandResultDto<RuntimeEvalResultDto> {
   const binding = { environmentId: input.environmentId };
   const normalized = input.form.trim();

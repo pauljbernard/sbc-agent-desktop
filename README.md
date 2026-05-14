@@ -87,25 +87,28 @@ The Electron application should increasingly be a thin host over that model rath
 
 ## Architecture At A Glance
 
-The four diagrams below capture the current architectural frame that the rest of this repository documents in detail.
+The older static PNG architecture set has been retired from the primary docs so the UX repo does not compete with the canonical architecture vocabulary in `sbcl-agent`.
 
-### Realtime Introspective Environment Architecture
+The current stack is:
 
-This diagram explains the architectural premise that makes `Surface` different from a conventional desktop for an external agent: the agent and the environment share one live runtime, so observation and action are environment-native rather than indirect.
+```mermaid
+flowchart TB
+    React["React Surface Desktop"]
+    Actor["Actor System"]
+    Kernel["Governed Kernel"]
+    Runtime["SBCL / Common Lisp Runtime"]
 
-<img src="docs/RealtimeIntrospectiveEnvironmentArchitecture.png" alt="Realtime introspective environment architecture" style="display:block;max-width:100%;height:auto;margin:1rem auto;" />
+    React --> Actor
+    Actor --> Kernel
+    Kernel --> Runtime
+```
 
-### Execution Kernel Architecture
+The authoritative architecture references now live in the main `sbcl-agent` docs:
 
-<img src="docs/KernelArchitecture.png" alt="Execution kernel architecture" style="display:block;max-width:100%;height:auto;margin:1rem auto;" />
-
-### Conversational Context Architecture
-
-<img src="docs/ConversationalContextArchitecture.png" alt="Conversational context architecture" style="display:block;max-width:100%;height:auto;margin:1rem auto;" />
-
-### Governance Architecture
-
-<img src="docs/GovernanceArchitecture.png" alt="Governance architecture" style="display:block;max-width:100%;height:auto;margin:1rem auto;" />
+- [Architecture and Design](../sbcl-agent/docs/architecture.md)
+- [Actor Runtime And Governed Kernel](../sbcl-agent/docs/robust-actor-kernel-architecture.md)
+- [Actor System Surface](../sbcl-agent/docs/actor-system-panel.md)
+- [Conversation Runtime](../sbcl-agent/docs/conversation-architecture.md)
 
 ## Current Desktop Snapshot
 

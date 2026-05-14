@@ -42,13 +42,35 @@ Agents can inspect, evaluate, mutate, stage, and explain work across multiple la
 
 The diagram below shows the architectural distinction that drives the whole system. `sbcl-agent` and `Surface` are not arranged like a traditional external agent supervising a target environment from the outside. The agent executes inside the same live SBCL environment that holds runtime state, transcript, memory, governance, evidence, and desktop state.
 
-<img src="RealtimeIntrospectiveEnvironmentArchitecture.png" alt="Realtime introspective environment architecture" style="display:block;max-width:100%;height:auto;margin:1rem auto;" />
+```mermaid
+flowchart LR
+    Agent["Integrated Agent"]
+    Runtime["SBCL Environment"]
+    Source["Source Truth"]
+    Image["Image Truth"]
+    Workflow["Workflow Truth"]
+
+    Agent <--> Runtime
+    Runtime --> Source
+    Runtime --> Image
+    Runtime --> Workflow
+```
 
 ## Execution Kernel Architecture
 
 At the center of that environment is the execution kernel: `invoke`, `inspect`, and `control` govern how runtime work happens, how state is read, and how policy-mediated intervention occurs.
 
-<img src="KernelArchitecture.png" alt="Execution kernel architecture" style="display:block;max-width:100%;height:auto;margin:1rem auto;" />
+```mermaid
+flowchart TB
+    React["Surface Desktop"]
+    Actor["Actor System"]
+    Kernel["Governed Kernel"]
+    Runtime["SBCL / Common Lisp"]
+
+    React --> Actor
+    Actor --> Kernel
+    Kernel --> Runtime
+```
 
 ## The System Keeps Three Realities Together
 
@@ -132,7 +154,26 @@ That means a conversation is not just "discussion about the work." It can be par
 
 The conversation layer does not send only the current prompt to the model. It assembles live context from the Surface desktop, the SBCL environment, transcript history, and deliberate operator memory before a turn is executed.
 
-<img src="ConversationalContextArchitecture.png" alt="Conversational context architecture" style="display:block;max-width:100%;height:auto;margin:1rem auto;" />
+```mermaid
+flowchart LR
+    UI["Surface UI"]
+    Chat["ContextChatActor"]
+    Thread["thread / turn state"]
+    Retrieval["retrieval dossier"]
+    Runtime["runtime state"]
+    Policy["policy posture"]
+    Provider["provider execution"]
+
+    UI --> Chat
+    Chat --> Thread
+    Chat --> Retrieval
+    Chat --> Runtime
+    Chat --> Policy
+    Thread --> Provider
+    Retrieval --> Provider
+    Runtime --> Provider
+    Policy --> Provider
+```
 
 ## The Browser Is A Live Image Browser
 
@@ -201,7 +242,28 @@ The goal is not bureaucracy. The goal is continuity:
 
 Governance is part of the operating environment itself. Runtime actions, approvals, work-items, incidents, evidence, and recovery form one continuous loop rather than being split across unrelated external systems.
 
-<img src="GovernanceArchitecture.png" alt="Governance architecture" style="display:block;max-width:100%;height:auto;margin:1rem auto;" />
+```mermaid
+sequenceDiagram
+    participant UI as Surface UI
+    participant Chat as ContextChatActor
+    participant Gov as GovernanceActor
+    participant Runtime as RuntimeActor
+    participant Kernel as Governed Kernel
+
+    UI->>Chat: submit intent
+    Chat->>Gov: RequestExecution
+    Gov->>Runtime: AuthorizeRuntimeEvaluation
+    Runtime->>Kernel: invoke
+    Kernel-->>Runtime: result / evidence
+    Runtime-->>Chat: reply
+    Chat-->>UI: project governed outcome
+```
+
+The canonical architecture pages now live in the main repository docs:
+
+- [`sbcl-agent` architecture](../../sbcl-agent/docs/architecture.md)
+- [`sbcl-agent` actor runtime](../../sbcl-agent/docs/robust-actor-kernel-architecture.md)
+- [`sbcl-agent` actor system surface](../../sbcl-agent/docs/actor-system-panel.md)
 
 ## Why This Matters For Agentic Development
 

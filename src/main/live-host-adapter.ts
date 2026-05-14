@@ -1,4 +1,4 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import { appendFile, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -27,10 +27,13 @@ import type {
   CalculatorSummaryDto,
   CommandResultDto,
   CompleteWorkItemValidationsInput,
+  ConfigureMcpServerInput,
   ConfigureProviderProfileInput,
   ConsoleLogEntryDto,
   ConsoleLogQueryInput,
   ConsoleLogStreamDto,
+  ConversationLatencySummaryDto,
+  ConversationWorkspaceDto,
   ConversationAttachmentDto,
   CorrectiveActionDto,
   CorrectiveContextDto,
@@ -53,6 +56,7 @@ import type {
   DesktopRestoreResultDto,
   EnvironmentImageRecordDto,
   EnvironmentImageRegistryDto,
+  EnvironmentBootstrapDto,
   EnvironmentEventDto,
   EventSubscriptionInput,
   EnvironmentStatusDto,
@@ -68,8 +72,12 @@ import type {
   MemoryEntryDto,
   MemoryListDto,
   PackageBrowserDto,
+  RuntimeSymbolBrowserPageDto,
   PackageManagementCommandResultDto,
   PackageManagementSummaryDto,
+  DesktopTaskManifestDto,
+  DesktopTaskRecordDto,
+  McpServerConfigDto,
   ProjectArchitectureDecisionDto,
   ProjectDetailDto,
   ProjectFeatureSpecificationDto,
@@ -101,9 +109,11 @@ import type {
   ReconciliationDecisionDto,
   ResumeWorkItemInput,
   RollbackWorkItemInput,
+  RemoveMcpServerInput,
   RuntimeEvalResultDto,
   RuntimeEntityDetailDto,
   RuntimeInspectionResultDto,
+  RuntimeSymbolBrowserPageInput,
   RuntimeSystemEntryDto,
   RuntimeScopeSummaryDto,
   RuntimeSummaryDto,
@@ -119,6 +129,7 @@ import type {
   TurnState,
   ThreadDetailDto,
   ThreadSummaryDto,
+  TranscriptWorkspaceDto,
   TruthPostureDto,
   TurnDetailDto,
   UpdateProjectConstitutionInput,
@@ -161,6 +172,11 @@ interface RawServiceResponse<TData = unknown> {
 interface StreamingBridgeFrame {
   type: "event" | "result";
   payload: unknown;
+}
+
+interface PersistentBridgeResponseFrame {
+  id: number;
+  response: unknown;
 }
 
 const DEFAULT_SBCL_PATH_CANDIDATES = [
@@ -795,7 +811,8 @@ function adaptEnvironmentSummaryResponse(
                 incidentId: `incident-summary-${environmentId}`,
                 title: "Live Incident Summary",
                 severity: Number(operatorStatus.openIncidentCount ?? 0) > 0 ? "high" : "moderate",
-                state: Number(operatorStatus.openIncidentCount ?? 0) > 0 ? "open" : "recovering"
+                state: Number(operatorStatus.openIncidentCount ?? 0) > 0 ? "open" : "recovering",
+                updatedAt: new Date().toISOString()
               }
             ]
           : [],
@@ -806,7 +823,8 @@ function adaptEnvironmentSummaryResponse(
                 requestId: `approval-summary-${environmentId}`,
                 title: "Outstanding Approvals",
                 summary: `${Number(operatorStatus.outstandingApprovalCount ?? 0)} approval obligations remain open in the live environment.`,
-                state: "awaiting"
+                state: "awaiting",
+                createdAt: new Date().toISOString()
               }
             ]
           : [],
@@ -1032,6 +1050,153 @@ function adaptPackageManagementCommandResponse(
     kind: "command",
     status: normalizeCommandStatus(response.status),
     data: camelizeKeys(response.data) as PackageManagementCommandResultDto,
+    metadata: normalizeMetadata(response.metadata)
+  };
+}
+
+function adaptDesktopTaskManifest(item: Record<string, unknown>): DesktopTaskManifestDto {
+  const normalized = camelizeKeys(item) as Record<string, unknown>;
+  return {
+    id: firstString(normalized.id) ?? "unknown/unknown",
+    target: firstString(normalized.target) ?? "unknown",
+    operation: firstString(normalized.operation) ?? "unknown",
+    capability: firstString(normalized.capability),
+    description: firstString(normalized.description),
+    requestSchema: asRecord(normalized.requestSchema),
+    resultSchema: asRecord(normalized.resultSchema),
+    approvalPolicy: firstString(normalized.approvalPolicy),
+    executionMode: firstString(normalized.executionMode),
+    retryPolicy: asRecord(normalized.retryPolicy),
+    backendKind: firstString(normalized.backendKind),
+    backendRef: firstString(normalized.backendRef),
+    version: typeof normalized.version === "number" ? normalized.version : null,
+    tags: asStringArray(normalized.tags),
+    discoverableP: Boolean(normalized.discoverableP ?? normalized.discoverable),
+    metadata: asRecord(normalized.metadata)
+  };
+}
+
+function adaptDesktopTaskRecord(item: Record<string, unknown>): DesktopTaskRecordDto {
+  const normalized = camelizeKeys(item) as Record<string, unknown>;
+  return {
+    id: firstString(normalized.id) ?? "desktop-task-record-unknown",
+    protocolVersion: typeof normalized.protocolVersion === "number" ? normalized.protocolVersion : null,
+    requestId: firstString(normalized.requestId),
+    requester: firstString(normalized.requester),
+    target: firstString(normalized.target) ?? "unknown",
+    operation: firstString(normalized.operation) ?? "unknown",
+    capability: firstString(normalized.capability),
+    backendKind: firstString(normalized.backendKind),
+    backendRef: firstString(normalized.backendRef),
+    status: firstString(normalized.status) ?? "unknown",
+    governanceStatus: firstString(normalized.governanceStatus),
+    approvalStatus: firstString(normalized.approvalStatus),
+    approvalId: firstString(normalized.approvalId),
+    sessionId: firstString(normalized.sessionId),
+    retryPolicy: asRecord(normalized.retryPolicy),
+    retryCount: typeof normalized.retryCount === "number" ? normalized.retryCount : null,
+    maxAttempts: typeof normalized.maxAttempts === "number" ? normalized.maxAttempts : null,
+    retryableP:
+      typeof normalized.retryableP === "boolean"
+        ? normalized.retryableP
+        : typeof normalized.retryable === "boolean"
+          ? normalized.retryable
+          : null,
+    idempotencyKey: firstString(normalized.idempotencyKey),
+    threadId: firstString(normalized.threadId),
+    turnId: firstString(normalized.turnId),
+    conversationOperationId: firstString(normalized.conversationOperationId),
+    actorMessageId: firstString(normalized.actorMessageId, asRecord(normalized.actorMessage).id),
+    actorSlice: firstString(normalized.actorSlice),
+    actorMessage: asRecord(normalized.actorMessage),
+    requestMetadata: asRecord(normalized.requestMetadata),
+    createdAt: firstString(normalized.createdAt),
+    approvedAt: firstString(normalized.approvedAt),
+    startedAt: firstString(normalized.startedAt),
+    completedAt: firstString(normalized.completedAt),
+    lastError: asRecord(normalized.lastError),
+    resolution: asRecord(normalized.resolution),
+    result: asRecord(normalized.result),
+    metadata: asRecord(normalized.metadata)
+  };
+}
+
+function adaptDesktopTaskManifestListResponse(
+  response: RawServiceResponse<Array<Record<string, unknown>>>
+): QueryResultDto<DesktopTaskManifestDto[]> {
+  return {
+    contractVersion: response.contractVersion,
+    domain: response.domain,
+    operation: response.operation,
+    kind: "query",
+    status: response.status === "error" ? "error" : "ok",
+    data: asRecordArray(response.data).map(adaptDesktopTaskManifest),
+    metadata: normalizeMetadata(response.metadata)
+  };
+}
+
+function adaptDesktopTaskRecordListResponse(
+  response: RawServiceResponse<Array<Record<string, unknown>>>
+): QueryResultDto<DesktopTaskRecordDto[]> {
+  return {
+    contractVersion: response.contractVersion,
+    domain: "desktop-task",
+    operation: response.operation,
+    kind: "query",
+    status: response.status === "error" ? "error" : "ok",
+    data: Array.isArray(response.data) ? response.data.map(adaptDesktopTaskRecord) : [],
+    metadata: normalizeMetadata(response.metadata)
+  };
+}
+
+function adaptMcpServerConfig(item: Record<string, unknown>): McpServerConfigDto {
+  const normalized = camelizeKeys(item) as Record<string, unknown>;
+  return {
+    id: firstString(normalized.id) ?? "mcp-server",
+    name: firstString(normalized.name) ?? "MCP Server",
+    transport: firstString(normalized.transport) ?? "stdio",
+    command: firstString(normalized.command),
+    arguments: asStringArray(normalized.arguments),
+    environmentVariables: asRecord(normalized.environmentVariables) as Record<string, string> | null,
+    workingDirectory: firstString(normalized.workingDirectory),
+    endpoint: firstString(normalized.endpoint),
+    capabilities: asStringArray(normalized.capabilities),
+    retryPolicy: asRecord(normalized.retryPolicy),
+    healthStatus: firstString(normalized.healthStatus),
+    enabledP: Boolean(normalized.enabledP ?? normalized.enabled),
+    discoverableP: Boolean(normalized.discoverableP ?? normalized.discoverable),
+    createdAt: firstString(normalized.createdAt),
+    updatedAt: firstString(normalized.updatedAt),
+    operationCount: typeof normalized.operationCount === "number" ? normalized.operationCount : 0,
+    operations: asRecordArray(normalized.operations).map(adaptDesktopTaskManifest),
+    metadata: asRecord(normalized.metadata)
+  };
+}
+
+function adaptMcpServerConfigListResponse(
+  response: RawServiceResponse<Array<Record<string, unknown>>>
+): QueryResultDto<McpServerConfigDto[]> {
+  return {
+    contractVersion: response.contractVersion,
+    domain: response.domain,
+    operation: response.operation,
+    kind: "query",
+    status: response.status === "error" ? "error" : "ok",
+    data: asRecordArray(response.data).map(adaptMcpServerConfig),
+    metadata: normalizeMetadata(response.metadata)
+  };
+}
+
+function adaptMcpServerConfigDetailResponse(
+  response: RawServiceResponse<Record<string, unknown>>
+): QueryResultDto<McpServerConfigDto> {
+  return {
+    contractVersion: response.contractVersion,
+    domain: response.domain,
+    operation: response.operation,
+    kind: "query",
+    status: response.status === "error" ? "error" : "ok",
+    data: adaptMcpServerConfig(asRecord(response.data)),
     metadata: normalizeMetadata(response.metadata)
   };
 }
@@ -1323,12 +1488,22 @@ function adaptRuntimeEvalResponse(
   input: {
     form: string;
     packageName?: string;
+    recoveryLaunch?: {
+      source: "incident-restart";
+      incidentId: string;
+      restartLabel: string;
+    } | null;
   }
 ): CommandResultDto<RuntimeEvalResultDto> {
   const data = asRecord(response.data);
   const metadata = normalizeMetadata(response.metadata);
   const rawResult = data.result;
   const normalizedResult = camelizeKeys(rawResult);
+  const normalizedData = camelizeKeys(data) as Record<string, unknown>;
+  const recoveryLaunchRecord =
+    normalizedData.recoveryLaunch && typeof normalizedData.recoveryLaunch === "object"
+      ? (normalizedData.recoveryLaunch as Record<string, unknown>)
+      : null;
   const isError = response.status === "error";
   const fallbackFailureSummary = `Evaluation of ${input.form} in ${input.packageName ?? "the active package"} failed.`;
   const valuePreview =
@@ -1367,6 +1542,17 @@ function adaptRuntimeEvalResponse(
             : `Evaluated ${input.form} in ${String(data.package ?? input.packageName ?? "the active package")}.`
       ),
       valuePreview,
+      recoveryLaunch:
+        recoveryLaunchRecord &&
+        recoveryLaunchRecord.source === "incident-restart" &&
+        typeof recoveryLaunchRecord.incidentId === "string" &&
+        typeof recoveryLaunchRecord.restartLabel === "string"
+          ? {
+              source: "incident-restart",
+              incidentId: recoveryLaunchRecord.incidentId,
+              restartLabel: recoveryLaunchRecord.restartLabel
+            }
+          : input.recoveryLaunch ?? null,
       operationId: data.workItemId ? String(data.workItemId) : null,
       artifactIds: [],
       approvalId: null,
@@ -1481,7 +1667,9 @@ function adaptRuntimeEntityDetailResponse(
       kind === "class" ||
       kind === "macro" ||
       kind === "function" ||
-      kind === "variable"
+      kind === "variable" ||
+      kind === "package" ||
+      kind === "object"
     ) {
       return kind as RuntimeEntityDetailDto["entityKind"];
     }
@@ -1572,6 +1760,54 @@ function adaptPackageBrowserResponse(
   };
 }
 
+function adaptRuntimeSymbolPageResponse(
+  response: RawServiceResponse<Record<string, unknown>>
+): QueryResultDto<RuntimeSymbolBrowserPageDto> {
+  const data = asRecord(response.data);
+  const items = asRecordArray(data.items).map((entry) => ({
+    symbol: String(entry.symbol ?? "UNKNOWN"),
+    packageName: String(entry.packageName ?? entry.package_name ?? "CL-USER"),
+    kind: (() => {
+      const kind = String(entry.kind ?? "unknown");
+      if (
+        kind === "function" ||
+        kind === "variable" ||
+        kind === "macro" ||
+        kind === "class" ||
+        kind === "generic-function"
+      ) {
+        return kind as "function" | "variable" | "macro" | "class" | "generic-function";
+      }
+      return "unknown" as const;
+    })(),
+    visibility: (String(entry.visibility ?? "internal") === "external" ? "external" : "internal") as
+      | "external"
+      | "internal"
+  }));
+  return {
+    contractVersion: response.contractVersion,
+    domain: "runtime",
+    operation: "runtime.symbol_page",
+    kind: "query",
+    status: response.status === "error" ? "error" : "ok",
+    data: {
+      packageScope: (data.packageScope as string | null | undefined) ?? (data.package_scope as string | null | undefined) ?? null,
+      availablePackages: asStringArray(
+        (data.availablePackages as unknown[] | undefined) ?? (data.available_packages as unknown[] | undefined)
+      ),
+      nicknames: asStringArray(data.nicknames),
+      useList: asStringArray((data.useList as unknown[] | undefined) ?? (data.use_list as unknown[] | undefined)),
+      totalCount: Number(data.totalCount ?? data.total_count ?? items.length),
+      offset: Number(data.offset ?? 0),
+      limit: Number(data.limit ?? items.length),
+      hasMore: Boolean(data.hasMore ?? data.has_more ?? false),
+      items,
+      summary: String(data.summary ?? "Paged runtime symbol browser response.")
+    },
+    metadata: normalizeMetadata(response.metadata)
+  };
+}
+
 function adaptEventStreamResponse(
   response: RawServiceResponse<Record<string, unknown>>
 ): QueryResultDto<EnvironmentEventDto[]> {
@@ -1586,7 +1822,7 @@ function adaptEventStreamResponse(
     threadId: (event.threadId as string | null | undefined) ?? null,
     turnId: (event.turnId as string | null | undefined) ?? null,
     visibility: (event.visibility as string | null | undefined) ?? null,
-    payload: (event.payload as Record<string, unknown> | undefined) ?? {}
+    payload: adaptEnvironmentEventPayload(event.payload)
   }));
 
   return {
@@ -1597,6 +1833,21 @@ function adaptEventStreamResponse(
     status: response.status === "error" ? "error" : "ok",
     data: events,
     metadata: normalizeMetadata(response.metadata)
+  };
+}
+
+function adaptEnvironmentEventPayload(payload: unknown): Record<string, unknown> {
+  const rawPayload = asRecord(payload);
+  const normalizedPayload = camelizeKeys(rawPayload) as Record<string, unknown>;
+  const nestedSummary = asRecord(rawPayload.eventSummary);
+
+  if (Object.keys(nestedSummary).length === 0) {
+    return normalizedPayload;
+  }
+
+  return {
+    ...normalizedPayload,
+    ...(camelizeKeys(nestedSummary) as Record<string, unknown>)
   };
 }
 
@@ -2028,7 +2279,8 @@ function adaptApprovalListResponse(
         requestId: String(item.id ?? "approval-request"),
         title: String(item.goal ?? "Approval Request"),
         summary: `${summarizeWaitReason(waitReason)} Policy: ${policyId}.`,
-        state: inferApprovalState(waitReason)
+        state: inferApprovalState(waitReason),
+        createdAt: universalTimeToIso(primaryRequirement.requestedAt ?? item.updatedAt ?? item.createdAt)
       };
     }),
     metadata: normalizeMetadata(response.metadata)
@@ -2135,7 +2387,8 @@ function adaptIncidentListResponse(
       incidentId: String(item.id ?? "incident"),
       title: String(item.title ?? "Incident"),
       severity: incidentSeverity(item.kind as string | undefined),
-      state: incidentState(item.status as string | undefined)
+      state: incidentState(item.status as string | undefined),
+      updatedAt: universalTimeToIso(item.updatedAt ?? item.createdAt)
     })),
     metadata: normalizeMetadata(response.metadata)
   };
@@ -2146,6 +2399,7 @@ function adaptIncidentDetailResponse(
 ): QueryResultDto<IncidentDetailDto> {
   const data = asRecord(response.data);
   const runtimeContext = asRecord(data.runtimeContext);
+  const conditionDetail = asRecord(runtimeContext.conditionDetail);
   const recoveryPlan = asRecord(data.recoveryPlan);
   const remediationPlan = asRecord(data.remediationPlan);
   const wait = asRecord(data.wait);
@@ -2174,6 +2428,7 @@ function adaptIncidentDetailResponse(
       severity: incidentSeverity(data.kind as string | undefined),
       state: incidentState(data.status as string | undefined),
       runtimeId: (runtimeContext.package as string | undefined) ?? null,
+      linkedThreadId: firstString(asRecord(data.thread).id),
       recoveryState:
         recoveryPlan.status === "resolved"
           ? "resolved"
@@ -2209,6 +2464,28 @@ function adaptIncidentDetailResponse(
               blockers: asStringArray(remediationPlan.blockers)
             }
           : null,
+      conditionDetail:
+        Object.keys(conditionDetail).length > 0
+          ? {
+              type: firstString(conditionDetail.type),
+              message: String(conditionDetail.message ?? data.condition ?? data.summary ?? "Runtime incident recorded."),
+              printed: firstString(conditionDetail.printed),
+              class: firstString(conditionDetail.class),
+              restartCount: Number(conditionDetail.restartCount ?? 0),
+              slotCount:
+                typeof conditionDetail.slotCount === "number" ? Number(conditionDetail.slotCount) : null,
+              slots: asRecordArray(conditionDetail.slots).map((slot) => ({
+                name: String(slot.name ?? "SLOT"),
+                boundp: Boolean(slot.boundp),
+                printed: firstString(slot.printed),
+                type: firstString(slot.type)
+              }))
+            }
+          : null,
+      restartSuggestions: asRecordArray(runtimeContext.restartSuggestions).map((entry) => ({
+        name: firstString(entry.name),
+        label: String(entry.label ?? entry.name ?? "Restart")
+      })),
       artifactIds: [],
       linkedEntities,
       traceNeighborhood:
@@ -2272,6 +2549,7 @@ function adaptWorkItemListResponse(
         workItemId: String(item.id ?? "work-item"),
         title: String(item.goal ?? "Work Item"),
         state: workStateFromStatus(item.status as string | undefined, waitingReason ?? undefined),
+        updatedAt: universalTimeToIso(item.updatedAt ?? item.createdAt),
         waitingReason,
         approvalCount: approvalRequirements.length,
         incidentCount,
@@ -3149,6 +3427,38 @@ function adaptArtifactDetailResponse(
   };
 }
 
+function adaptMemoryEntry(raw: unknown): MemoryEntryDto {
+  return camelizeKeys(asRecord(raw)) as MemoryEntryDto;
+}
+
+function adaptMemoryListResponse(
+  response: RawServiceResponse<Record<string, unknown> | Array<Record<string, unknown>>>
+): QueryResultDto<MemoryListDto> {
+  const data = camelizeKeys(response.data) as Record<string, unknown> | Array<Record<string, unknown>>;
+  const entries = Array.isArray(data)
+    ? data.map(adaptMemoryEntry)
+    : Array.isArray((data as Record<string, unknown>)?.entries)
+      ? ((data as Record<string, unknown>).entries as unknown[]).map(adaptMemoryEntry)
+      : Array.isArray((data as Record<string, unknown>)?.memories)
+        ? ((data as Record<string, unknown>).memories as unknown[]).map(adaptMemoryEntry)
+        : [];
+  const entryCountValue = !Array.isArray(data) ? (data as Record<string, unknown>)?.entryCount : null;
+  const entryCount =
+    typeof entryCountValue === "number" && Number.isFinite(entryCountValue) ? entryCountValue : entries.length;
+  return {
+    contractVersion: response.contractVersion,
+    domain: "memory",
+    operation: response.operation,
+    kind: "query",
+    status: "ok",
+    data: {
+      entries,
+      entryCount
+    },
+    metadata: normalizeMetadata(response.metadata)
+  };
+}
+
 function adaptThreadListResponse(
   response: RawServiceResponse<Array<Record<string, unknown>>>
 ): QueryResultDto<ThreadSummaryDto[]> {
@@ -3288,6 +3598,109 @@ function adaptThreadDetailResponse(
   };
 }
 
+function adaptConversationWorkspaceResponse(
+  response: RawServiceResponse<Record<string, unknown>>
+): QueryResultDto<ConversationWorkspaceDto> {
+  const data = asRecord(response.data);
+  const threadsResponse = adaptThreadListResponse({
+    ...response,
+    data: asRecordArray(data.threads)
+  });
+  const selectedThreadData = asRecord(data.selectedThread);
+  const selectedThread =
+    Object.keys(selectedThreadData).length > 0
+      ? adaptThreadDetailResponse({
+          ...response,
+          data: selectedThreadData
+        }).data
+      : null;
+  const selectedTurnData = asRecord(data.selectedTurn);
+  const selectedTurn =
+    Object.keys(selectedTurnData).length > 0
+      ? adaptTurnDetailResponse({
+          ...response,
+          data: selectedTurnData
+        }).data
+      : null;
+  return {
+    contractVersion: response.contractVersion,
+    domain: "conversation",
+    operation: response.operation,
+    kind: "query",
+    status: response.status === "error" ? "error" : "ok",
+    data: {
+      threads: threadsResponse.data,
+      selectedThread,
+      selectedTurn
+    },
+    metadata: normalizeMetadata(response.metadata)
+  };
+}
+
+function adaptTranscriptWorkspaceResponse(
+  response: RawServiceResponse<Record<string, unknown>>
+): QueryResultDto<TranscriptWorkspaceDto> {
+  const data = asRecord(response.data);
+  const eventsResponse = adaptEventStreamResponse({
+    ...response,
+    data: {
+      events: asRecordArray(asRecord(data.events).events)
+    }
+  });
+  const environmentConsoleRaw = asRecord(data.environmentConsole);
+  const environmentConsole =
+    Object.keys(environmentConsoleRaw).length > 0
+      ? adaptConsoleLogStreamResponse({
+          ...response,
+          data: environmentConsoleRaw
+        }).data
+      : null;
+  return {
+    contractVersion: response.contractVersion,
+    domain: "observation",
+    operation: response.operation,
+    kind: "query",
+    status: response.status === "error" ? "error" : "ok",
+    data: {
+      events: eventsResponse.data,
+      environmentConsole
+    },
+    metadata: normalizeMetadata(response.metadata)
+  };
+}
+
+function adaptEnvironmentBootstrapResponse(
+  response: RawServiceResponse<Record<string, unknown>>
+): QueryResultDto<EnvironmentBootstrapDto> {
+  const data = asRecord(response.data);
+  return {
+    contractVersion: response.contractVersion,
+    domain: "environment",
+    operation: response.operation,
+    kind: "query",
+    status: response.status === "error" ? "error" : "ok",
+    data: {
+      summary: adaptEnvironmentSummaryResponse({
+        ...response,
+        data: asRecord(data.summary)
+      }).data,
+      status: adaptEnvironmentStatusResponse({
+        ...response,
+        data: asRecord(data.status)
+      }).data,
+      workspaceSummary: adaptWorkspaceSummaryResponse({
+        ...response,
+        data: asRecord(data.workspaceSummary)
+      }).data,
+      desktopModel: adaptDesktopModelResponse({
+        ...response,
+        data: asRecord(data.desktopModel)
+      }).data
+    },
+    metadata: normalizeMetadata(response.metadata)
+  };
+}
+
 function previewOperationValue(value: unknown): string | null {
   const maxLength = 2000;
   const truncate = (text: string): string =>
@@ -3420,13 +3833,64 @@ function adaptCreateProjectResponse(
   };
 }
 
+function extractAssistantResponseText(value: unknown): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  const trimmed = value.trim();
+  const structMatch = trimmed.match(
+    /^#S\(ASSISTANT-RESPONSE\s+:MESSAGE\s+([\s\S]*?)\s+:ACTIONS\b/i
+  );
+  return structMatch ? structMatch[1].trim() : trimmed;
+}
+
 function adaptSendConversationMessageResponse(
   response: RawServiceResponse<Record<string, unknown>>
 ): CommandResultDto<SendConversationMessageResultDto> {
-  const data = asRecord(response.data);
+  const data = camelizeKeys(asRecord(response.data)) as Record<string, unknown>;
   const thread = asRecord(data.thread);
   const turn = asRecord(data.turn);
   const assistantMessage = asRecord(data.assistantMessage);
+  const responsePayload = camelizeKeys(asRecord(data.response)) as Record<string, unknown>;
+  const responseMetadata = camelizeKeys(asRecord(responsePayload.metadata)) as Record<string, unknown>;
+  const resolvedAssistantMessage = extractAssistantResponseText(
+    assistantMessage.content ??
+      data.message ??
+      data.summary ??
+      data.error ??
+      responsePayload.message ??
+      data.response
+  );
+  const resolvedSummary = extractAssistantResponseText(
+    data.outcomeSummary ??
+      data.reasoningSummary ??
+      data.summary ??
+      data.error ??
+      assistantMessage.content ??
+      data.message ??
+      responsePayload.message ??
+      data.response ??
+      "Conversation turn executed."
+  );
+  const desktopTaskResults = asRecordArray(
+    data.desktopTaskResults ?? responseMetadata.desktopTaskResults
+  ).map((entry) => camelizeKeys(asRecord(entry)) as Record<string, unknown>);
+  const taskRecordSummaries = asRecordArray(
+    data.taskRecordSummaries ?? responseMetadata.desktopTaskRecords ?? responseMetadata.taskRecordSummaries
+  ).map((entry) => camelizeKeys(asRecord(entry)) as Record<string, unknown>);
+  const pendingApproval = (() => {
+    const pending = asRecord(data.pendingApproval ?? responseMetadata.pendingApproval);
+    return Object.keys(pending).length > 0 ? (camelizeKeys(pending) as Record<string, unknown>) : null;
+  })();
+  const runtimeReply = (() => {
+    const reply = asRecord(data.runtimeReply ?? responseMetadata.runtimeReply);
+    return Object.keys(reply).length > 0 ? (camelizeKeys(reply) as Record<string, unknown>) : null;
+  })();
+  const actorFlow = (() => {
+    const flow = asRecord(data.actorFlow ?? responseMetadata.actorFlow);
+    return Object.keys(flow).length > 0 ? (camelizeKeys(flow) as Record<string, unknown>) : null;
+  })();
 
   return {
     contractVersion: response.contractVersion,
@@ -3444,13 +3908,13 @@ function adaptSendConversationMessageResponse(
     data: {
       threadId: String(thread.id ?? data.threadId ?? "thread"),
       turnId: String(turn.id ?? data.turnId ?? "turn"),
-      assistantMessage: String(assistantMessage.content ?? data.message ?? ""),
-      summary: String(
-        data.outcomeSummary ??
-          data.reasoningSummary ??
-          assistantMessage.content ??
-          "Conversation turn executed."
-      )
+      assistantMessage: resolvedAssistantMessage,
+      summary: resolvedSummary,
+      desktopTaskResults,
+      taskRecordSummaries,
+      pendingApproval,
+      runtimeReply,
+      actorFlow
     },
     metadata: normalizeMetadata(response.metadata)
   };
@@ -3545,10 +4009,68 @@ function adaptTurnDetailResponse(
   };
 }
 
+function adaptConversationLatencyResponse(
+  response: RawServiceResponse<Record<string, unknown>>
+): QueryResultDto<ConversationLatencySummaryDto> {
+  const data = asRecord(camelizeKeys(response.data));
+  const requestBuilt = asRecord(data.requestBuilt);
+  const firstStream = asRecord(data.firstStream);
+  const responseComplete = asRecord(data.responseComplete);
+  return {
+    contractVersion: response.contractVersion,
+    domain: "conversation",
+    operation: response.operation,
+    kind: "query",
+    status: response.status === "error" ? "error" : "ok",
+    data: {
+      turnId: data.turnId ? String(data.turnId) : null,
+      sampleCount: typeof data.sampleCount === "number" ? data.sampleCount : 0,
+      samples: asRecordArray(data.samples).map((sample) => ({
+        kind: String(sample.kind ?? "unknown"),
+        timestamp: universalTimeToIso(sample.timestamp),
+        payload: Object.keys(asRecord(sample.payload)).length > 0 ? asRecord(sample.payload) : null
+      })),
+      requestBuilt: Object.keys(requestBuilt).length > 0 ? requestBuilt : null,
+      firstStream: Object.keys(firstStream).length > 0 ? firstStream : null,
+      responseComplete: Object.keys(responseComplete).length > 0 ? responseComplete : null,
+      providerPhases: asRecordArray(data.providerPhases).map((phase) => {
+        const phaseRecord = asRecord(phase);
+        const { timestamp, phase: phaseName, ...payload } = phaseRecord;
+        return {
+          timestamp: universalTimeToIso(timestamp),
+          phase: phaseName ? String(phaseName) : null,
+          payload
+        };
+      })
+    },
+    metadata: normalizeMetadata(response.metadata)
+  };
+}
+
 export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
   private currentBinding: BindingDto | null = DEFAULT_LIVE_BINDING;
   private bridgeQueue: Promise<void> = Promise.resolve();
   private focusedWorkspaceOverride: WorkspaceId | null = null;
+  private persistentBridgeProcess: ChildProcessWithoutNullStreams | null = null;
+  private persistentBridgeReadline: ReturnType<typeof createInterface> | null = null;
+  private persistentBridgeRequestId = 0;
+  private persistentBridgeWarmupRequested = false;
+  private pendingEnvironmentBootstrapWarmup:
+    | {
+        environmentId: string;
+        startedAt: number;
+        promise: Promise<QueryResultDto<EnvironmentBootstrapDto>>;
+      }
+    | null = null;
+  private persistentBridgePending = new Map<
+    number,
+    {
+      resolve: (value: unknown) => void;
+      reject: (error: Error) => void;
+      operation: string;
+      startedAt: number;
+    }
+  >();
 
   private preferences: DesktopPreferencesDto = {
     lastWorkspace: "environment",
@@ -3601,7 +4123,164 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
   };
   private desktopPreferencesWriteQueue: Promise<DesktopPreferencesDto> = Promise.resolve(this.preferences);
 
-  constructor(private readonly options: LiveAdapterOptions) {}
+  constructor(private readonly options: LiveAdapterOptions) {
+    this.schedulePersistentBridgeWarmup();
+  }
+
+  private schedulePersistentBridgeWarmup(): void {
+    if (this.options.transport !== "pipe" || this.persistentBridgeWarmupRequested) {
+      return;
+    }
+    this.persistentBridgeWarmupRequested = true;
+    const startedAt = performance.now();
+    try {
+      void this.ensurePersistentBridge();
+      console.info(
+        "[bridge-perf] operation=%s durationMs=%d status=warmup-requested transport=persistent-pipe",
+        "persistent-bridge",
+        Math.round(performance.now() - startedAt)
+      );
+    } catch (error) {
+      this.persistentBridgeWarmupRequested = false;
+      console.info(
+        "[bridge-perf] operation=%s durationMs=%d status=warmup-error transport=persistent-pipe",
+        "persistent-bridge",
+        Math.round(performance.now() - startedAt)
+      );
+      throw error;
+    }
+    this.scheduleEnvironmentBootstrapWarmup();
+  }
+
+  private scheduleEnvironmentBootstrapWarmup(): void {
+    const environmentId = this.currentBinding?.environmentId;
+    if (!environmentId || this.pendingEnvironmentBootstrapWarmup) {
+      return;
+    }
+    const startedAt = performance.now();
+    const promise = this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "environment.bootstrap",
+      environmentId
+    ).then((response) => adaptEnvironmentBootstrapResponse(response));
+    this.pendingEnvironmentBootstrapWarmup = {
+      environmentId,
+      startedAt,
+      promise
+    };
+    console.info(
+      "[bridge-perf] operation=%s durationMs=%d status=warmup-requested transport=persistent-pipe",
+      "environment.bootstrap",
+      Math.round(performance.now() - startedAt)
+    );
+    void promise.finally(() => {
+      if (
+        this.pendingEnvironmentBootstrapWarmup &&
+        this.pendingEnvironmentBootstrapWarmup.environmentId === environmentId
+      ) {
+        // Keep the resolved promise briefly available for the first explicit bootstrap query.
+        setTimeout(() => {
+          if (
+            this.pendingEnvironmentBootstrapWarmup &&
+            this.pendingEnvironmentBootstrapWarmup.environmentId === environmentId &&
+            this.pendingEnvironmentBootstrapWarmup.startedAt === startedAt
+          ) {
+            this.pendingEnvironmentBootstrapWarmup = null;
+          }
+        }, 5000);
+      }
+    });
+  }
+
+  private async ensurePersistentBridge(): Promise<ChildProcessWithoutNullStreams> {
+    if (this.persistentBridgeProcess && !this.persistentBridgeProcess.killed) {
+      return this.persistentBridgeProcess;
+    }
+
+    const executable = resolveSbclExecutable();
+    const cwd = existsSync(this.options.projectDir) ? this.options.projectDir : os.homedir();
+    const env = buildSbclSpawnEnvironment();
+    const child = spawn(
+      executable,
+      [
+        "--script",
+        this.options.bridgePath,
+        this.options.projectDir,
+        this.options.environmentStatePath,
+        "--serve"
+      ],
+      {
+        cwd,
+        env,
+        stdio: ["pipe", "pipe", "pipe"]
+      }
+    );
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", (error) => {
+      const pending = Array.from(this.persistentBridgePending.values());
+      this.persistentBridgePending.clear();
+      this.persistentBridgeProcess = null;
+      this.persistentBridgeWarmupRequested = false;
+      this.persistentBridgeReadline?.close();
+      this.persistentBridgeReadline = null;
+      for (const entry of pending) {
+        entry.reject(error);
+      }
+    });
+    child.on("close", (code) => {
+      const pending = Array.from(this.persistentBridgePending.values());
+      this.persistentBridgePending.clear();
+      this.persistentBridgeProcess = null;
+      this.persistentBridgeWarmupRequested = false;
+      this.persistentBridgeReadline?.close();
+      this.persistentBridgeReadline = null;
+      for (const entry of pending) {
+        console.info(
+          "[bridge-perf] operation=%s durationMs=%d status=persistent-bridge-closed code=%s stderrBytes=%d",
+          entry.operation,
+          Math.round(performance.now() - entry.startedAt),
+          String(code ?? "unknown"),
+          stderr.length
+        );
+        entry.reject(
+          new Error(
+            stderr.trim() || `Persistent bridge exited before returning a result (exit code ${code ?? "unknown"}).`
+          )
+        );
+      }
+    });
+
+    const stdoutLines = createInterface({ input: child.stdout });
+    stdoutLines.on("line", (line) => {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        return;
+      }
+      let frame: PersistentBridgeResponseFrame;
+      try {
+        frame = camelizeKeys(JSON.parse(trimmed)) as PersistentBridgeResponseFrame;
+      } catch (error) {
+        const pending = Array.from(this.persistentBridgePending.values());
+        this.persistentBridgePending.clear();
+        for (const entry of pending) {
+          entry.reject(error instanceof Error ? error : new Error(String(error)));
+        }
+        return;
+      }
+      const pending = this.persistentBridgePending.get(frame.id);
+      if (!pending) {
+        return;
+      }
+      this.persistentBridgePending.delete(frame.id);
+      pending.resolve(frame.response);
+    });
+
+    this.persistentBridgeProcess = child;
+    this.persistentBridgeReadline = stdoutLines;
+    return child;
+  }
 
   async getHostStatus(): Promise<HostStatusDto> {
     return {
@@ -3624,6 +4303,8 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
     };
 
     this.currentBinding = nextBinding;
+    this.pendingEnvironmentBootstrapWarmup = null;
+    this.scheduleEnvironmentBootstrapWarmup();
 
     return {
       contractVersion: 1,
@@ -3642,7 +4323,7 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
   async getEnvironmentImageRegistry(): Promise<QueryResultDto<EnvironmentImageRegistryDto>> {
     const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
       "environment.image-registry",
-      this.currentBinding?.environmentId
+      undefined
     );
     return {
       contractVersion: response.contractVersion,
@@ -3760,6 +4441,23 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
     return adaptDesktopModelResponse(response);
   }
 
+  async environmentBootstrap(environmentId?: string): Promise<QueryResultDto<EnvironmentBootstrapDto>> {
+    const requestedEnvironmentId = environmentId ?? this.currentBinding?.environmentId;
+    if (
+      requestedEnvironmentId &&
+      this.pendingEnvironmentBootstrapWarmup &&
+      this.pendingEnvironmentBootstrapWarmup.environmentId === requestedEnvironmentId &&
+      performance.now() - this.pendingEnvironmentBootstrapWarmup.startedAt <= 5000
+    ) {
+      return this.pendingEnvironmentBootstrapWarmup.promise;
+    }
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "environment.bootstrap",
+      environmentId
+    );
+    return adaptEnvironmentBootstrapResponse(response);
+  }
+
   async environmentEvents(
     input: EventSubscriptionInput
   ): Promise<QueryResultDto<EnvironmentEventDto[]>> {
@@ -3770,10 +4468,34 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
         afterCursor: input.fromCursor,
         family: input.families?.[0],
         visibility: input.visibility?.[0],
-        limit: 50
+        limit: input.limit ?? 50
       }
     );
     return adaptEventStreamResponse(response);
+  }
+
+  async transcriptWorkspace(input: {
+    environmentId?: string;
+    families?: string[];
+    visibility?: string[];
+    eventLimit?: number;
+    includeEvents?: boolean;
+    includeEnvironmentConsole?: boolean;
+    consoleLimit?: number;
+  }): Promise<QueryResultDto<TranscriptWorkspaceDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "transcript.workspace",
+      input.environmentId,
+      {
+        family: input.families?.[0],
+        visibility: input.visibility?.[0],
+        eventLimit: input.eventLimit,
+        includeEvents: input.includeEvents !== false,
+        includeEnvironmentConsole: input.includeEnvironmentConsole !== false,
+        consoleLimit: input.consoleLimit
+      }
+    );
+    return adaptTranscriptWorkspaceResponse(response);
   }
 
   async consoleLogStream(
@@ -3939,6 +4661,24 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
     return adaptArtifactDetailResponse(response);
   }
 
+  async conversationWorkspace(input: {
+    environmentId?: string;
+    threadId?: string | null;
+    turnId?: string | null;
+  }): Promise<QueryResultDto<ConversationWorkspaceDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "conversation.workspace",
+      input.environmentId,
+      input.threadId || input.turnId
+        ? {
+            ...(input.threadId ? { threadId: input.threadId } : {}),
+            ...(input.turnId ? { turnId: input.turnId } : {})
+          }
+        : undefined
+    );
+    return adaptConversationWorkspaceResponse(response);
+  }
+
   async threadList(environmentId?: string): Promise<QueryResultDto<ThreadSummaryDto[]>> {
     const response = await this.invokeService<RawServiceResponse<Array<Record<string, unknown>>>>(
       "conversation.thread-list",
@@ -3968,20 +4708,26 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
     return adaptTurnDetailResponse(response);
   }
 
-  async memoryList(environmentId?: string): Promise<QueryResultDto<MemoryListDto>> {
+  async conversationLatency(
+    turnId: string,
+    environmentId?: string
+  ): Promise<QueryResultDto<ConversationLatencySummaryDto>> {
     const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "conversation.latency",
+      environmentId,
+      { turnId }
+    );
+    return adaptConversationLatencyResponse(response);
+  }
+
+  async memoryList(environmentId?: string): Promise<QueryResultDto<MemoryListDto>> {
+    const response = await this.invokeService<
+      RawServiceResponse<Record<string, unknown> | Array<Record<string, unknown>>>
+    >(
       "memory.list",
       environmentId
     );
-    return {
-      contractVersion: response.contractVersion,
-      domain: "memory",
-      operation: response.operation,
-      kind: "query",
-      status: "ok",
-      data: camelizeKeys(response.data) as MemoryListDto,
-      metadata: normalizeMetadata(response.metadata)
-    };
+    return adaptMemoryListResponse(response);
   }
 
   async memoryDetail(memoryId: string, environmentId?: string): Promise<QueryResultDto<MemoryEntryDto>> {
@@ -4046,6 +4792,46 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
       },
       onEvent
     );
+    return adaptSendConversationMessageResponse(response);
+  }
+
+  async approveActorMessage(
+    input: { environmentId: string; actorMessageId: string }
+  ): Promise<CommandResultDto<SendConversationMessageResultDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "desktop-task.approve-message",
+      input.environmentId,
+      { actorMessageId: input.actorMessageId }
+    );
+    return adaptSendConversationMessageResponse(response);
+  }
+
+  async approveApproval(
+    input: { environmentId: string; approvalId: string; sessionId?: string | null }
+  ): Promise<CommandResultDto<SendConversationMessageResultDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "desktop-task.approve-approval",
+      input.environmentId,
+      { approvalId: input.approvalId, sessionId: input.sessionId ?? null }
+    );
+    if (response.status === "error" || response.status === "rejected") {
+      console.error(
+        "[live-host-adapter] approveApproval failed approvalId=%s sessionId=%s status=%s data=%o metadata=%o",
+        input.approvalId,
+        input.sessionId ?? null,
+        response.status,
+        response.data,
+        response.metadata
+      );
+    } else {
+      console.info(
+        "[live-host-adapter] approveApproval approvalId=%s sessionId=%s status=%s dataKeys=%o",
+        input.approvalId,
+        input.sessionId ?? null,
+        response.status,
+        Object.keys(asRecord(response.data))
+      );
+    }
     return adaptSendConversationMessageResponse(response);
   }
 
@@ -4342,6 +5128,38 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
     return adaptPackageBrowserResponse(response);
   }
 
+  async runtimeSymbolPage(input: RuntimeSymbolBrowserPageInput): Promise<QueryResultDto<RuntimeSymbolBrowserPageDto>> {
+    const request: Record<string, unknown> = {
+      kinds: input.kinds,
+      visibility: input.visibility,
+      search: input.search,
+      offset: input.offset,
+      limit: input.limit
+    };
+    if (input.packageScope != null && input.packageScope.trim().length > 0) {
+      request.packageScope = input.packageScope;
+    }
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "runtime.symbol-page",
+      input.environmentId,
+      request
+    );
+    const adapted = adaptRuntimeSymbolPageResponse(response);
+    console.info(
+      "[runtime-symbol-page] env=%s scope=%s kinds=%s visibility=%s search=%s offset=%d limit=%d total=%d items=%d",
+      input.environmentId,
+      input.packageScope ?? "all",
+      (input.kinds ?? []).join(","),
+      input.visibility ?? "all",
+      input.search ?? "",
+      input.offset ?? 0,
+      input.limit ?? 0,
+      adapted.data.totalCount,
+      adapted.data.items.length
+    );
+    return adapted;
+  }
+
   async fileSystemDirectory(input?: {
     path?: string;
   }): Promise<QueryResultDto<FileSystemDirectoryListingDto>> {
@@ -4483,6 +5301,11 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
       environmentId: string;
       form: string;
       packageName?: string;
+      recoveryLaunch?: {
+        source: "incident-restart";
+        incidentId: string;
+        restartLabel: string;
+      } | null;
     }
   ): Promise<CommandResultDto<RuntimeEvalResultDto>> {
     const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
@@ -4490,7 +5313,8 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
       input.environmentId,
       {
         form: input.form,
-        packageName: input.packageName
+        packageName: input.packageName,
+        recoveryLaunch: input.recoveryLaunch ?? undefined
       }
     );
 
@@ -5203,6 +6027,174 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
     return adaptPackageManagementSummaryResponse(response);
   }
 
+  async desktopTaskManifests(environmentId?: string): Promise<QueryResultDto<DesktopTaskManifestDto[]>> {
+    const response = await this.invokeService<RawServiceResponse<Array<Record<string, unknown>>>>(
+      "desktop-task.manifests",
+      environmentId
+    );
+    return adaptDesktopTaskManifestListResponse(response);
+  }
+
+  async desktopTaskRecords(environmentId?: string): Promise<QueryResultDto<DesktopTaskRecordDto[]>> {
+    const response = await this.invokeService<RawServiceResponse<Array<Record<string, unknown>>>>(
+      "desktop-task.records",
+      environmentId
+    );
+    return adaptDesktopTaskRecordListResponse(response);
+  }
+
+  async desktopTaskPendingApproval(environmentId?: string): Promise<QueryResultDto<Record<string, unknown>>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "desktop-task.pending-approval",
+      environmentId
+    );
+    return {
+      contractVersion: response.contractVersion,
+      domain: "desktop-task",
+      operation: response.operation,
+      kind: "query",
+      status: response.status === "error" ? "error" : "ok",
+      data: camelizeKeys(asRecord(response.data)) as Record<string, unknown>,
+      metadata: normalizeMetadata(response.metadata)
+    };
+  }
+
+  async desktopTaskActorFlow(input?: {
+    environmentId?: string;
+    sessionId?: string;
+    approvalId?: string;
+    pendingActionId?: string;
+    actorMessageId?: string;
+    scopeId?: string;
+    latestOnlyP?: boolean;
+  }): Promise<QueryResultDto<Record<string, unknown>>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "desktop-task.actor-flow",
+      input?.environmentId,
+      {
+        sessionId: input?.sessionId,
+        approvalId: input?.approvalId,
+        pendingActionId: input?.pendingActionId,
+        actorMessageId: input?.actorMessageId,
+        scopeId: input?.scopeId,
+        latestOnlyP: input?.latestOnlyP
+      }
+    );
+    return {
+      contractVersion: response.contractVersion,
+      domain: "desktop-task",
+      operation: response.operation,
+      kind: "query",
+      status: response.status === "error" ? "error" : "ok",
+      data: camelizeKeys(asRecord(response.data)) as Record<string, unknown>,
+      metadata: normalizeMetadata(response.metadata)
+    };
+  }
+
+  async desktopTaskActorSystemPanel(input?: {
+    environmentId?: string;
+    sessionId?: string;
+  }): Promise<QueryResultDto<Record<string, unknown>>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "desktop-task.actor-system-panel",
+      input?.environmentId,
+      {
+        sessionId: input?.sessionId
+      }
+    );
+    console.info(
+      "[actor-system-panel-bridge] %s",
+      JSON.stringify({
+        status: response.status,
+        rootActorId: (response.data as Record<string, unknown> | undefined)?.root_actor_id ?? null,
+        actorCount:
+          Array.isArray((response.data as Record<string, unknown> | undefined)?.actors)
+            ? ((response.data as Record<string, unknown>).actors as unknown[]).length
+            : null,
+        keys: Object.keys(asRecord(response.data))
+      })
+    );
+    return {
+      contractVersion: response.contractVersion,
+      domain: "desktop-task",
+      operation: response.operation,
+      kind: "query",
+      status: response.status === "error" ? "error" : "ok",
+      data: camelizeKeys(asRecord(response.data)) as Record<string, unknown>,
+      metadata: normalizeMetadata(response.metadata)
+    };
+  }
+
+  async desktopTaskActorTrace(input?: {
+    environmentId?: string;
+    actorRole?: string;
+    actorMessageId?: string;
+    phase?: string;
+    latestOnlyP?: boolean;
+    deadLettersOnlyP?: boolean;
+  }): Promise<QueryResultDto<Record<string, unknown>[]>> {
+    const response = await this.invokeService<RawServiceResponse<Array<Record<string, unknown>>>>(
+      "desktop-task.actor-trace",
+      input?.environmentId,
+      {
+        actorRole: input?.actorRole,
+        actorMessageId: input?.actorMessageId,
+        phase: input?.phase,
+        latestOnlyP: input?.latestOnlyP,
+        deadLettersOnlyP: input?.deadLettersOnlyP
+      }
+    );
+    return {
+      contractVersion: response.contractVersion,
+      domain: "desktop-task",
+      operation: response.operation,
+      kind: "query",
+      status: response.status === "error" ? "error" : "ok",
+      data: asRecordArray(response.data).map((entry) => camelizeKeys(asRecord(entry)) as Record<string, unknown>),
+      metadata: normalizeMetadata(response.metadata)
+    };
+  }
+
+  async desktopTaskDeadLetterQueue(input?: {
+    environmentId?: string;
+    actorRole?: string;
+  }): Promise<QueryResultDto<Record<string, unknown>[]>> {
+    const response = await this.invokeService<RawServiceResponse<Array<Record<string, unknown>>>>(
+      "desktop-task.dlq",
+      input?.environmentId,
+      { actorRole: input?.actorRole }
+    );
+    return {
+      contractVersion: response.contractVersion,
+      domain: "desktop-task",
+      operation: response.operation,
+      kind: "query",
+      status: response.status === "error" ? "error" : "ok",
+      data: asRecordArray(response.data).map((entry) => camelizeKeys(asRecord(entry)) as Record<string, unknown>),
+      metadata: normalizeMetadata(response.metadata)
+    };
+  }
+
+  async mcpServerConfigs(environmentId?: string): Promise<QueryResultDto<McpServerConfigDto[]>> {
+    const response = await this.invokeService<RawServiceResponse<Array<Record<string, unknown>>>>(
+      "desktop-task.mcp-servers",
+      environmentId
+    );
+    return adaptMcpServerConfigListResponse(response);
+  }
+
+  async mcpServerConfig(
+    serverId: string,
+    environmentId?: string
+  ): Promise<QueryResultDto<McpServerConfigDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "desktop-task.mcp-server",
+      environmentId,
+      { serverId }
+    );
+    return adaptMcpServerConfigDetailResponse(response);
+  }
+
   async focusWorkspace(workspace: WorkspaceId): Promise<void> {
     this.focusedWorkspaceOverride = workspace;
     this.preferences.lastWorkspace = workspace;
@@ -5228,15 +6220,7 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
     patch: Partial<DesktopPreferencesDto>
   ): Promise<DesktopPreferencesDto> {
     const write = async (): Promise<DesktopPreferencesDto> => {
-      const currentResponse = await this.invokeService<RawServiceResponse<Partial<DesktopPreferencesDto>>>(
-        "desktop.preferences.get",
-        this.currentBinding?.environmentId
-      );
-      const currentPreferences = mergeDesktopPreferences(
-        this.preferences,
-        normalizeDesktopPreferencesPayload(currentResponse.data)
-      );
-      const nextPreferences = mergeDesktopPreferences(currentPreferences, patch);
+      const nextPreferences = mergeDesktopPreferences(this.preferences, patch);
       const response = await this.invokeService<RawServiceResponse<Partial<DesktopPreferencesDto>>>(
         "desktop.preferences.set",
         this.currentBinding?.environmentId,
@@ -5317,6 +6301,63 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
       status: normalizeCommandStatus(response.status),
       data: summary.data,
       metadata: summary.metadata
+    };
+  }
+
+  async configureMcpServer(
+    input: ConfigureMcpServerInput
+  ): Promise<CommandResultDto<McpServerConfigDto>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "desktop-task.configure-mcp-server",
+      input.environmentId,
+      {
+        serverId: input.serverId,
+        name: input.name,
+        transport: input.transport,
+        command: input.command,
+        arguments: input.arguments,
+        environmentVariables: input.environmentVariables,
+        workingDirectory: input.workingDirectory,
+        endpoint: input.endpoint,
+        capabilities: input.capabilities,
+        retryPolicy: input.retryPolicy,
+        healthStatus: input.healthStatus,
+        enabledP: input.enabledP,
+        discoverableP: input.discoverableP
+      } as unknown as Record<string, unknown>
+    );
+    const detail = adaptMcpServerConfigDetailResponse(response);
+    return {
+      contractVersion: response.contractVersion,
+      domain: response.domain,
+      operation: response.operation,
+      kind: "command",
+      status: normalizeCommandStatus(response.status),
+      data: detail.data,
+      metadata: detail.metadata
+    };
+  }
+
+  async removeMcpServer(
+    input: RemoveMcpServerInput
+  ): Promise<CommandResultDto<{ id: string; removedP: boolean }>> {
+    const response = await this.invokeService<RawServiceResponse<Record<string, unknown>>>(
+      "desktop-task.remove-mcp-server",
+      input.environmentId,
+      { serverId: input.serverId }
+    );
+    const data = camelizeKeys(response.data) as Record<string, unknown>;
+    return {
+      contractVersion: response.contractVersion,
+      domain: response.domain,
+      operation: response.operation,
+      kind: "command",
+      status: normalizeCommandStatus(response.status),
+      data: {
+        id: firstString(data.id) ?? input.serverId,
+        removedP: Boolean(data.removedP ?? data.removed)
+      },
+      metadata: normalizeMetadata(response.metadata)
     };
   }
 
@@ -5457,77 +6498,56 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
       );
     }
 
-    const requestJson = bridgeRequestJson(request);
-    const args = [
-      "--script",
-      this.options.bridgePath,
-      this.options.projectDir,
-      this.options.environmentStatePath,
-      operation,
-      environmentId ?? ""
-    ];
-
-    if (requestJson) {
-      args.push(requestJson);
-    }
-
     return this.enqueueBridgeCall(
-      async () =>
-        new Promise<T>((resolvePromise, rejectPromise) => {
-          const executable = resolveSbclExecutable();
-          const cwd = existsSync(this.options.projectDir) ? this.options.projectDir : os.homedir();
-          const env = buildSbclSpawnEnvironment();
-          void appendBridgeLaunchLog(
-            `invokeService operation=${operation} executable=${executable} executableExists=${existsSync(executable)} cwd=${cwd} cwdExists=${existsSync(cwd)} projectDir=${this.options.projectDir} projectDirExists=${existsSync(this.options.projectDir)} bridgePath=${this.options.bridgePath} bridgeExists=${existsSync(this.options.bridgePath)} environmentStatePath=${this.options.environmentStatePath}`
-          );
-          const child = spawn(executable, args, {
-            cwd,
-            env,
-            stdio: ["ignore", "pipe", "pipe"]
-          });
-          let stdout = "";
-          let stderr = "";
-
-          if (!child.stdout || !child.stderr) {
-            rejectPromise(new Error("Service bridge did not expose stdout/stderr pipes."));
-            return;
-          }
-
-          child.stdout.on("data", (chunk) => {
-            stdout += chunk.toString();
-          });
-
-          child.stderr.on("data", (chunk) => {
-            stderr += chunk.toString();
-          });
-
-          child.on("error", (error) => {
-            void appendBridgeLaunchLog(
-              `invokeService error operation=${operation} message=${error.message}`
-            );
-            rejectPromise(error);
-          });
-          child.on("close", (code) => {
-            if (code !== 0) {
-              void appendBridgeLaunchLog(
-                `invokeService close operation=${operation} code=${String(code)} stderr=${JSON.stringify(stderr)}`
+      async () => {
+        const startedAt = performance.now();
+        const child = await this.ensurePersistentBridge();
+        const id = ++this.persistentBridgeRequestId;
+        const payload = {
+          id,
+          operation,
+          environmentId: environmentId ?? null,
+          request: request ?? null
+        };
+        if (operation === "runtime.symbol-page") {
+          console.info("[runtime-symbol-page-payload] %s", JSON.stringify(payload));
+        }
+        return new Promise<T>((resolvePromise, rejectPromise) => {
+          this.persistentBridgePending.set(id, {
+            operation,
+            startedAt,
+            resolve: (value) => {
+              try {
+                const parsed = value as RawServiceResponse<unknown>;
+                const binding = parsed.metadata?.binding as BindingDto | null | undefined;
+                this.adoptResponseBinding(operation, environmentId, binding);
+                console.info(
+                  "[bridge-perf] operation=%s durationMs=%d status=ok transport=persistent-pipe",
+                  operation,
+                  Math.round(performance.now() - startedAt)
+                );
+                resolvePromise(parsed as T);
+              } catch (error) {
+                rejectPromise(error as Error);
+              }
+            },
+            reject: (error) => {
+              console.info(
+                "[bridge-perf] operation=%s durationMs=%d status=error transport=persistent-pipe",
+                operation,
+                Math.round(performance.now() - startedAt)
               );
-              rejectPromise(new Error(stderr || `Service bridge exited with code ${code ?? "unknown"}.`));
-              return;
-            }
-
-            try {
-              const parsed = camelizeKeys(JSON.parse(stdout)) as RawServiceResponse<unknown>;
-              const binding = parsed.metadata?.binding as BindingDto | null | undefined;
-
-              this.adoptResponseBinding(operation, environmentId, binding);
-
-              resolvePromise(parsed as T);
-            } catch (error) {
               rejectPromise(error);
             }
           });
-        })
+          child.stdin.write(`${JSON.stringify(payload)}\n`, (error) => {
+            if (error) {
+              this.persistentBridgePending.delete(id);
+              rejectPromise(error);
+            }
+          });
+        });
+      }
     );
   }
 
@@ -5543,102 +6563,59 @@ export class LiveSbclAgentHostAdapter implements SbclAgentHostAdapter {
       );
     }
 
-    const requestJson = bridgeRequestJson(request);
-    const args = [
-      "--script",
-      this.options.bridgePath,
-      this.options.projectDir,
-      this.options.environmentStatePath,
-      operation,
-      environmentId ?? ""
-    ];
-
-    if (requestJson) {
-      args.push(requestJson);
-    }
-
     return this.enqueueBridgeCall(
-      async () =>
-        new Promise<T>((resolvePromise, rejectPromise) => {
-          const executable = resolveSbclExecutable();
-          const cwd = existsSync(this.options.projectDir) ? this.options.projectDir : os.homedir();
-          const env = buildSbclSpawnEnvironment();
-          void appendBridgeLaunchLog(
-            `invokeStreamingService operation=${operation} executable=${executable} executableExists=${existsSync(executable)} cwd=${cwd} cwdExists=${existsSync(cwd)} projectDir=${this.options.projectDir} projectDirExists=${existsSync(this.options.projectDir)} bridgePath=${this.options.bridgePath} bridgeExists=${existsSync(this.options.bridgePath)} environmentStatePath=${this.options.environmentStatePath}`
+      async () => {
+        const startedAt = performance.now();
+        const child = await this.ensurePersistentBridge();
+        const id = ++this.persistentBridgeRequestId;
+        const payload = {
+          id,
+          operation,
+          environmentId: environmentId ?? null,
+          request: request ?? null
+        };
+        if (onEvent) {
+          console.info(
+            "[live-host-adapter] streaming operation=%s is using persistent bridge result mode; provider stream events are not yet forwarded inline",
+            operation
           );
-          const child = spawn(executable, args, {
-            cwd,
-            env,
-            stdio: ["ignore", "pipe", "pipe"]
-          });
-          if (!child.stdout || !child.stderr) {
-            rejectPromise(new Error("Streaming bridge did not expose stdout/stderr pipes."));
-            return;
-          }
-          const stdoutLines = createInterface({ input: child.stdout });
-          let stderr = "";
-          let resolved = false;
-
-          stdoutLines.on("line", (line) => {
-            const trimmed = line.trim();
-            if (!trimmed) {
-              return;
-            }
-
-            let frame: StreamingBridgeFrame;
-            try {
-              frame = camelizeKeys(JSON.parse(trimmed)) as StreamingBridgeFrame;
-            } catch (error) {
-              rejectPromise(error);
-              child.kill();
-              return;
-            }
-
-            if (frame.type === "event") {
-              if (onEvent) {
-                onEvent(adaptStreamingEnvironmentEvent(frame.payload));
-              }
-              return;
-            }
-
-            if (frame.type === "result") {
+        }
+        return new Promise<T>((resolvePromise, rejectPromise) => {
+          this.persistentBridgePending.set(id, {
+            operation,
+            startedAt,
+            resolve: (value) => {
               try {
-                const parsed = camelizeKeys(frame.payload) as RawServiceResponse<unknown>;
+                const parsed = value as RawServiceResponse<unknown>;
                 const binding = parsed.metadata?.binding as BindingDto | null | undefined;
                 this.adoptResponseBinding(operation, environmentId, binding);
-                resolved = true;
+                console.info(
+                  "[bridge-perf] operation=%s durationMs=%d status=ok transport=persistent-pipe-stream",
+                  operation,
+                  Math.round(performance.now() - startedAt)
+                );
                 resolvePromise(parsed as T);
               } catch (error) {
                 rejectPromise(error as Error);
-                child.kill();
               }
+            },
+            reject: (error) => {
+              console.info(
+                "[bridge-perf] operation=%s durationMs=%d status=error transport=persistent-pipe-stream",
+                operation,
+                Math.round(performance.now() - startedAt)
+              );
+              rejectPromise(error);
             }
           });
-
-          child.stderr.on("data", (chunk) => {
-            stderr += chunk.toString();
-          });
-
-          child.on("error", (error) => {
-            void appendBridgeLaunchLog(
-              `invokeStreamingService error operation=${operation} message=${error.message}`
-            );
-            rejectPromise(error);
-          });
-          child.on("close", (code) => {
-            if (resolved) {
-              return;
+          child.stdin.write(`${JSON.stringify(payload)}\n`, (error) => {
+            if (error) {
+              this.persistentBridgePending.delete(id);
+              rejectPromise(error);
             }
-            void appendBridgeLaunchLog(
-              `invokeStreamingService close operation=${operation} code=${String(code)} stderr=${JSON.stringify(stderr)}`
-            );
-            rejectPromise(
-              new Error(
-                stderr.trim() || `Streaming bridge exited before returning a result (exit code ${code ?? "unknown"}).`
-              )
-            );
           });
-        })
+        });
+      }
     );
   }
 

@@ -6,7 +6,7 @@ import type {
   LinkedEntityRefDto
 } from "../../shared/contracts";
 import { LinkedEntityList } from "./interaction-support";
-import { ContextBlock, JourneyStageStrip } from "./journey-support";
+import { ContextBlock } from "./journey-support";
 import { Badge, PanelHeader } from "./surface-support";
 import { FilterSelect, MetricTile } from "./workspace-support-components";
 
@@ -45,75 +45,8 @@ export function EvidenceWorkspace({
   openConversationDraft: () => Promise<void>;
   openInspectorSurface: () => Promise<void>;
 }) {
-  const evidenceObjective =
-    selectedArtifact?.summary ??
-    selectedEvent?.summary ??
-    artifacts[0]?.summary ??
-    "Inspect durable evidence first, then replay event structure to reconstruct how the environment arrived here.";
-
   return (
     <div className="evidence-journey">
-      <JourneyStageStrip
-        eyebrow="Evidence Flow"
-        summary="Evidence should let the operator move from durable outputs into replayable observation without leaving the current environment method."
-        steps={[
-          {
-            id: "inspect-artifacts",
-            title: "Inspect Artifacts",
-            summary: "Read durable outputs first so recovery and execution are anchored in retained proof.",
-            tone: artifacts.length > 0 ? "active" : "steady"
-          },
-          {
-            id: "replay-events",
-            title: "Replay Events",
-            summary: "Use structured history to reconstruct what happened instead of relying on raw logs or transport traces.",
-            tone: events.length > 0 ? "active" : "steady"
-          },
-          {
-            id: "reconstruct-truth",
-            title: "Reconstruct Truth",
-            summary: "Artifacts and events should converge into a usable narrative about the environment’s current posture.",
-            tone: selectedArtifact || selectedEvent ? "active" : "steady"
-          }
-        ]}
-        title="Evidence Journey"
-      />
-      <section className="panel evidence-objective-panel">
-        <div className="panel-header">
-          <div>
-            <p className="eyebrow">Current Evidence Objective</p>
-            <h3>{selectedArtifact?.title ?? selectedEvent?.kind ?? artifacts[0]?.title ?? "No evidence selected"}</h3>
-          </div>
-          <Badge tone={selectedArtifact || selectedEvent ? "active" : "steady"}>
-            {selectedArtifact ? "artifact" : selectedEvent ? "event" : "idle"}
-          </Badge>
-        </div>
-        <p className="lead-copy">{evidenceObjective}</p>
-        <p className="context-label">{environmentFocusLabel}</p>
-        <div className="signal-digest-grid execution-objective-digest">
-          <div className="signal-digest-card">
-            <span className="context-label">Artifacts</span>
-            <strong>{artifacts.length}</strong>
-            <p>{artifacts[0]?.title ?? "No durable artifact is foregrounded."}</p>
-          </div>
-          <div className="signal-digest-card">
-            <span className="context-label">Events</span>
-            <strong>{events.length}</strong>
-            <p>{selectedEvent?.kind ?? "No replayed event is selected."}</p>
-          </div>
-          <div className="signal-digest-card">
-            <span className="context-label">Truth</span>
-            <strong>{selectedArtifact || selectedEvent ? "focused" : "idle"}</strong>
-            <p>{selectedEvent?.summary ?? selectedArtifact?.summary ?? "Evidence will converge here as artifacts and events are inspected together."}</p>
-          </div>
-        </div>
-        <div className="browser-action-strip">
-          <button className="starter-chip" onClick={() => void openConversationDraft()} type="button">
-            Continue In Conversation
-          </button>
-        </div>
-      </section>
-
       <div className="evidence-layout">
         <div className="evidence-main-rail">
           <ArtifactsWorkspace
@@ -138,6 +71,12 @@ export function EvidenceWorkspace({
             setSelectedEventCursor={setSelectedEventCursor}
           />
         </div>
+      </div>
+      <div className="browser-action-strip">
+        <button className="starter-chip" onClick={() => void openConversationDraft()} type="button">
+          Continue In Conversation
+        </button>
+        <span className="context-label">{environmentFocusLabel}</span>
       </div>
     </div>
   );
@@ -180,7 +119,7 @@ function ActivityWorkspace({
         <div className="panel-header">
           <div>
             <p className="eyebrow">Event Replay</p>
-            <p className="panel-subtitle">The environment emits replayable operational evidence, not disposable console noise.</p>
+            <p className="panel-subtitle">Replayable runtime and operational events.</p>
           </div>
         </div>
 
@@ -262,11 +201,11 @@ function ActivityWorkspace({
             </>
           ) : (
             <>
-              <p className="lead-copy">Observation remains part of the evidence journey even when the current filters yield no event rows.</p>
+              <p className="lead-copy">No event matches the current filters.</p>
               <section className="linked-entities-panel">
                 <PanelHeader
                   title="Observed Payload"
-                  subtitle="When replay results are empty, the desktop should explain why instead of collapsing the detail stage."
+                  subtitle="Current filter state."
                 />
                 <pre className="runtime-preview">
                   {JSON.stringify({ reason: "no_event_selected", family: eventFamilyFilter, visibility: eventVisibilityFilter }, null, 2)}
@@ -279,24 +218,24 @@ function ActivityWorkspace({
 
       <section className="activity-side-panel">
         <div className="panel">
-          <PanelHeader title="Why Evidence Flows" subtitle="Attention should emerge from event structure and provenance, not from raw log volume." />
+          <PanelHeader title="Event Summary" subtitle="Current observation scope and coverage." />
           <div className="entity-list">
             <div className="entity-row">
               <div>
-                <strong>Environment-native</strong>
-                <p>Events are scoped to the bound environment rather than to a file, tab, or raw transport trace.</p>
+                <strong>Families</strong>
+                <p>{new Set(events.map((event) => event.family)).size} visible event families.</p>
               </div>
             </div>
             <div className="entity-row">
               <div>
-                <strong>Governed visibility</strong>
-                <p>Operator and team visibility remain explicit so attention can be directed without collapsing context.</p>
+                <strong>Operator-visible</strong>
+                <p>{events.filter((event) => (event.visibility ?? "unspecified") === "operator").length} events marked for operator visibility.</p>
               </div>
             </div>
             <div className="entity-row">
               <div>
-                <strong>Replay before streaming</strong>
-                <p>The desktop can bootstrap from durable event history first, then later layer live subscriptions on top.</p>
+                <strong>Latest Event</strong>
+                <p>{events[0]?.timestamp ?? "No events available."}</p>
               </div>
             </div>
           </div>

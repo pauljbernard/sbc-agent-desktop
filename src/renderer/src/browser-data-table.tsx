@@ -27,7 +27,8 @@ export function BrowserDataTable<Row>({
   selectedKey,
   toolbarLeading,
   initialSortColumnId,
-  initialSortDirection = "asc"
+  initialSortDirection = "asc",
+  remotePagination
 }: {
   rows: Row[];
   columns: BrowserTableColumn<Row>[];
@@ -43,6 +44,17 @@ export function BrowserDataTable<Row>({
   toolbarLeading?: ReactNode;
   initialSortColumnId?: string;
   initialSortDirection?: "asc" | "desc";
+  remotePagination?: {
+    totalRowCount: number;
+    page: number;
+    pageSize: number;
+    searchTerm: string;
+    activeFilter: string;
+    onPageChange: (page: number) => void;
+    onPageSizeChange: (pageSize: number) => void;
+    onSearchTermChange: (value: string) => void;
+    onFilterChange: (value: string) => void;
+  };
 }) {
   const [searchTerm, setSearchTerm] = useState("");
   const [activeFilter, setActiveFilter] = useState("all");
@@ -50,14 +62,21 @@ export function BrowserDataTable<Row>({
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">(initialSortDirection);
   const [pageSize, setPageSize] = useState(8);
   const [page, setPage] = useState(1);
+  const effectiveSearchTerm = remotePagination ? remotePagination.searchTerm : searchTerm;
+  const effectiveActiveFilter = remotePagination ? remotePagination.activeFilter : activeFilter;
+  const effectivePageSize = remotePagination ? remotePagination.pageSize : pageSize;
+  const effectivePage = remotePagination ? remotePagination.page : page;
 
   const sortColumn = columns.find((column) => column.id === sortColumnId) ?? columns[0];
-  const normalizedSearch = searchTerm.trim().toLowerCase();
+  const normalizedSearch = effectiveSearchTerm.trim().toLowerCase();
 
   const filteredRows = useMemo(
     () =>
+      remotePagination
+        ? rows
+        :
       rows.filter((row) => {
-        const matchesFilter = activeFilter === "all" || getFilterValue(row) === activeFilter;
+        const matchesFilter = effectiveActiveFilter === "all" || getFilterValue(row) === effectiveActiveFilter;
         if (!matchesFilter) {
           return false;
         }
@@ -71,10 +90,13 @@ export function BrowserDataTable<Row>({
           return haystack.includes(normalizedSearch);
         });
       }),
-    [activeFilter, columns, getFilterValue, normalizedSearch, rows]
+    [columns, effectiveActiveFilter, getFilterValue, normalizedSearch, remotePagination, rows]
   );
 
   const sortedRows = useMemo(() => {
+    if (remotePagination) {
+      return filteredRows;
+    }
     if (!sortColumn) {
       return filteredRows;
     }
@@ -95,18 +117,23 @@ export function BrowserDataTable<Row>({
     });
   }, [filteredRows, sortColumn, sortDirection]);
 
-  const totalPages = Math.max(1, Math.ceil(sortedRows.length / pageSize));
-  const pagedRows = sortedRows.slice((page - 1) * pageSize, page * pageSize);
+  const totalRows = remotePagination ? remotePagination.totalRowCount : sortedRows.length;
+  const totalPages = Math.max(1, Math.ceil(totalRows / effectivePageSize));
+  const pagedRows = remotePagination
+    ? sortedRows
+    : sortedRows.slice((effectivePage - 1) * effectivePageSize, effectivePage * effectivePageSize);
 
   useEffect(() => {
-    setPage(1);
-  }, [activeFilter, normalizedSearch, pageSize, sortColumnId, sortDirection]);
+    if (!remotePagination) {
+      setPage(1);
+    }
+  }, [normalizedSearch, pageSize, remotePagination, sortColumnId, sortDirection, activeFilter]);
 
   useEffect(() => {
-    if (page > totalPages) {
+    if (!remotePagination && page > totalPages) {
       setPage(totalPages);
     }
-  }, [page, totalPages]);
+  }, [page, remotePagination, totalPages]);
 
   function toggleSort(columnId: string): void {
     if (sortColumnId === columnId) {
@@ -125,16 +152,24 @@ export function BrowserDataTable<Row>({
         <input
           className="filter-input browser-table-search"
           aria-label={searchPlaceholder}
-          onChange={(event) => setSearchTerm(event.target.value)}
+          onChange={(event) =>
+            remotePagination
+              ? remotePagination.onSearchTermChange(event.target.value)
+              : setSearchTerm(event.target.value)
+          }
           placeholder={searchPlaceholder}
-          value={searchTerm}
+          value={effectiveSearchTerm}
         />
         <label className="browser-table-select-group">
           <select
             className="filter-input browser-table-select"
             aria-label={filterLabel}
-            onChange={(event) => setActiveFilter(event.target.value)}
-            value={activeFilter}
+            onChange={(event) =>
+              remotePagination
+                ? remotePagination.onFilterChange(event.target.value)
+                : setActiveFilter(event.target.value)
+            }
+            value={effectiveActiveFilter}
           >
             <option value="all">All</option>
             {filterOptions.map((option) => (
@@ -148,8 +183,12 @@ export function BrowserDataTable<Row>({
           <select
             className="filter-input browser-table-select"
             aria-label="Page Size"
-            onChange={(event) => setPageSize(Number(event.target.value))}
-            value={String(pageSize)}
+            onChange={(event) =>
+              remotePagination
+                ? remotePagination.onPageSizeChange(Number(event.target.value))
+                : setPageSize(Number(event.target.value))
+            }
+            value={String(effectivePageSize)}
           >
             <option value="8">8</option>
             <option value="16">16</option>
@@ -211,26 +250,34 @@ export function BrowserDataTable<Row>({
       </div>
       <div className="browser-table-pagination">
         <span>
-          {sortedRows.length === 0
+          {totalRows === 0
             ? "0 results"
-            : `${(page - 1) * pageSize + 1}-${Math.min(page * pageSize, sortedRows.length)} of ${sortedRows.length}`}
+            : `${(effectivePage - 1) * effectivePageSize + 1}-${Math.min(effectivePage * effectivePageSize, totalRows)} of ${totalRows}`}
         </span>
         <div className="browser-table-pagination-actions">
           <button
             className="starter-chip"
-            disabled={page <= 1}
-            onClick={() => setPage((current) => Math.max(1, current - 1))}
+            disabled={effectivePage <= 1}
+            onClick={() =>
+              remotePagination
+                ? remotePagination.onPageChange(Math.max(1, effectivePage - 1))
+                : setPage((current) => Math.max(1, current - 1))
+            }
             type="button"
           >
             Previous
           </button>
           <span className="thread-flag">
-            Page {page} / {totalPages}
+            Page {effectivePage} / {totalPages}
           </span>
           <button
             className="starter-chip"
-            disabled={page >= totalPages}
-            onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+            disabled={effectivePage >= totalPages}
+            onClick={() =>
+              remotePagination
+                ? remotePagination.onPageChange(Math.min(totalPages, effectivePage + 1))
+                : setPage((current) => Math.min(totalPages, current + 1))
+            }
             type="button"
           >
             Next

@@ -136,4 +136,85 @@ describe("live host adapter desktop contract", () => {
     expect(result.data.action?.actionKind).toBe("step-panel");
     expect(result.data.action?.panelId).toBe("display");
   });
+
+  it("extracts the human assistant message from kernelized conversation send responses", async () => {
+    const adapter = makeAdapter();
+
+    (
+      adapter as {
+        invokeStreamingService: (
+          operation: string,
+          environmentId: string | undefined,
+          params: Record<string, unknown>,
+          onEvent?: (event: unknown) => void
+        ) => Promise<unknown>;
+      }
+    ).invokeStreamingService = async (
+      operation: string,
+      _environmentId: string | undefined,
+      params: Record<string, unknown>,
+      onEvent?: (event: unknown) => void
+    ) => {
+      expect(operation).toBe("conversation.send-message-stream");
+      expect(params.threadId).toBe("thread-42");
+      onEvent?.({
+        cursor: 1,
+        kind: "provider-stream",
+        timestamp: new Date().toISOString(),
+        family: "provider",
+        summary: "provider / text-delta",
+        entityId: "run-1",
+        threadId: "thread-42",
+        turnId: "turn-42",
+        visibility: "user",
+        payload: {
+          canonicalType: "text-delta",
+          payload: "Good afternoon! "
+        }
+      });
+
+      return {
+        contractVersion: 1,
+        domain: "execution",
+        operation,
+        kind: "command",
+        status: "ok",
+        data: {
+          thread: {
+            id: "thread-42"
+          },
+          turn: {
+            id: "turn-42"
+          },
+          response:
+            "#S(ASSISTANT-RESPONSE :MESSAGE Good afternoon! How can I assist you today? :ACTIONS NIL :METADATA (PROVIDER OPENAI-COMPATIBLE MODEL gpt-5))"
+        },
+        metadata: {
+          binding: {
+            environmentId: "live-environment",
+            sessionId: "desktop-session-live"
+          }
+        }
+      };
+    };
+
+    const streamedEvents: unknown[] = [];
+    const result = await adapter.sendConversationMessage(
+      {
+        environmentId: "live-environment",
+        threadId: "thread-42",
+        prompt: "Good afternoon"
+      },
+      (event) => {
+        streamedEvents.push(event);
+      }
+    );
+
+    expect(streamedEvents).toHaveLength(1);
+    expect(result.status).toBe("ok");
+    expect(result.data.threadId).toBe("thread-42");
+    expect(result.data.turnId).toBe("turn-42");
+    expect(result.data.assistantMessage).toBe("Good afternoon! How can I assist you today?");
+    expect(result.data.summary).toBe("Good afternoon! How can I assist you today?");
+  });
 });

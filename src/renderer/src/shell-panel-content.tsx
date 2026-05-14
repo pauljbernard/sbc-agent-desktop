@@ -14,10 +14,10 @@ interface ShellNavigationPanelProps {
   activeWorkspace: WorkspaceId;
   browserDomains: ShellNavigationSectionItem[];
   conversationSections: ShellNavigationSectionItem[];
-  evidenceSections: ShellNavigationSectionItem[];
-  executionSections: ShellNavigationSectionItem[];
   expandedWorkspaceMenus: Record<string, boolean>;
   navigateToBrowserDomain: (domainId: string) => void;
+  openActorSystemSurface: () => void;
+  openListenerWorkbench: () => void;
   openCalculatorApplication: () => void;
   navigateToConfigurationSurface: () => void;
   navigateToConversationSection: (sectionId: string) => void;
@@ -30,16 +30,12 @@ interface ShellNavigationPanelProps {
   navigateToTranscriptSurface: () => void;
   navigateToMemorySurface: () => void;
   navigateToWorkspace: (workspaceId: WorkspaceId) => void;
-  navigateToWorkspaceSurface: () => void;
-  operateSections: ShellNavigationSectionItem[];
-  recoverySections: ShellNavigationSectionItem[];
   selectedBrowserDomain: string;
   selectedConversationSection: string;
   selectedEvidenceSection: string;
   selectedExecutionSection: string;
-  selectedOperateSection: string;
   selectedRecoverySection: string;
-  toggleWorkspaceMenu: (workspace: WorkspaceId) => void;
+  toggleWorkspaceMenu: (workspace: string) => void;
 }
 
 export function ShellNavigationPanel({
@@ -47,10 +43,10 @@ export function ShellNavigationPanel({
   activeWorkspace,
   browserDomains,
   conversationSections,
-  evidenceSections,
-  executionSections,
   expandedWorkspaceMenus,
   navigateToBrowserDomain,
+  openActorSystemSurface,
+  openListenerWorkbench,
   openCalculatorApplication,
   navigateToConfigurationSurface,
   navigateToConversationSection,
@@ -63,14 +59,10 @@ export function ShellNavigationPanel({
   navigateToTranscriptSurface,
   navigateToMemorySurface,
   navigateToWorkspace,
-  navigateToWorkspaceSurface,
-  operateSections,
-  recoverySections,
   selectedBrowserDomain,
   selectedConversationSection,
   selectedEvidenceSection,
   selectedExecutionSection,
-  selectedOperateSection,
   selectedRecoverySection,
   toggleWorkspaceMenu
 }: ShellNavigationPanelProps) {
@@ -92,7 +84,7 @@ export function ShellNavigationPanel({
                   aria-keyshortcuts={workspace.primary ? String(keyboardWorkspaceOrder.indexOf(workspace.id) + 1) : undefined}
                   onClick={() => {
                     if (workspace.id === "environment") {
-                      navigateToOperateSection(selectedOperateSection);
+                      navigateToOperateSection("journeys");
                       return;
                     }
                     if (workspace.id === "conversations") {
@@ -105,10 +97,6 @@ export function ShellNavigationPanel({
                     }
                     if (workspace.id === "editor") {
                       navigateToEditorSurface();
-                      return;
-                    }
-                    if (workspace.id === "workspace") {
-                      navigateToWorkspaceSurface();
                       return;
                     }
                     if (workspace.id === "transcript") {
@@ -146,9 +134,7 @@ export function ShellNavigationPanel({
                   <span>{workspace.label}</span>
                 </button>
                 <div className="workspace-link-meta">
-                  {workspace.id === "environment" ||
-                  workspace.id === "conversations" ||
-                  workspace.id === "browser" ? (
+                  {workspace.id === "conversations" || workspace.id === "browser" ? (
                     <button
                       aria-label={`${expandedWorkspaceMenus[workspace.id] ? "Collapse" : "Expand"} ${workspace.label}`}
                       className="workspace-disclosure"
@@ -160,85 +146,6 @@ export function ShellNavigationPanel({
                   ) : null}
                 </div>
               </div>
-              {workspace.id === "environment" && expandedWorkspaceMenus.environment ? (
-                <div className="workspace-child-list">
-                  {operateSections.map((section) => (
-                    <button
-                      className={
-                        activeHostedApp === "control-panel" &&
-                        activeWorkspace === "environment" &&
-                        selectedOperateSection === section.id
-                          ? "workspace-child-link active"
-                          : "workspace-child-link"
-                      }
-                      key={section.id}
-                      onClick={() => {
-                        navigateToOperateSection(section.id);
-                      }}
-                      type="button"
-                    >
-                      <span title={section.summary}>{section.label}</span>
-                    </button>
-                  ))}
-                  <div className="workspace-child-section-label">Execution</div>
-                  {executionSections.map((section) => (
-                    <button
-                      className={
-                        activeHostedApp === "control-panel" &&
-                        activeWorkspace === "runtime" &&
-                        selectedExecutionSection === section.id
-                          ? "workspace-child-link active"
-                          : "workspace-child-link"
-                      }
-                      key={section.id}
-                      onClick={() => {
-                        navigateToExecutionSection(section.id);
-                      }}
-                      type="button"
-                    >
-                      <span title={section.summary}>{section.label}</span>
-                    </button>
-                  ))}
-                  <div className="workspace-child-section-label">Recovery</div>
-                  {recoverySections.map((section) => (
-                    <button
-                      className={
-                        activeHostedApp === "control-panel" &&
-                        activeWorkspace === "incidents" &&
-                        selectedRecoverySection === section.id
-                          ? "workspace-child-link active"
-                          : "workspace-child-link"
-                      }
-                      key={section.id}
-                      onClick={() => {
-                        navigateToRecoverySection(section.id);
-                      }}
-                      type="button"
-                    >
-                      <span title={section.summary}>{section.label}</span>
-                    </button>
-                  ))}
-                  <div className="workspace-child-section-label">Evidence</div>
-                  {evidenceSections.map((section) => (
-                    <button
-                      className={
-                        activeHostedApp === "control-panel" &&
-                        activeWorkspace === "artifacts" &&
-                        selectedEvidenceSection === section.id
-                          ? "workspace-child-link active"
-                          : "workspace-child-link"
-                      }
-                      key={section.id}
-                      onClick={() => {
-                        navigateToEvidenceSection(section.id);
-                      }}
-                      type="button"
-                    >
-                      <span title={section.summary}>{section.label}</span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
               {workspace.id === "conversations" && expandedWorkspaceMenus.conversations ? (
                 <div className="workspace-child-list">
                   {conversationSections.map((section) => (
@@ -281,17 +188,90 @@ export function ShellNavigationPanel({
                       <span title={domain.summary}>{domain.label}</span>
                     </button>
                   ))}
+                  <div className="workspace-child-section-label">Runtime</div>
+                  <button
+                    className={
+                      activeHostedApp === "control-panel" && activeWorkspace === "transcript"
+                        ? "workspace-child-link active"
+                        : "workspace-child-link"
+                    }
+                    onClick={() => {
+                      navigateToTranscriptSurface();
+                    }}
+                    type="button"
+                  >
+                    <span title="Open the retained transcript and runtime feedback surface.">Transcript</span>
+                  </button>
+                  <button
+                    className={activeHostedApp === "listener-workbench" ? "workspace-child-link active" : "workspace-child-link"}
+                    onClick={() => {
+                      openListenerWorkbench();
+                    }}
+                    type="button"
+                  >
+                    <span title="Open the live runtime listener workbench.">Listener</span>
+                  </button>
+                  <button
+                    className={
+                      activeHostedApp === "control-panel" &&
+                      activeWorkspace === "runtime" &&
+                      selectedExecutionSection === "actor-system"
+                        ? "workspace-child-link active"
+                        : "workspace-child-link"
+                    }
+                    onClick={() => {
+                      openActorSystemSurface();
+                    }}
+                    type="button"
+                  >
+                    <span title="Open the execution surface with the live actor-system hierarchy, workflow edges, metrics, and supervision panel.">
+                      Actor System
+                    </span>
+                  </button>
                 </div>
               ) : null}
             </div>
           ))}
         </section>
         <section className="workspace-group">
-          <div className="workspace-child-section-label">Applications</div>
-          <div className="workspace-child-list">
-            <button className="workspace-child-link" onClick={openCalculatorApplication} type="button">
-              <span title="Open the Lisp-backed calculator resident.">Calculator</span>
-            </button>
+          <div className="workspace-tree-node">
+            <div className="workspace-link">
+              <button
+                className="workspace-link-main"
+                onClick={() => toggleWorkspaceMenu("applications")}
+                type="button"
+              >
+                <span>Applications</span>
+              </button>
+              <div className="workspace-link-meta">
+                <button
+                  aria-label={`${expandedWorkspaceMenus.applications ? "Collapse" : "Expand"} Applications`}
+                  className="workspace-disclosure"
+                  onClick={() => toggleWorkspaceMenu("applications")}
+                  type="button"
+                >
+                  {expandedWorkspaceMenus.applications ? "▾" : "▸"}
+                </button>
+              </div>
+            </div>
+            {expandedWorkspaceMenus.applications ? (
+              <div className="workspace-child-list">
+                <button
+                  className={
+                    activeHostedApp === "control-panel" && activeWorkspace === "editor"
+                      ? "workspace-child-link active"
+                      : "workspace-child-link"
+                  }
+                  onClick={navigateToEditorSurface}
+                  type="button"
+                >
+                  <span title="Open the sustained Lisp editor surface.">Editor</span>
+                </button>
+                <button className="workspace-child-link" onClick={openCalculatorApplication} type="button">
+                  <span title="Open the Lisp-backed calculator resident.">Calculator</span>
+                </button>
+              </div>
+            ) : null}
           </div>
         </section>
       </nav>

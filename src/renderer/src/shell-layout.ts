@@ -6,6 +6,7 @@ export type ShellRailId = "left" | "right";
 export type ShellDockPanelId =
   | "shell-navigation"
   | "shell-utilities"
+  | "conversation-context"
   | "workspace-inspector"
   | "editor-symbol";
 export const SHELL_STACK_BREAKPOINT = 480;
@@ -74,6 +75,11 @@ export const SHELL_DOCK_PANEL_DEFINITIONS: Record<ShellDockPanelId, ShellDockPan
     id: "shell-utilities",
     label: "Utilities",
     rail: "left"
+  },
+  "conversation-context": {
+    id: "conversation-context",
+    label: "Context Chat",
+    rail: "right"
   },
   "workspace-inspector": {
     id: "workspace-inspector",

@@ -10,6 +10,7 @@
                  :defaults *script-path*))
 
 (defparameter *project-root* nil)
+(defparameter *bridge-environment* nil)
 
 (defun getenv (name)
   #+sbcl (sb-ext:posix-getenv name)
@@ -40,6 +41,9 @@
           do (progn
                (write-string line out)
                (terpri out)))))
+
+(defun serve-mode-p (operation)
+  (string= operation "--serve"))
 
 (defun project-directory-pathname (project-dir)
   (let ((pathname (pathname project-dir)))
@@ -77,11 +81,44 @@
      (normalize-symbol-value value))
     ((plist-like-p value)
      (loop for (key val) on value by #'cddr
-           append (list key (json-friendly val))))
+           collect (cons (normalize-symbol-value key)
+                         (json-friendly val))))
     ((listp value)
      (mapcar #'json-friendly value))
     (t
      (princ-to-string value))))
+
+(defun json-object-alist-p (value)
+  (and (listp value)
+       (every (lambda (entry)
+                (and (consp entry)
+                     (stringp (car entry))))
+              value)))
+
+(defun emit-request-json-string (value)
+  (cond
+    ((json-object-alist-p value)
+     (with-output-to-string (out)
+       (write-char #\{ out)
+       (loop for entry in value
+             for first = t then nil
+             do (unless first
+                  (write-char #\, out))
+                (write-string (sbcl-agent-call "EMIT-JSON" (car entry)) out)
+                (write-char #\: out)
+                (write-string (emit-request-json-string (cdr entry)) out))
+       (write-char #\} out)))
+    ((listp value)
+     (with-output-to-string (out)
+       (write-char #\[ out)
+       (loop for entry in value
+             for first = t then nil
+             do (unless first
+                  (write-char #\, out))
+                (write-string (emit-request-json-string entry) out))
+       (write-char #\] out)))
+    (t
+     (sbcl-agent-call "EMIT-JSON" value))))
 
 (defun meaningful-environment-id-p (environment-id)
   (and (stringp environment-id)
@@ -332,7 +369,23 @@
                      :work-item work-item
                      :workflow-record (sbcl-agent-call "WORK-ITEM-WORKFLOW-RECORD" session work-item)
                      :condition "Interrupted while reconciling runtime image state."
-                     :metadata (plist :bootstrap-p t :package "SBCL-AGENT-USER"))
+                     :metadata (plist :bootstrap-p t
+                                      :package "SBCL-AGENT-USER"
+                                      :condition-summary
+                                      (plist :type "SIMPLE-ERROR"
+                                             :message "Interrupted while reconciling runtime image state."
+                                             :restart-count 2)
+                                      :condition-detail
+                                      (plist :type "SIMPLE-ERROR"
+                                             :message "Interrupted while reconciling runtime image state."
+                                             :printed "Interrupted while reconciling runtime image state."
+                                             :class "SIMPLE-ERROR"
+                                             :restart-count 2)
+                                      :restart-suggestions
+                                      (list (plist :name "CONTINUE"
+                                                   :label "Continue recovery from the current checkpoint")
+                                            (plist :name "ABORT"
+                                                   :label "Abort and return to governed review"))))
     (sbcl-agent-call "CREATE-ARTIFACT"
                      session
                      thread
@@ -442,7 +495,16 @@
            (seed-completed-thread session)
            (seed-approval-thread session)
            (seed-incident-thread session)))))
+    (when (null (service-data (sbcl-agent-call "QUERY-CONVERSATION-THREAD-LIST-SERVICE" session)))
+      (seed-completed-thread session))
     environment))
+
+(defun ensure-desktop-conversation-thread-list (session)
+  (let ((response (sbcl-agent-call "QUERY-CONVERSATION-THREAD-LIST-SERVICE" session)))
+    (when (null (service-data response))
+      (seed-completed-thread session)
+      (setf response (sbcl-agent-call "QUERY-CONVERSATION-THREAD-LIST-SERVICE" session)))
+    response))
 
 (defun request-object (request-json)
   (and request-json
@@ -492,7 +554,7 @@
     (t value)))
 
 (defun emit-json-line (object)
-  (write-line (sbcl-agent-call "EMIT-JSON" (json-friendly object)))
+  (write-line (emit-request-json-string (json-friendly object)))
   (finish-output))
 
 (defun emit-stream-frame (type payload)
@@ -617,6 +679,11 @@
           (mapcar #'keywordish
                   (if (listp values) values '()))))
 
+(defun affirmative-approval-prompt-p (prompt)
+  (and (stringp prompt)
+       (ignore-errors
+         (sbcl-agent-call "AFFIRMATIVE-APPROVAL-CONFIRMATION-P" prompt))))
+
 (defun package-symbol-kind (symbol)
   (cond
     ((macro-function symbol) :macro)
@@ -658,6 +725,84 @@
           :internal-symbols (sort internals #'string< :key (lambda (entry) (getf entry :symbol)))
           :summary (format nil "~A exposes live namespace structure for exported and internal symbols."
                            (package-name resolved-package)))))
+
+(defun package-browser-entry< (left right)
+  (let ((package-comparison (string< (getf left :package-name) (getf right :package-name)))
+        (same-package-p (string= (getf left :package-name) (getf right :package-name))))
+    (or package-comparison
+        (and same-package-p
+             (string< (getf left :symbol) (getf right :symbol))))))
+
+(defun runtime-symbol-page-data (session &key package-scope kinds visibility search offset limit)
+  (declare (ignore session))
+  (let* ((resolved-package-scope
+           (when (and package-scope
+                      (> (length package-scope) 0)
+                      (not (string= package-scope "All Packages")))
+             (or (find-package package-scope)
+                 (error "Unknown package ~S" package-scope))))
+         (available-packages (sort (remove-duplicates (mapcar #'package-name (list-all-packages))
+                                                      :test #'string=)
+                                   #'string<))
+         (packages (if resolved-package-scope
+                       (list resolved-package-scope)
+                       (sort (copy-list (list-all-packages)) #'string< :key #'package-name)))
+         (allowed-kinds (or kinds '()))
+         (search-term (when (and search (> (length search) 0))
+                        (string-downcase search)))
+         (offset-value (max 0 (or offset 0)))
+         (limit-value (max 1 (min 200 (or limit 32))))
+         (entries '()))
+    (dolist (package packages)
+      (let ((package-name (package-name package)))
+        (labels ((maybe-push-entry (symbol visibility-kind)
+                   (let* ((symbol-kind (package-symbol-kind symbol))
+                          (symbol-name (symbol-name symbol))
+                          (matches-kind (or (null allowed-kinds)
+                                            (member symbol-kind allowed-kinds)))
+                          (matches-visibility
+                            (or (null visibility)
+                                (eq visibility :all)
+                                (eq visibility visibility-kind)))
+                          (matches-search
+                            (or (null search-term)
+                                (search search-term (string-downcase symbol-name))
+                                (search search-term (string-downcase package-name)))))
+                     (when (and matches-kind matches-visibility matches-search)
+                       (push (list :package-name package-name
+                                   :symbol symbol-name
+                                   :kind symbol-kind
+                                   :visibility visibility-kind)
+                             entries)))))
+          (do-external-symbols (symbol package)
+            (maybe-push-entry symbol :external))
+          (do-symbols (symbol package)
+            (multiple-value-bind (_symbol found-status)
+                (find-symbol (symbol-name symbol) package)
+              (declare (ignore _symbol))
+              (when (eq found-status :internal)
+                (maybe-push-entry symbol :internal)))))))
+    (let* ((sorted-entries (sort entries #'package-browser-entry<))
+           (total-count (length sorted-entries))
+           (paged-entries (subseq sorted-entries
+                                  (min offset-value total-count)
+                                  (min total-count (+ offset-value limit-value)))))
+      (list :package-scope (and resolved-package-scope (package-name resolved-package-scope))
+            :available-packages available-packages
+            :nicknames (if resolved-package-scope
+                           (sort (copy-list (package-nicknames resolved-package-scope)) #'string<)
+                           '())
+            :use-list (if resolved-package-scope
+                          (sort (mapcar #'package-name (package-use-list resolved-package-scope)) #'string<)
+                          '())
+            :total-count total-count
+            :offset offset-value
+            :limit limit-value
+            :has-more (< (+ offset-value limit-value) total-count)
+            :items paged-entries
+            :summary (if resolved-package-scope
+                         (format nil "~A symbol browser page." (package-name resolved-package-scope))
+                         "All packages symbol browser page.")))))
 
 (defun runtime-entity-detail-kind (resolved-symbol)
   (package-symbol-kind resolved-symbol))
@@ -708,12 +853,71 @@
                         (format nil "Qualifiers: ~{~A~^ ~}" qualifiers)
                         "primary"))))
 
+(defun object-detail-facet (label value)
+  (when value
+    (list :label label
+          :value (if (stringp value)
+                     value
+                     (princ-to-string value)))))
+
+(defun object-detail-facets (detail)
+  (remove nil
+          (list (object-detail-facet "Object Kind" (getf detail :kind))
+                (object-detail-facet "Type" (getf detail :type))
+                (object-detail-facet "Class" (getf detail :class))
+                (object-detail-facet "Printed" (getf detail :printed))
+                (object-detail-facet "Length" (getf detail :length))
+                (object-detail-facet "Count" (getf detail :count))
+                (object-detail-facet "Dimensions" (getf detail :dimensions))
+                (object-detail-facet "Total Size" (getf detail :total-size))
+                (object-detail-facet "Element Type" (getf detail :element-type))
+                (object-detail-facet "External Symbols" (getf detail :external-symbol-count))
+                (object-detail-facet "Internal Symbols" (getf detail :internal-symbol-count))
+                (object-detail-facet "Used Packages"
+                                     (let ((used (getf detail :used-packages)))
+                                       (and used (> (length used) 0)
+                                            (format nil "~{~A~^, ~}" used))))
+                (object-detail-facet "Used By Packages"
+                                     (let ((used-by (getf detail :used-by-packages)))
+                                       (and used-by (> (length used-by) 0)
+                                            (format nil "~{~A~^, ~}" used-by))))
+                (object-detail-facet "Boundp" (and (member :boundp detail) (getf detail :boundp)))
+                (object-detail-facet "Fboundp" (and (member :fboundp detail) (getf detail :fboundp)))
+                (object-detail-facet "Keywordp" (and (member :keywordp detail) (getf detail :keywordp)))
+                (object-detail-facet "Constantp" (and (member :constantp detail) (getf detail :constantp)))
+                (object-detail-facet "Function Kind" (getf detail :function-kind))
+                (object-detail-facet "Slot Count" (getf detail :slot-count)))))
+
+(defun object-detail-related-items (detail)
+  (append
+   (mapcar (lambda (slot)
+             (list :label "Slot"
+                   :detail (or (getf slot :printed)
+                               (if (getf slot :boundp) "bound" "unbound"))
+                   :emphasis (getf slot :name)))
+           (or (getf detail :slots) '()))
+   (mapcar (lambda (entry)
+             (list :label "Preview"
+                   :detail (if (stringp entry)
+                               entry
+                               (princ-to-string entry))
+                   :emphasis nil))
+           (or (getf detail :preview) '()))))
+
 (defun runtime-entity-detail-data (session symbol package)
   (multiple-value-bind (resolved-package resolved-symbol status)
       (sbcl-agent-call "RESOLVE-RUNTIME-SYMBOL" session symbol package)
     (unless resolved-symbol
       (error "Symbol ~S was not found in package ~A" symbol (package-name resolved-package)))
     (let* ((entity-kind (runtime-entity-detail-kind resolved-symbol))
+           (object-result (ignore-errors
+                            (service-data
+                             (sbcl-agent-call "QUERY-RUNTIME-OBJECT-SERVICE"
+                                              session
+                                              symbol
+                                              :package (package-name resolved-package)))))
+           (object-detail (and (listp object-result)
+                               (getf object-result :object-detail)))
            (definition-result (sbcl-agent-call "TOOL-RUNTIME-FIND-DEFINITION"
                                                session
                                                :symbol symbol
@@ -757,9 +961,13 @@
                             (list :label "Superclass Count"
                                   :value (princ-to-string (length direct-superclasses)))
                             (list :label "Subclass Count"
-                                  :value (princ-to-string (length direct-subclasses)))))))
+                                  :value (princ-to-string (length direct-subclasses)))))
+                    (when object-detail
+                      (object-detail-facets object-detail))))
            (related-items
              (append
+              (when object-detail
+                (object-detail-related-items object-detail))
               (when methods
                 (mapcar #'generic-method-summary methods))
               (when class
@@ -787,10 +995,15 @@
                          ((eq entity-kind :generic-function)
                           (generic-function-signature (symbol-name resolved-symbol) methods))
                          ((eq entity-kind :class)
-                          (format nil "(defclass ~A ...)" (string-downcase (symbol-name resolved-symbol))))
-                         (t
+                         (format nil "(defclass ~A ...)" (string-downcase (symbol-name resolved-symbol))))
+                        (t
                           (format nil "(~A ...)" (string-downcase (symbol-name resolved-symbol)))))
             :summary (cond
+                      (object-detail
+                       (format nil "~A resolves to a live ~A object in ~A with structured runtime detail."
+                               (symbol-name resolved-symbol)
+                               (or (getf object-detail :kind) "runtime")
+                               (package-name resolved-package)))
                       ((eq entity-kind :generic-function)
                        (format nil "~A is a live generic function. Dispatch, methods, and definitions should stay visible together."
                                (symbol-name resolved-symbol)))
@@ -809,6 +1022,30 @@
     (assert-bridge-environment-match environment environment-id operation))
   (let ((environment environment))
     (cond
+      ((string= operation "environment.bootstrap")
+       (let* ((session (bridge-session environment))
+              (summary-response
+                (sbcl-agent-call "QUERY-ENVIRONMENT-SUMMARY-SERVICE" environment))
+              (status-response
+                (sbcl-agent-call "QUERY-ENVIRONMENT-STATUS-SERVICE" environment))
+              (workspace-summary-response
+                (sbcl-agent-call "QUERY-RGP-WORKSPACE-SERVICE" session environment))
+              (desktop-model-response
+                (sbcl-agent-call "QUERY-SHELL-DESKTOP-MODEL-SERVICE"
+                                 session
+                                 :environment environment)))
+         (sbcl-agent-call "MAKE-SERVICE-QUERY-RESPONSE"
+                          :environment
+                          :bootstrap
+                          (list :summary (service-data summary-response)
+                                :status (service-data status-response)
+                                :workspace-summary (service-data workspace-summary-response)
+                                :desktop-model (service-data desktop-model-response))
+                          :metadata
+                          (sbcl-agent-call "MAKE-SERVICE-METADATA"
+                                           :authority :environment
+                                           :read-model :environment-bootstrap-v1
+                                           :session session))))
       ((string= operation "environment.summary")
        (sbcl-agent-call "QUERY-ENVIRONMENT-SUMMARY-SERVICE" environment))
       ((string= operation "environment.status")
@@ -880,12 +1117,16 @@
       ((string= operation "environment.load-image")
        (let* ((request-object (request-object request-json))
               (image-id-or-name (and request-object
-                                     (sbcl-agent-call "JSON-OBJECT-VALUE" request-object "imageIdOrName"))))
-         (sbcl-agent-call "COMMAND-ENVIRONMENT-LOAD-IMAGE-SERVICE"
-                          (or image-id-or-name "")
-                          environment)))
+                                     (sbcl-agent-call "JSON-OBJECT-VALUE" request-object "imageIdOrName")))
+              (response (sbcl-agent-call "COMMAND-ENVIRONMENT-LOAD-IMAGE-SERVICE"
+                                         (or image-id-or-name "")
+                                         environment)))
+         (bootstrap-desktop-environment environment)
+         response))
       ((string= operation "environment.revert-image")
-       (sbcl-agent-call "COMMAND-ENVIRONMENT-REVERT-IMAGE-SERVICE" environment))
+       (let ((response (sbcl-agent-call "COMMAND-ENVIRONMENT-REVERT-IMAGE-SERVICE" environment)))
+         (bootstrap-desktop-environment environment)
+         response))
       ((string= operation "desktop.action")
        (let* ((session (bridge-session environment))
               (request-object (request-object request-json))
@@ -924,6 +1165,118 @@
       ((string= operation "package-management.summary")
        (let ((session (bridge-session environment)))
          (sbcl-agent-call "QUERY-PACKAGE-MANAGEMENT-SUMMARY-SERVICE" session)))
+      ((string= operation "desktop-task.manifests")
+       (let ((session (bridge-session environment)))
+         (sbcl-agent-call "QUERY-DESKTOP-TASK-MANIFEST-LIST-SERVICE" session)))
+      ((string= operation "desktop-task.records")
+       (let ((session (bridge-session environment)))
+         (sbcl-agent-call "QUERY-DESKTOP-TASK-RECORD-LIST-SERVICE" session)))
+      ((string= operation "desktop-task.pending-approval")
+       (let ((session (bridge-session environment)))
+         (sbcl-agent-call "QUERY-DESKTOP-TASK-PENDING-APPROVAL-SERVICE" session)))
+      ((string= operation "desktop-task.actor-flow")
+       (let* ((session (bridge-session environment))
+              (session-id (request-object-value request-json "sessionId"))
+              (approval-id (request-object-value request-json "approvalId"))
+              (pending-action-id (request-object-value request-json "pendingActionId"))
+              (actor-message-id (request-object-value request-json "actorMessageId"))
+              (scope-id (request-object-value request-json "scopeId"))
+              (latest-only-p (request-object-value request-json "latestOnlyP")))
+         (sbcl-agent-call "QUERY-DESKTOP-TASK-ACTOR-FLOW-SERVICE"
+                          session
+                          :session-id session-id
+                          :approval-id approval-id
+                          :pending-action-id pending-action-id
+                          :actor-message-id actor-message-id
+                          :scope-id scope-id
+                          :latest-only-p latest-only-p)))
+      ((string= operation "desktop-task.actor-system-panel")
+       (let* ((session (bridge-session environment))
+              (session-id (request-object-value request-json "sessionId")))
+         (sbcl-agent-call "QUERY-DESKTOP-TASK-ACTOR-SYSTEM-PANEL-SERVICE"
+                          session
+                          :session-id session-id)))
+      ((string= operation "desktop-task.runtime-state")
+       (let* ((session (bridge-session environment))
+              (session-id (request-object-value request-json "sessionId")))
+         (sbcl-agent-call "QUERY-DESKTOP-TASK-RUNTIME-STATE-SERVICE"
+                          session
+                          :session-id session-id)))
+      ((string= operation "desktop-task.supervision-incidents")
+       (let* ((session (bridge-session environment))
+              (session-id (request-object-value request-json "sessionId"))
+              (mailbox (request-object-value request-json "mailbox"))
+              (mailbox-entry-id (request-object-value request-json "mailboxEntryId"))
+              (actor-id (request-object-value request-json "actorId"))
+              (open-only-p (request-object-value request-json "openOnlyP")))
+         (sbcl-agent-call "QUERY-DESKTOP-TASK-SUPERVISION-INCIDENTS-SERVICE"
+                          session
+                          :session-id session-id
+                          :mailbox (and mailbox (intern (string-upcase mailbox) "KEYWORD"))
+                          :mailbox-entry-id mailbox-entry-id
+                          :actor-id actor-id
+                          :open-only-p open-only-p)))
+      ((string= operation "desktop-task.actor-trace")
+       (let* ((session (bridge-session environment))
+              (actor-role (request-object-value request-json "actorRole"))
+              (actor-message-id (request-object-value request-json "actorMessageId"))
+              (phase (request-object-value request-json "phase"))
+              (latest-only-p (request-object-value request-json "latestOnlyP"))
+              (dead-letters-only-p (request-object-value request-json "deadLettersOnlyP")))
+         (sbcl-agent-call "QUERY-DESKTOP-TASK-ACTOR-TRACE-SERVICE"
+                          session
+                          :actor-role actor-role
+                          :actor-message-id actor-message-id
+                          :phase (and phase (intern (string-upcase phase) "KEYWORD"))
+                          :latest-only-p latest-only-p
+                          :dead-letters-only-p dead-letters-only-p)))
+      ((string= operation "desktop-task.dlq")
+       (let* ((session (bridge-session environment))
+              (actor-role (request-object-value request-json "actorRole")))
+         (sbcl-agent-call "QUERY-DESKTOP-TASK-DEAD-LETTER-QUEUE-SERVICE"
+                          session
+                          :actor-role actor-role)))
+      ((string= operation "desktop-task.mcp-servers")
+       (let ((session (bridge-session environment)))
+         (sbcl-agent-call "QUERY-DESKTOP-TASK-MCP-SERVER-LIST-SERVICE" session)))
+      ((string= operation "desktop-task.mcp-server")
+       (let* ((session (bridge-session environment))
+              (server-id (request-object-value request-json "serverId")))
+         (unless server-id
+           (error "desktop-task.mcp-server requires a serverId payload"))
+         (sbcl-agent-call "QUERY-DESKTOP-TASK-MCP-SERVER-DETAIL-SERVICE"
+                          session
+                          server-id)))
+      ((string= operation "desktop-task.configure-mcp-server")
+       (let* ((session (bridge-session environment))
+              (request-object (request-object request-json))
+              (payload (if (and (listp request-object)
+                                (every #'consp request-object))
+                           (sbcl-agent-call "JSON-OBJECT->KEYWORD-PLIST" request-object)
+                           '())))
+         (sbcl-agent-call "COMMAND-DESKTOP-TASK-CONFIGURE-MCP-SERVER-SERVICE"
+                          session
+                          :server-id (getf payload :server-id)
+                          :name (or (getf payload :name) "")
+                          :transport (getf payload :transport)
+                          :command (getf payload :command)
+                          :arguments (getf payload :arguments)
+                          :environment-variables (getf payload :environment-variables)
+                          :working-directory (getf payload :working-directory)
+                          :endpoint (getf payload :endpoint)
+                          :capabilities (getf payload :capabilities)
+                          :retry-policy (getf payload :retry-policy)
+                          :health-status (getf payload :health-status)
+                          :enabled-p (getf payload :enabled-p)
+                          :discoverable-p (getf payload :discoverable-p))))
+      ((string= operation "desktop-task.remove-mcp-server")
+       (let* ((session (bridge-session environment))
+              (server-id (request-object-value request-json "serverId")))
+         (unless server-id
+           (error "desktop-task.remove-mcp-server requires a serverId payload"))
+         (sbcl-agent-call "COMMAND-DESKTOP-TASK-REMOVE-MCP-SERVER-SERVICE"
+                          session
+                          server-id)))
       ((string= operation "package-management.install-quicklisp")
        (let* ((session (bridge-session environment))
               (system-name (request-object-value request-json "systemName")))
@@ -1003,6 +1356,41 @@
                           (sbcl-agent-call "MAKE-SERVICE-METADATA"
                                            :authority :environment
                                            :read-model :package-browser-v1
+                                           :session session
+                                           :runtime-id (sbcl-agent-call "DEFAULT-RUNTIME-ID")))))
+      ((string= operation "runtime.symbol-page")
+       (let* ((session (bridge-session environment))
+              (package-scope (request-object-value request-json "packageScope"))
+              (raw-kinds (request-object-value request-json "kinds"))
+              (kinds (keywordish-list raw-kinds))
+              (visibility (or (keywordish (request-object-value request-json "visibility")) :all))
+              (search (request-object-value request-json "search"))
+              (offset (request-object-value request-json "offset"))
+              (limit (request-object-value request-json "limit")))
+         (format *error-output*
+                 "[bridge-runtime-symbol-page] env=~A package-scope=~S raw-kinds=~S kinds=~S visibility=~S offset=~S limit=~S~%"
+                 (ignore-errors (sbcl-agent-call "ENVIRONMENT-ID" environment))
+                 package-scope
+                 raw-kinds
+                 kinds
+                 visibility
+                 offset
+                 limit)
+         (finish-output *error-output*)
+         (sbcl-agent-call "MAKE-SERVICE-QUERY-RESPONSE"
+                          :runtime
+                          :symbol-page
+                          (runtime-symbol-page-data session
+                                                    :package-scope package-scope
+                                                    :kinds kinds
+                                                    :visibility visibility
+                                                    :search search
+                                                    :offset offset
+                                                    :limit limit)
+                          :metadata
+                          (sbcl-agent-call "MAKE-SERVICE-METADATA"
+                                           :authority :environment
+                                           :read-model :symbol-page-v1
                                            :session session
                                            :runtime-id (sbcl-agent-call "DEFAULT-RUNTIME-ID")))))
       ((string= operation "runtime.inspect-symbol")
@@ -1110,14 +1498,16 @@
        (let* ((session (bridge-session environment))
               (form (request-object-value request-json "form"))
               (package (request-object-value request-json "packageName"))
-              (mutating (request-object-value request-json "mutating")))
+              (mutating (request-object-value request-json "mutating"))
+              (recovery-launch (request-object-value request-json "recoveryLaunch")))
         (unless form
           (error "runtime.eval requires a form payload"))
         (sbcl-agent-call "COMMAND-RUNTIME-EVAL-SERVICE"
                          session
                          form
                          :package package
-                         :mutating mutating)))
+                         :mutating mutating
+                         :recovery-launch recovery-launch)))
       ((string= operation "calculator.set-expression")
        (let* ((session (bridge-session environment))
               (expression (request-object-value request-json "expression")))
@@ -1227,7 +1617,46 @@
            (error "runtime.reload-file requires a path payload"))
          (sbcl-agent-call "COMMAND-RUNTIME-RELOAD-FILE-SERVICE" session path)))
       ((string= operation "conversation.thread-list")
-       (sbcl-agent-call "QUERY-CONVERSATION-THREAD-LIST-SERVICE" (bridge-session environment)))
+       (ensure-desktop-conversation-thread-list (bridge-session environment)))
+      ((string= operation "conversation.workspace")
+       (let* ((session (bridge-session environment))
+              (requested-thread-id (request-object-value request-json "threadId"))
+              (requested-turn-id (request-object-value request-json "turnId"))
+              (thread-list-response
+                (ensure-desktop-conversation-thread-list session))
+              (thread-summaries (service-data thread-list-response))
+              (selected-thread-id
+                (or requested-thread-id
+                    (getf (first thread-summaries) :id)))
+              (thread-detail-response
+                (and selected-thread-id
+                     (sbcl-agent-call "QUERY-CONVERSATION-THREAD-DETAIL-SERVICE"
+                                      session
+                                      selected-thread-id)))
+              (selected-turn-id
+                (or requested-turn-id
+                    (and thread-detail-response
+                         (getf (first (getf (service-data thread-detail-response) :turns)) :id))))
+              (turn-detail-response
+                (and selected-turn-id
+                     (sbcl-agent-call "QUERY-CONVERSATION-TURN-DETAIL-SERVICE"
+                                      session
+                                      selected-turn-id))))
+         (sbcl-agent-call "MAKE-SERVICE-QUERY-RESPONSE"
+                          :conversation
+                          :workspace
+                          (list :threads thread-summaries
+                                :selected-thread (and thread-detail-response
+                                                      (service-data thread-detail-response))
+                                :selected-turn (and turn-detail-response
+                                                    (service-data turn-detail-response)))
+                          :metadata
+                          (sbcl-agent-call "MAKE-SERVICE-METADATA"
+                                           :authority :environment
+                                           :read-model :conversation-workspace-v1
+                                           :session session
+                                           :thread-id selected-thread-id
+                                           :turn-id selected-turn-id))))
       ((string= operation "conversation.create-thread")
        (let* ((session (bridge-session environment))
               (title (request-object-value request-json "title"))
@@ -1252,6 +1681,32 @@
                           thread-id
                           :title title
                           :summary summary)))
+      ((string= operation "desktop-task.approve-message")
+       (let* ((session (bridge-session environment))
+              (actor-message-id (request-object-value request-json "actorMessageId")))
+         (unless actor-message-id
+           (error "desktop-task.approve-message requires an actorMessageId payload"))
+         (let ((provider (current-provider-for-prompt environment session "Approve pending actor message." '())))
+           (sbcl-agent-call "COMMAND-DESKTOP-TASK-APPROVE-ACTOR-MESSAGE-SERVICE"
+                            session
+                            provider
+                            actor-message-id
+                            :source :say
+                            :operator-mode :conversation))))
+      ((string= operation "desktop-task.approve-approval")
+       (let* ((session (bridge-session environment))
+              (approval-id (request-object-value request-json "approvalId"))
+              (session-id (request-object-value request-json "sessionId")))
+         (unless approval-id
+           (error "desktop-task.approve-approval requires an approvalId payload"))
+         (let ((provider (current-provider-for-prompt environment session "Approve pending governance request." '())))
+           (sbcl-agent-call "COMMAND-DESKTOP-TASK-APPROVE-APPROVAL-SERVICE"
+                            session
+                            provider
+                            approval-id
+                            :session-id session-id
+                            :source :say
+                            :operator-mode :conversation))))
       ((string= operation "conversation.send-message")
        (let* ((session (bridge-session environment))
               (thread-id (request-object-value request-json "threadId"))
@@ -1272,7 +1727,8 @@
            (error "conversation.send-message requires a threadId payload"))
          (unless prompt
            (error "conversation.send-message requires a prompt payload"))
-         (sbcl-agent-call "COMMAND-CONVERSATION-USE-THREAD-SERVICE" session thread-id)
+         (unless (affirmative-approval-prompt-p prompt)
+           (sbcl-agent-call "COMMAND-CONVERSATION-USE-THREAD-SERVICE" session thread-id))
          (handler-case
              (conversation-say-service-response environment session thread-id prompt options)
            (error (condition)
@@ -1311,7 +1767,8 @@
            (error "conversation.send-message-stream requires a threadId payload"))
          (unless prompt
            (error "conversation.send-message-stream requires a prompt payload"))
-         (sbcl-agent-call "COMMAND-CONVERSATION-USE-THREAD-SERVICE" session thread-id)
+         (unless (affirmative-approval-prompt-p prompt)
+           (sbcl-agent-call "COMMAND-CONVERSATION-USE-THREAD-SERVICE" session thread-id))
          (let ((listener (lambda (event)
                            (emit-stream-frame :event (provider-event-stream-payload event)))))
            (progv (list (sbcl-agent-symbol "*STREAM-EVENT-LISTENER*"))
@@ -1319,6 +1776,11 @@
                (handler-case
                  (conversation-say-service-response environment session thread-id prompt options)
                (error (condition)
+                 (format *error-output*
+                         "~&[live-bridge] conversation.send-message-stream failure thread=~A type=~A message=~A~%"
+                         thread-id
+                         (type-of condition)
+                         (princ-to-string condition))
                  (sbcl-agent-call "MAKE-SERVICE-RESPONSE"
                                   :execution
                                   :say
@@ -1338,6 +1800,54 @@
          (sbcl-agent-call "QUERY-CONVERSATION-THREAD-DETAIL-SERVICE"
                           (bridge-session environment)
                           request-id)))
+      ((string= operation "conversation.latency")
+       (let ((turn-id (request-object-value request-json "turnId")))
+         (unless turn-id
+           (error "conversation.latency requires a turnId payload"))
+         (sbcl-agent-call "QUERY-CONVERSATION-LATENCY-SERVICE"
+                          (bridge-session environment)
+                          turn-id)))
+      ((string= operation "transcript.workspace")
+       (let* ((family (keywordish (request-object-value request-json "family")))
+              (visibility (keywordish (request-object-value request-json "visibility")))
+              (event-limit (or (request-object-value request-json "eventLimit") 12))
+              (include-events (not (eq (request-object-value request-json "includeEvents") :false)))
+              (include-environment-console
+                (not (eq (request-object-value request-json "includeEnvironmentConsole") :false)))
+              (console-limit (or (request-object-value request-json "consoleLimit") 40))
+              (events-response
+                (and include-events
+                     (sbcl-agent-call "QUERY-ENVIRONMENT-EVENTS-SERVICE"
+                                      :tail event-limit
+                                      :environment environment)))
+              (environment-console-response
+                (and include-environment-console
+                     (sbcl-agent-call "QUERY-CONSOLE-LOG-STREAM-SERVICE"
+                                      :environment environment
+                                      :limit console-limit
+                                      :type nil
+                                      :source nil))))
+         (when (or family visibility)
+           (setf events-response
+                 (sbcl-agent-call "QUERY-SERVICE-EVENT-STREAM"
+                                  :environment environment
+                                  :after-cursor nil
+                                  :limit event-limit
+                                  :family family
+                                  :visibility visibility)))
+         (sbcl-agent-call "MAKE-SERVICE-QUERY-RESPONSE"
+                          :observation
+                          :transcript-workspace
+                          (list :events (if events-response
+                                            (service-data events-response)
+                                            (list :events '()))
+                                :environment-console (and environment-console-response
+                                                          (service-data environment-console-response)))
+                          :metadata
+                          (sbcl-agent-call "MAKE-SERVICE-METADATA"
+                                           :authority :environment
+                                           :read-model :transcript-workspace-v1
+                                           :environment environment))))
       ((string= operation "conversation.turn-detail")
        (let ((request-id (request-object-value request-json "turnId")))
          (sbcl-agent-call "QUERY-CONVERSATION-TURN-DETAIL-SERVICE"
@@ -1935,37 +2445,85 @@
              :working-directory project-root)
     (load (merge-pathnames #P"sbcl-agent.asd" project-root))
     (asdf-call "LOAD-SYSTEM" :sbcl-agent)
-    (let* ((environment (load-or-create-bridge-environment project-root state-path environment-id))
-           (response
-             (handler-case
-                 (service-response-for environment operation environment-id request-json)
-               (error (condition)
-                 (sbcl-agent-call "MAKE-SERVICE-RESPONSE"
-                                  :bridge
-                                  :failure
-                                  :command
-                                  (list :summary (princ-to-string condition)
-                                        :error (princ-to-string condition)
-                                        :operation operation)
-                                  :status :error
-                                  :metadata (sbcl-agent-call "MAKE-SERVICE-METADATA"
-                                                             :authority :environment
-                                                             :environment environment))))))
-      (let ((persisted-environment
-              (if (binding-transition-operation-p operation)
-                  (handler-case
-                      (sbcl-agent-call "ENSURE-ENVIRONMENT")
-                    (error ()
-                      environment))
-                  environment)))
-        (handler-case
-            (sbcl-agent-call "SAVE-ENVIRONMENT" persisted-environment state-path)
-        (error ()
-              nil)))
-      (if (string= operation "conversation.send-message-stream")
-          (emit-stream-frame :result response)
-          (write-string
-           (sbcl-agent-call "EMIT-JSON"
-                            (json-friendly response)))))))
+    (labels ((bridge-environment-for-request (request-operation request-environment-id)
+               (if (and *bridge-environment*
+                        (not (binding-transition-operation-p request-operation)))
+                   *bridge-environment*
+                   (setf *bridge-environment*
+                         (load-or-create-bridge-environment
+                          project-root
+                          state-path
+                          request-environment-id))))
+             (execute-request (request-operation request-environment-id request-json-string)
+               (let* ((environment (bridge-environment-for-request
+                                    request-operation
+                                    request-environment-id))
+                      (response (handler-case
+                                    (service-response-for environment
+                                                          request-operation
+                                                          request-environment-id
+                                                          request-json-string)
+                                  (error (condition)
+                                    (format *error-output*
+                                            "~&[live-bridge] request failure operation=~A type=~A message=~A~%"
+                                            request-operation
+                                            (type-of condition)
+                                            (princ-to-string condition))
+                                    (sbcl-agent-call "MAKE-SERVICE-RESPONSE"
+                                                     :bridge
+                                                     :failure
+                                                     :command
+                                                     (list :summary (princ-to-string condition)
+                                                           :error (princ-to-string condition)
+                                                           :operation request-operation)
+                                                     :status :error
+                                                     :metadata (sbcl-agent-call "MAKE-SERVICE-METADATA"
+                                                                                :authority :environment
+                                                                                :environment environment))))))
+                 (let ((persisted-environment
+                         (if (binding-transition-operation-p request-operation)
+                             (handler-case
+                                 (sbcl-agent-call "ENSURE-ENVIRONMENT")
+                               (error ()
+                                 environment))
+                             environment)))
+                   (handler-case
+                       (progn
+                         (setf *bridge-environment* persisted-environment)
+                         (sbcl-agent-call "SAVE-ENVIRONMENT" persisted-environment state-path))
+                     (error ()
+                       nil)))
+                 response))
+             (emit-response (response)
+               (if (string= operation "conversation.send-message-stream")
+                   (emit-stream-frame :result response)
+                   (write-string
+                    (emit-request-json-string (json-friendly response))))))
+      (when (serve-mode-p operation)
+        (loop for line = (read-line *standard-input* nil nil)
+              while line
+              do (let ((trimmed (string-trim '(#\Space #\Tab #\Return #\Linefeed) line)))
+                   (when (> (length trimmed) 0)
+                     (let* ((frame (sbcl-agent-call "PARSE-JSON" trimmed))
+                            (request-id (sbcl-agent-call "JSON-OBJECT-VALUE" frame "id"))
+                            (request-operation (sbcl-agent-call "JSON-OBJECT-VALUE" frame "operation"))
+                            (request-environment-id (sbcl-agent-call "JSON-OBJECT-VALUE" frame "environmentId"))
+                            (request-payload-object (sbcl-agent-call "JSON-OBJECT-VALUE" frame "request"))
+                            (request-payload-json
+                              (when request-payload-object
+                                (emit-request-json-string request-payload-object)))
+                            (response
+                              (execute-request request-operation
+                                               request-environment-id
+                                               request-payload-json)))
+                       (write-line
+                        (emit-request-json-string
+                         (json-friendly
+                          (list :id request-id
+                                :response response))))
+                       (finish-output)))))
+        (return-from main nil))
+      (emit-response
+       (execute-request operation environment-id request-json)))))
 
 (main)

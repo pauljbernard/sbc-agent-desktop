@@ -16,7 +16,7 @@ import type {
 } from "../../shared/contracts";
 import { BrowserDataTable } from "./browser-data-table";
 import { LinkedEntityList, PriorityStateChip } from "./interaction-support";
-import { ContextBlock, JourneyStageStrip } from "./journey-support";
+import { ContextBlock } from "./journey-support";
 import { Badge, PanelHeader } from "./surface-support";
 
 function formatTraceLink(link: {
@@ -302,6 +302,8 @@ export type IncidentsWorkspaceProps = {
   openIncidentRemediationPlanDialog: () => void;
   navigateToLinkedEntity: (entity: LinkedEntityRefDto) => Promise<void>;
   openConversationDraft: () => Promise<void>;
+  openConversationDraftForRestartSuggestion: (restartLabel: string) => Promise<void>;
+  openListenerWorkbenchForRestartSuggestion: (restartLabel: string) => Promise<void>;
   openInspectorSurface: () => Promise<void>;
 };
 
@@ -316,15 +318,11 @@ export function IncidentsWorkspace({
   openIncidentRemediationPlanDialog,
   navigateToLinkedEntity,
   openConversationDraft,
+  openConversationDraftForRestartSuggestion,
+  openListenerWorkbenchForRestartSuggestion,
   openInspectorSurface
 }: IncidentsWorkspaceProps) {
   const incidentDetailPanelRef = useRef<HTMLDivElement | null>(null);
-  const selectedIncidentArtifactIds = selectedIncident?.artifactIds ?? [];
-  const selectedIncidentLinkedCount = selectedIncident?.linkedEntities.length ?? 0;
-  const recoveryObjective =
-    selectedIncident?.nextAction ??
-    selectedIncident?.recoverySummary ??
-    "Assess the dominant incident, restore trust, and only then return the environment to execution.";
 
   useEffect(() => {
     if (!pendingIncidentFocusId || selectedIncident?.incidentId !== pendingIncidentFocusId) {
@@ -343,77 +341,9 @@ export function IncidentsWorkspace({
 
   return (
     <div className="incidents-grid">
-      <JourneyStageStrip
-        eyebrow="Recovery Flow"
-        summary="Recovery should guide the operator from failure assessment into restoration, then back toward trustworthy continuation."
-        steps={[
-          {
-            id: "assess",
-            title: "Assess Failure",
-            summary: "Identify the dominant incident, severity, and recovery state without losing connection to runtime context.",
-            tone: incidents.length > 0 ? "danger" : "steady"
-          },
-          {
-            id: "restore",
-            title: "Restore Trust",
-            summary: "Use linked work and evidence to drive the environment toward a state that can be trusted again.",
-            tone:
-              selectedIncident?.recoveryState === "awaiting_acknowledgement"
-                ? "danger"
-                : selectedIncident?.recoveryState === "active_recovery"
-                  ? "warning"
-                  : selectedIncident
-                    ? "active"
-                    : "steady"
-          },
-          {
-            id: "resume",
-            title: "Resume Execution",
-            summary: "Recovery is complete only when the environment can re-enter execution without hidden obligations.",
-            tone: selectedIncidentArtifactIds.length > 0 || selectedIncidentLinkedCount > 0 ? "active" : "steady"
-          }
-        ]}
-        title="Recovery Journey"
-      />
-      <section className="panel recovery-objective-panel">
-        <div className="panel-header">
-          <div>
-            <p className="eyebrow">Current Recovery Objective</p>
-            <h3>{selectedIncident?.title ?? "No incident selected"}</h3>
-          </div>
-          <Badge tone={selectedIncident ? toneForIncidentSeverity(selectedIncident.severity) : "steady"}>
-            {selectedIncident?.state ?? "clear"}
-          </Badge>
-        </div>
-        <p className="lead-copy">{recoveryObjective}</p>
-        <p className="context-label">{environmentFocusLabel}</p>
-        <div className="signal-digest-grid execution-objective-digest">
-          <div className="signal-digest-card">
-            <span className="context-label">Incidents</span>
-            <strong>{incidents.length}</strong>
-            <p>{incidents[0]?.title ?? "No incident dominates the environment."}</p>
-          </div>
-          <div className="signal-digest-card">
-            <span className="context-label">Recovery State</span>
-            <strong>{selectedIncident?.recoveryState ?? "idle"}</strong>
-            <p>{selectedIncident?.blockedReason ?? "Recovery can proceed without an explicit blocking reason."}</p>
-          </div>
-          <div className="signal-digest-card">
-            <span className="context-label">Evidence</span>
-            <strong>{selectedIncidentArtifactIds.length}</strong>
-            <p>{selectedIncidentArtifactIds.length > 0 ? "Recovery evidence is already attached to the incident." : "No explicit recovery evidence is attached yet."}</p>
-          </div>
-        </div>
-      </section>
-
       <div className="recovery-layout">
         <section className="incidents-list-panel">
-          <div className="panel-header">
-            <div>
-              <p className="eyebrow">Assess Failure</p>
-              <p className="panel-subtitle">Failures stay durable, governed, and recoverable.</p>
-            </div>
-          </div>
+          <PanelHeader title="Incidents" subtitle="Durable failures that still require recovery attention." />
           <div className="thread-list">
             {incidents.length > 0 ? (
               incidents.map((incident) => (
@@ -445,7 +375,7 @@ export function IncidentsWorkspace({
               <div className="panel" ref={incidentDetailPanelRef} tabIndex={-1}>
                 <div className="panel-header">
                   <div>
-                    <p className="eyebrow">Restore Trust</p>
+                    <p className="eyebrow">Selected Incident</p>
                     <h3>{selectedIncident.title}</h3>
                   </div>
                   <Badge tone={toneForIncidentSeverity(selectedIncident.severity)}>{selectedIncident.state}</Badge>
@@ -463,6 +393,65 @@ export function IncidentsWorkspace({
                   <p className="mission-support">{selectedIncident.nextAction}</p>
                   {selectedIncident.blockedReason ? <p className="mission-support">Blocked: {selectedIncident.blockedReason}</p> : null}
                 </div>
+                <section className="linked-entities-panel">
+                  <PanelHeader title="Runtime Failure Detail" subtitle="Captured condition shape and restart options remain visible from the incident itself." />
+                  {selectedIncident.conditionDetail ? (
+                    <>
+                      <div className="approval-facts">
+                        <ContextBlock label="Condition Type" value={selectedIncident.conditionDetail.type ?? "unknown"} />
+                        <ContextBlock label="Condition Class" value={selectedIncident.conditionDetail.class ?? "unknown"} />
+                        <ContextBlock label="Restarts" value={String(selectedIncident.conditionDetail.restartCount)} />
+                        <ContextBlock
+                          label="Condition Slots"
+                          value={String(selectedIncident.conditionDetail.slotCount ?? selectedIncident.conditionDetail.slots.length)}
+                        />
+                      </div>
+                      <p className="lead-copy">{selectedIncident.conditionDetail.message}</p>
+                      {selectedIncident.conditionDetail.printed ? (
+                        <pre className="runtime-preview">{selectedIncident.conditionDetail.printed}</pre>
+                      ) : null}
+                      {selectedIncident.conditionDetail.slots.length ? (
+                        <div className="ref-list">
+                          {selectedIncident.conditionDetail.slots.slice(0, 8).map((slot) => (
+                            <span className="thread-flag" key={`${slot.name}:${slot.printed ?? slot.type ?? ""}`}>
+                              {slot.name}
+                              {slot.type ? ` · ${slot.type}` : ""}
+                              {slot.printed ? ` · ${slot.printed}` : slot.boundp ? " · bound" : " · unbound"}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </>
+                  ) : (
+                    <p className="list-empty">No structured condition detail was captured for this incident.</p>
+                  )}
+                  {selectedIncident.restartSuggestions.length ? (
+                    <>
+                      <PanelHeader title="Restart Suggestions" subtitle="Available recovery restarts captured at incident time." />
+                      <div className="ref-list">
+                        {selectedIncident.restartSuggestions.map((restart) => (
+                          <div className="browser-action-strip" key={`${restart.name ?? ""}:${restart.label}`}>
+                            <button
+                              className="starter-chip"
+                              onClick={() => void openConversationDraftForRestartSuggestion(restart.label)}
+                              type="button"
+                            >
+                              {restart.label}
+                              {restart.name ? ` · ${restart.name}` : ""}
+                            </button>
+                            <button
+                              className="starter-chip"
+                              onClick={() => void openListenerWorkbenchForRestartSuggestion(restart.label)}
+                              type="button"
+                            >
+                              Open In Listener
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  ) : null}
+                </section>
                 <section className="linked-entities-panel">
                   <PanelHeader title="Remediation Plan" subtitle="Operator-owned recovery steps stay explicit and durable." />
                   {selectedIncident.remediationPlan ? (
@@ -504,7 +493,7 @@ export function IncidentsWorkspace({
             ) : (
               <div className="empty-state">
                 <p className="eyebrow">No Incident Selected</p>
-                <h3>Select an incident to inspect governed recovery posture.</h3>
+                <h3>Select an incident.</h3>
                 <p className="context-label">{environmentFocusLabel}</p>
               </div>
             )}
@@ -513,10 +502,10 @@ export function IncidentsWorkspace({
           <section className="incident-linked-panel">
             {selectedIncident ? (
               <div className="panel">
-                <PanelHeader title="Resume Execution" subtitle="Recovery stays tied to runtime, work, and evidence until continuation is trustworthy again." />
+                <PanelHeader title="Linked Context" subtitle="Runtime, work, evidence, and trace data for the selected incident." />
                 <LinkedEntityList entities={selectedIncident.linkedEntities} navigateToLinkedEntity={navigateToLinkedEntity} />
                 <section className="linked-entities-panel">
-                  <PanelHeader title="Evidence" subtitle="Artifacts remain explicit recovery evidence." />
+                  <PanelHeader title="Evidence" subtitle="Artifacts attached to this incident." />
                   <div className="ref-list">
                     {selectedIncident.artifactIds.map((artifactId) => (
                       <span className="thread-flag" key={artifactId}>
@@ -526,7 +515,7 @@ export function IncidentsWorkspace({
                   </div>
                 </section>
                 <section className="linked-entities-panel">
-                  <PanelHeader title="Trace" subtitle="Recovery stays linked to the surrounding governed trace graph." />
+                  <PanelHeader title="Trace" subtitle="Trace links attached to this incident." />
                   {selectedIncident.traceNeighborhood ? (
                     <div className="thread-list">
                       {selectedIncident.traceNeighborhood.outbound.map((link) => (
@@ -565,7 +554,7 @@ export function IncidentsWorkspace({
             ) : (
               <div className="empty-state">
                 <p className="eyebrow">No Recovery Context</p>
-                <h3>Select an incident to inspect linked runtime and artifact context.</h3>
+                <h3>Select an incident to inspect linked context.</h3>
               </div>
             )}
           </section>
@@ -668,8 +657,8 @@ export function WorkWorkspace({
     <div className="work-grid">
       <section className="work-list-panel">
         <PanelHeader
-          title="Reconcile Work"
-          subtitle="Execution items remain visible with their validation and closure obligations attached."
+          title="Work"
+          subtitle="Governed work items and their current obligations."
         />
         <BrowserDataTable
           key="execution-work"
@@ -730,7 +719,7 @@ export function WorkWorkspace({
           <div className="panel">
             <div className="panel-header">
               <div>
-                <p className="eyebrow">Selected Execution Item</p>
+                <p className="eyebrow">Selected Work Item</p>
                 <h3>{selectedWorkItem.title}</h3>
               </div>
               <PriorityStateChip label={selectedWorkItem.state} tone={toneForWorkState(selectedWorkItem.state)} />
@@ -738,7 +727,7 @@ export function WorkWorkspace({
             <p className="context-label">{environmentFocusLabel}</p>
             <div className="browser-focus-card">
               <div>
-                <p className="context-label">Selected Execution Item</p>
+                <p className="context-label">Current Work Context</p>
                 <strong>{selectedWorkItem.title}</strong>
                 <p>{formatCorrectiveSummary(selectedWorkItem.correctiveContext)}</p>
               </div>
@@ -756,7 +745,7 @@ export function WorkWorkspace({
               <section className="linked-entities-panel">
                 <PanelHeader
                   title="Corrective Direction"
-                  subtitle="Reconciliation-created work stays explicit about why it exists, what it intends to change, and what evidence triggered it."
+                  subtitle="Why this work exists and what it is trying to change."
                 />
                 <div className="approval-facts">
                   <ContextBlock label="Corrective Kind" value={selectedWorkItem.correctiveContext.kind} />
@@ -807,7 +796,7 @@ export function WorkWorkspace({
               </section>
             ) : null}
             <section className="linked-entities-panel">
-              <PanelHeader title="Plan" subtitle="Long-horizon steering and pending execution obligations remain attached to the work item." />
+              <PanelHeader title="Plan" subtitle="Current steering and pending obligations." />
               {selectedWorkItemPlan ? (
                 <>
                   <div className="approval-facts">
@@ -870,11 +859,11 @@ export function WorkWorkspace({
               )}
             </section>
             <section className="linked-entities-panel">
-              <PanelHeader title="Linked Context" subtitle="Approvals, incidents, and artifacts stay attached to the work." />
+              <PanelHeader title="Linked Context" subtitle="Approvals, incidents, and artifacts attached to this work item." />
               <LinkedEntityList entities={selectedWorkItem.linkedEntities} navigateToLinkedEntity={navigateToLinkedEntity} />
             </section>
             <section className="linked-entities-panel">
-              <PanelHeader title="Trace" subtitle="Execution remains attached to the requirement-to-incident trace graph." />
+              <PanelHeader title="Trace" subtitle="Attached trace graph links." />
               {selectedWorkItem.traceNeighborhood ? (
                 <div className="thread-list">
                   {selectedWorkItem.traceNeighborhood.outbound.map((link) => (
@@ -975,7 +964,7 @@ export function WorkWorkspace({
           <div className="panel" ref={workflowDetailPanelRef} tabIndex={-1}>
             <div className="panel-header">
               <div>
-                <p className="eyebrow">Closure Path</p>
+                <p className="eyebrow">Workflow Record</p>
                 <h3>{selectedWorkflowRecord.phase}</h3>
               </div>
               <Badge tone={selectedWorkflowRecord.closureReadiness === "closable" ? "active" : "warning"}>

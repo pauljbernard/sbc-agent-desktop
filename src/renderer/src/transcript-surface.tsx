@@ -107,7 +107,7 @@ export function TranscriptSurface({
               Open Inspector
             </button>
             <button className="starter-chip" onClick={() => void openEvidenceObservation()} type="button">
-              Open Observation
+              Open Evidence
             </button>
           </div>
           <BrowserDataTable
@@ -196,7 +196,7 @@ export function TranscriptSurface({
                 ) : null}
                 {selectedEntry.source === "event" ? (
                   <button className="starter-chip" onClick={() => void openEvidenceObservation()} type="button">
-                    Open Observation
+                    Open Evidence
                   </button>
                 ) : null}
               </div>
