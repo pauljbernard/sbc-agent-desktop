@@ -103,6 +103,7 @@ import type {
   WorkspaceId
 } from "../shared/contracts";
 import {
+  applyMockConversationApprovalCompletion,
   commandApproveRequest,
   commandAddLocalProject,
   commandAddSourceRegistryEntry,
@@ -486,6 +487,7 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
       maxAttempts: 1,
       retryableP: false,
       idempotencyKey: "editor-append-main",
+      approvalId: "approval-binding-shift",
       threadId: "thread-default",
       turnId: "turn-editor-approval",
       conversationOperationId: "conversation-op-editor-approval",
@@ -1363,7 +1365,43 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
     input: SendConversationMessageInput,
     onEvent?: (event: EnvironmentEventDto) => void
   ): Promise<CommandResultDto<SendConversationMessageResultDto>> {
-    if (onEvent) {
+    const normalizedPrompt = input.prompt.trim().toLowerCase();
+    const result = commandSendConversationMessage({
+      ...input,
+      environmentId: this.resolveEnvironmentId(input.environmentId)
+    });
+    if (result.status === "awaiting_approval") {
+      const record = this.desktopTaskRecordCatalog.find(
+        (entry) => entry.actorMessageId === "actor-message-editor-approval"
+      );
+      if (record) {
+        const requestedForm =
+          typeof result.data.pendingApproval?.requestedForm === "string"
+            ? result.data.pendingApproval.requestedForm
+            : this.extractRequestedEditorAppendForm(input.prompt);
+        record.threadId = result.data.threadId ?? input.threadId;
+        record.turnId = result.data.turnId ?? record.turnId;
+        record.status = "awaiting-approval";
+        record.governanceStatus = "governance-pending";
+        record.approvalStatus = "awaiting-approval";
+        record.approvedAt = null;
+        record.startedAt = null;
+        record.completedAt = null;
+        record.lastError = null;
+        record.resolution = null;
+        record.result = null;
+        record.requestMetadata = {
+          ...(typeof record.requestMetadata === "object" && record.requestMetadata ? record.requestMetadata : {}),
+          text: requestedForm ?? "(+ 1 1)",
+          bufferId: "editor-buffer-project-live-environment-main"
+        };
+      }
+    }
+    if (
+      onEvent &&
+      result.status !== "awaiting_approval" &&
+      !normalizedPrompt.startsWith("evaluate ")
+    ) {
       onEvent({
         cursor: Date.now(),
         kind: "provider-stream",
@@ -1380,10 +1418,7 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
         }
       });
     }
-    return commandSendConversationMessage({
-      ...input,
-      environmentId: this.resolveEnvironmentId(input.environmentId)
-    });
+    return result;
   }
 
   async approveActorMessage(
@@ -1417,16 +1452,28 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
     record.approvedAt = now;
     record.startedAt = now;
     record.completedAt = now;
+    const appendedText =
+      typeof record.requestMetadata === "object" &&
+      record.requestMetadata != null &&
+      typeof (record.requestMetadata as { text?: unknown }).text === "string"
+        ? (record.requestMetadata as { text: string }).text
+        : "(+ 1 1)";
     record.result = {
       status: "completed",
       summary: "Appended text to the active editor buffer.",
       invocationResult: {
-        text: "(+ 1 1)",
+        text: appendedText,
         scopeId: "project-live",
         bufferId: "editor-buffer-project-live-environment-main",
         packageName: "cl-user"
       }
     };
+    applyMockConversationApprovalCompletion({
+      environmentId: this.resolveEnvironmentId(_input.environmentId),
+      threadId: record.threadId ?? "thread-default",
+      turnId: record.turnId ?? "turn-default",
+      assistantMessage: `Appended ${appendedText} to the editor now.`
+    });
     return {
       contractVersion: 1,
       domain: "desktop-task",
@@ -1436,7 +1483,7 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
       data: {
         threadId: record.threadId ?? "thread-default",
         turnId: record.turnId ?? "turn-default",
-        assistantMessage: "Appended (+ 1 1) to the editor now.",
+        assistantMessage: `Appended ${appendedText} to the editor now.`,
         summary: "Appended text to the active editor buffer.",
         desktopTaskResults: [
           {
@@ -1478,6 +1525,13 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
       };
     }
     return this.approveActorMessage({ environmentId: input.environmentId, actorMessageId: record.actorMessageId });
+  }
+
+  private extractRequestedEditorAppendForm(prompt: string): string | null {
+    const match = prompt.match(
+      /append\s+([\s\S]+?)\s+(?:to|into)\s+the\s+(?:editor surface|surface editor)\.?\s*$/i
+    );
+    return match?.[1]?.trim() ?? null;
   }
 
   async extractConversationAttachmentText(input: {
@@ -2567,6 +2621,116 @@ export class MockSbclAgentHostAdapter implements SbclAgentHostAdapter {
         authority: "environment",
         binding: this.currentBinding,
         readModel: "desktop-task-record-list-v1"
+      }
+    };
+  }
+
+  async orchestrationList(_environmentId?: string): Promise<QueryResultDto<Record<string, unknown>[]>> {
+    return {
+      contractVersion: 1,
+      domain: "planning",
+      operation: "orchestration-list",
+      kind: "query",
+      status: "ok",
+      data: [],
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding,
+        readModel: "orchestration-list-v1"
+      }
+    };
+  }
+
+  async orchestrationInbox(_environmentId?: string): Promise<QueryResultDto<Record<string, unknown>[]>> {
+    return {
+      contractVersion: 1,
+      domain: "planning",
+      operation: "orchestration-inbox",
+      kind: "query",
+      status: "ok",
+      data: [],
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding,
+        readModel: "orchestration-inbox-v1"
+      }
+    };
+  }
+
+  async orchestrationFocus(input?: {
+    environmentId?: string;
+    planId?: string;
+    workflowRecordId?: string;
+    workItemId?: string;
+  }): Promise<QueryResultDto<Record<string, unknown>>> {
+    return {
+      contractVersion: 1,
+      domain: "planning",
+      operation: "orchestration-focus",
+      kind: "query",
+      status: "ok",
+      data: {
+        id: input?.planId ?? null,
+        workflowRecordId: input?.workflowRecordId ?? null,
+        workItemId: input?.workItemId ?? null,
+        resolvedBy: input?.planId
+          ? "planId"
+          : input?.workflowRecordId
+            ? "workflowRecordId"
+            : input?.workItemId
+              ? "workItemId"
+              : "activePlan"
+      },
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding,
+        readModel: "orchestration-focus-v1"
+      }
+    };
+  }
+
+  async orchestrationSnapshot(input?: {
+    environmentId?: string;
+    planId?: string;
+  }): Promise<QueryResultDto<Record<string, unknown>>> {
+    return {
+      contractVersion: 1,
+      domain: "planning",
+      operation: "orchestration-snapshot",
+      kind: "query",
+      status: "ok",
+      data: {
+        id: input?.planId ?? null
+      },
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding,
+        readModel: "orchestration-snapshot-v1"
+      }
+    };
+  }
+
+  async planVerification(input?: {
+    environmentId?: string;
+    planId?: string;
+  }): Promise<QueryResultDto<Record<string, unknown>>> {
+    return {
+      contractVersion: 1,
+      domain: "planning",
+      operation: "verification",
+      kind: "query",
+      status: "ok",
+      data: {
+        planId: input?.planId ?? null,
+        stepCount: 0,
+        verifiedStepCount: 0,
+        failedStepCount: 0,
+        pendingStepCount: 0
+      },
+      metadata: {
+        authority: "environment",
+        binding: this.currentBinding,
+        readModel: "plan-verification-v1"
       }
     };
   }

@@ -83,6 +83,182 @@ interface MockEnvironmentRecord {
   events: EnvironmentEventDto[];
 }
 
+type MockLispExpr = number | string | MockLispExpr[];
+
+interface MockRuntimeFunctionDefinition {
+  name: string;
+  parameter: string;
+  body: MockLispExpr;
+}
+
+const mockRuntimeFunctionDefinitions = new Map<string, Map<string, MockRuntimeFunctionDefinition>>();
+
+function runtimeDefinitionsForEnvironment(environmentId: string): Map<string, MockRuntimeFunctionDefinition> {
+  const existing = mockRuntimeFunctionDefinitions.get(environmentId);
+  if (existing) {
+    return existing;
+  }
+  const created = new Map<string, MockRuntimeFunctionDefinition>();
+  mockRuntimeFunctionDefinitions.set(environmentId, created);
+  return created;
+}
+
+function tokenizeMockLisp(form: string): string[] {
+  return form
+    .replace(/\(/g, " ( ")
+    .replace(/\)/g, " ) ")
+    .trim()
+    .split(/\s+/)
+    .filter((token) => token.length > 0);
+}
+
+function parseMockLisp(tokens: string[]): MockLispExpr {
+  const token = tokens.shift();
+  if (!token) {
+    throw new Error("Unexpected end of mock Lisp form.");
+  }
+  if (token === "(") {
+    const items: MockLispExpr[] = [];
+    while (tokens[0] !== ")") {
+      if (!tokens[0]) {
+        throw new Error("Unclosed list in mock Lisp form.");
+      }
+      items.push(parseMockLisp(tokens));
+    }
+    tokens.shift();
+    return items;
+  }
+  if (token === ")") {
+    throw new Error("Unexpected closing paren in mock Lisp form.");
+  }
+  const numeric = Number(token);
+  return Number.isFinite(numeric) && /^-?\d+(?:\.\d+)?$/.test(token) ? numeric : token;
+}
+
+function readMockLisp(form: string): MockLispExpr {
+  const tokens = tokenizeMockLisp(form);
+  const parsed = parseMockLisp(tokens);
+  if (tokens.length > 0) {
+    throw new Error("Unexpected trailing tokens in mock Lisp form.");
+  }
+  return parsed;
+}
+
+function evalMockLispExpression(
+  environmentId: string,
+  expression: MockLispExpr,
+  locals: Record<string, number> = {}
+): number {
+  if (typeof expression === "number") {
+    return expression;
+  }
+  if (typeof expression === "string") {
+    if (expression in locals) {
+      return locals[expression]!;
+    }
+    throw new Error(`Unknown symbol ${expression}`);
+  }
+  if (expression.length === 0) {
+    throw new Error("Cannot evaluate empty mock Lisp list.");
+  }
+
+  const [operator, ...args] = expression;
+  if (typeof operator !== "string") {
+    throw new Error("Mock Lisp operator must be a symbol.");
+  }
+  const evaluatedArgs = args.map((arg) => evalMockLispExpression(environmentId, arg, locals));
+  switch (operator) {
+    case "+":
+      return evaluatedArgs.reduce((sum, value) => sum + value, 0);
+    case "*":
+      return evaluatedArgs.reduce((product, value) => product * value, 1);
+    case "-":
+      if (evaluatedArgs.length === 0) {
+        throw new Error("Mock subtraction requires at least one argument.");
+      }
+      return evaluatedArgs.length === 1
+        ? -evaluatedArgs[0]!
+        : evaluatedArgs.slice(1).reduce((value, next) => value - next, evaluatedArgs[0]!);
+    case "/":
+      if (evaluatedArgs.length === 0) {
+        throw new Error("Mock division requires at least one argument.");
+      }
+      return evaluatedArgs.slice(1).reduce((value, next) => value / next, evaluatedArgs[0]!);
+    default: {
+      const definition = runtimeDefinitionsForEnvironment(environmentId).get(operator.toLowerCase());
+      if (!definition) {
+        throw new Error(`Unknown mock function ${operator}`);
+      }
+      if (evaluatedArgs.length !== 1) {
+        throw new Error(`Mock function ${operator} expects exactly one argument.`);
+      }
+      return evalMockLispExpression(environmentId, definition.body, {
+        ...locals,
+        [definition.parameter]: evaluatedArgs[0]!
+      });
+    }
+  }
+}
+
+function maybeHandleStatefulMockRuntimeEval(input: {
+  environmentId: string;
+  form: string;
+}): RuntimeEvalResultDto | null {
+  let parsed: MockLispExpr;
+  try {
+    parsed = readMockLisp(input.form);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    return null;
+  }
+  const [head, ...tail] = parsed;
+  if (head === "defun" && tail.length >= 3) {
+    const [nameExpr, paramsExpr, ...bodyExprs] = tail;
+    if (
+      typeof nameExpr !== "string" ||
+      !Array.isArray(paramsExpr) ||
+      paramsExpr.length !== 1 ||
+      typeof paramsExpr[0] !== "string" ||
+      bodyExprs.length === 0
+    ) {
+      return null;
+    }
+    runtimeDefinitionsForEnvironment(input.environmentId).set(nameExpr.toLowerCase(), {
+      name: nameExpr,
+      parameter: paramsExpr[0],
+      body: bodyExprs[bodyExprs.length - 1]!
+    });
+    return {
+      evaluationId: "eval-ok",
+      outcome: "ok",
+      summary: `Defined ${nameExpr} in the mock runtime context.`,
+      valuePreview: nameExpr,
+      operationId: "op-runtime-eval-ok",
+      artifactIds: [],
+      approvalId: null,
+      incidentId: null
+    };
+  }
+
+  try {
+    const value = evalMockLispExpression(input.environmentId, parsed);
+    return {
+      evaluationId: "eval-ok",
+      outcome: "ok",
+      summary: "Evaluation completed normally inside the governed runtime context.",
+      valuePreview: String(value),
+      operationId: "op-runtime-eval-ok",
+      artifactIds: [],
+      approvalId: null,
+      incidentId: null
+    };
+  } catch {
+    return null;
+  }
+}
+
 const mockDiagnosticReports: Record<string, DiagnosticReportDetailDto> = {
   "diag-runtime-reload": {
     reportId: "diag-runtime-reload",
@@ -1977,8 +2153,174 @@ export function commandSendConversationMessage(
   const timestamp = new Date().toISOString();
   const turnId = `turn-${Date.now()}`;
   const prompt = input.prompt.trim();
-  const assistantMessage = `Mock assistant response for ${detail.title}: ${prompt}`;
+  const normalizedPrompt = prompt.replace(/\s+/g, " ").trim().toLowerCase();
+  const appendEditorMatch = prompt.match(
+    /append\s+([\s\S]+?)\s+(?:to|into)\s+the\s+(?:editor surface|surface editor)\.?\s*$/i
+  );
+  const governedEditorAppendPrompt = appendEditorMatch != null;
+  const appendedEditorForm = appendEditorMatch?.[1]?.trim() ?? null;
+  const evaluateMatch = prompt.match(/^evaluate\s+([\s\S]+)$/i);
   const attachments = input.attachments ?? [];
+
+  if (governedEditorAppendPrompt) {
+    const assistantMessage =
+      'This action requires approval before I can continue. Reply "yes" to approve workspace-write and I will continue.';
+    detail.messages = [
+      ...detail.messages,
+      {
+        messageId: `message-user-${Date.now()}`,
+        role: "user",
+        content: prompt,
+        attachments,
+        createdAt: timestamp
+      }
+    ] as MessageDto[];
+    detail.turns = [
+      ...detail.turns,
+      {
+        turnId,
+        title: prompt.slice(0, 72) || "Draft message",
+        state: "awaiting_approval",
+        createdAt: timestamp
+      }
+    ];
+    detail.state = "active";
+    detail.summary = "Editor append is waiting for workspace-write approval.";
+
+    environment.turnDetails[turnId] = {
+      turnId,
+      threadId: input.threadId,
+      title: prompt.slice(0, 72) || "Draft message",
+      state: "awaiting_approval",
+      summary: detail.summary,
+      createdAt: timestamp,
+      operationIds: [],
+      operations: [],
+      artifactIds: [],
+      incidentIds: [],
+      approvalIds: ["approval-binding-shift"],
+      workItemIds: []
+    };
+
+    thread.latestActivityAt = timestamp;
+    thread.latestTurnState = "awaiting_approval";
+    thread.state = "active";
+    thread.summary = detail.summary;
+    thread.attentionFlags = ["awaiting approval", `messages ${detail.messages.length}`, `turns ${detail.turns.length}`];
+
+    return {
+      contractVersion: 1,
+      domain: "execution",
+      operation: "conversation.send_message",
+      kind: "command",
+      status: "awaiting_approval",
+      data: {
+        threadId: input.threadId,
+        turnId,
+        assistantMessage,
+        summary: detail.summary,
+        pendingApproval: {
+          actorMessageId: "actor-message-editor-approval",
+          approvalId: "approval-binding-shift",
+          sessionId: "session-editor-approval",
+          threadId: input.threadId,
+          policyIds: ["workspace-write"],
+          requestedForm: appendedEditorForm
+        }
+      },
+      metadata: {
+        ...metadata(binding, "conversation-execution"),
+        commandModel: "conversation-execution-v1",
+        threadId: input.threadId,
+        turnId,
+        policyId: "workspace-write"
+      }
+    };
+  }
+
+  if (evaluateMatch) {
+    const runtimeResult = commandEvaluateInContext({
+      environmentId: input.environmentId,
+      form: evaluateMatch[1]!.trim()
+    });
+    const assistantMessage =
+      runtimeResult.data.valuePreview ??
+      runtimeResult.data.summary ??
+      "Evaluation completed in the mock runtime.";
+
+    detail.messages = [
+      ...detail.messages,
+      {
+        messageId: `message-user-${Date.now()}`,
+        role: "user",
+        content: prompt,
+        attachments,
+        createdAt: timestamp
+      },
+      {
+        messageId: `message-assistant-${Date.now()}`,
+        role: "assistant",
+        content: assistantMessage,
+        createdAt: timestamp,
+        turnId
+      }
+    ] as MessageDto[];
+    detail.turns = [
+      ...detail.turns,
+      {
+        turnId,
+        title: prompt.slice(0, 72) || "Draft message",
+        state: turnStateForCommandStatus(runtimeResult.status),
+        createdAt: timestamp
+      }
+    ];
+    detail.state = "active";
+    detail.summary = runtimeResult.data.summary ?? `Latest turn completed for ${detail.title}.`;
+
+    environment.turnDetails[turnId] = {
+      turnId,
+      threadId: input.threadId,
+      title: prompt.slice(0, 72) || "Draft message",
+      state: turnStateForCommandStatus(runtimeResult.status),
+      summary: detail.summary,
+      createdAt: timestamp,
+      operationIds: runtimeResult.data.operationId ? [runtimeResult.data.operationId] : [],
+      operations: [],
+      artifactIds: runtimeResult.data.artifactIds ?? [],
+      incidentIds: runtimeResult.data.incidentId ? [runtimeResult.data.incidentId] : [],
+      approvalIds: runtimeResult.data.approvalId ? [runtimeResult.data.approvalId] : [],
+      workItemIds: []
+    };
+
+    thread.latestActivityAt = timestamp;
+    thread.latestTurnState = turnStateForCommandStatus(runtimeResult.status);
+    thread.state = "active";
+    thread.summary = detail.summary;
+    thread.attentionFlags = [`messages ${detail.messages.length}`, `turns ${detail.turns.length}`];
+
+    return {
+      contractVersion: 1,
+      domain: "execution",
+      operation: "conversation.send_message",
+      kind: "command",
+      status: runtimeResult.status,
+      data: {
+        threadId: input.threadId,
+        turnId,
+        assistantMessage,
+        summary: detail.summary,
+        runtimeReply: runtimeResult.data as unknown as Record<string, unknown>
+      },
+      metadata: {
+        ...metadata(binding, "conversation-execution"),
+        commandModel: "conversation-execution-v1",
+        threadId: input.threadId,
+        turnId
+      }
+    };
+  }
+
+  const assistantMessage = `Mock assistant response for ${detail.title}: ${prompt}`;
 
   detail.messages = [
     ...detail.messages,
@@ -2048,6 +2390,74 @@ export function commandSendConversationMessage(
       turnId
     }
   };
+}
+
+function turnStateForCommandStatus(
+  status: CommandResultDto<unknown>["status"]
+): TurnSummaryDto["state"] {
+  switch (status) {
+    case "ok":
+      return "completed";
+    case "awaiting_approval":
+      return "awaiting_approval";
+    case "rejected":
+      return "failed";
+    case "error":
+    default:
+      return "failed";
+  }
+}
+
+export function applyMockConversationApprovalCompletion(input: {
+  environmentId: string;
+  threadId: string;
+  turnId: string;
+  assistantMessage: string;
+}): void {
+  const environment = environments[input.environmentId];
+  const detail = environment.threadDetails[input.threadId];
+  const thread = environment.threads.find((entry) => entry.threadId === input.threadId);
+  if (!detail || !thread) {
+    return;
+  }
+
+  const timestamp = new Date().toISOString();
+  detail.messages = [
+    ...detail.messages,
+    {
+      messageId: `message-assistant-${Date.now()}`,
+      role: "assistant",
+      content: input.assistantMessage,
+      createdAt: timestamp,
+      turnId: input.turnId
+    }
+  ] as MessageDto[];
+  detail.turns = detail.turns.map((turn) =>
+    turn.turnId === input.turnId
+      ? {
+          ...turn,
+          state: "completed"
+        }
+      : turn
+  );
+  detail.summary = "Appended text to the active editor buffer.";
+  detail.state = "active";
+
+  const existingTurn = environment.turnDetails[input.turnId];
+  if (existingTurn) {
+    environment.turnDetails[input.turnId] = {
+      ...existingTurn,
+      state: "completed",
+      summary: input.assistantMessage,
+      approvalIds: []
+    };
+  }
+
+  thread.latestActivityAt = timestamp;
+  thread.latestTurnState = "completed";
+  thread.state = "active";
+  thread.summary = detail.summary;
+  thread.attentionFlags = [`messages ${detail.messages.length}`, `turns ${detail.turns.length}`];
 }
 
 export function queryTurnDetail(
@@ -2828,6 +3238,25 @@ export function commandEvaluateInContext(input: {
         ...metadata(binding, "runtime-eval"),
         runtimeId: environments[input.environmentId].runtimeSummary.runtimeId,
         incidentId: environments[input.environmentId].runtimeSummary.linkedIncidentIds[0] ?? null
+      }
+    };
+  }
+
+  const statefulResult = maybeHandleStatefulMockRuntimeEval({
+    environmentId: input.environmentId,
+    form: normalized
+  });
+  if (statefulResult) {
+    return {
+      contractVersion: 1,
+      domain: "runtime",
+      operation: "runtime.eval",
+      kind: "command",
+      status: "ok",
+      data: statefulResult,
+      metadata: {
+        ...metadata(binding, "runtime-eval"),
+        runtimeId: environments[input.environmentId].runtimeSummary.runtimeId
       }
     };
   }

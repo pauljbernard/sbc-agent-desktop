@@ -342,6 +342,22 @@ export interface SbclAgentHostAdapter {
     workflowRecordId: string,
     environmentId?: string
   ): Promise<QueryResultDto<WorkflowRecordDto>>;
+  orchestrationList(environmentId?: string): Promise<QueryResultDto<Record<string, unknown>[]>>;
+  orchestrationInbox(environmentId?: string): Promise<QueryResultDto<Record<string, unknown>[]>>;
+  orchestrationFocus(input?: {
+    environmentId?: string;
+    planId?: string;
+    workflowRecordId?: string;
+    workItemId?: string;
+  }): Promise<QueryResultDto<Record<string, unknown>>>;
+  orchestrationSnapshot(input?: {
+    environmentId?: string;
+    planId?: string;
+  }): Promise<QueryResultDto<Record<string, unknown>>>;
+  planVerification(input?: {
+    environmentId?: string;
+    planId?: string;
+  }): Promise<QueryResultDto<Record<string, unknown>>>;
   providerProfiles(environmentId?: string): Promise<QueryResultDto<ProviderProfileSummaryDto>>;
   packageManagementSummary(environmentId?: string): Promise<QueryResultDto<PackageManagementSummaryDto>>;
   desktopTaskManifests(environmentId?: string): Promise<QueryResultDto<DesktopTaskManifestDto[]>>;

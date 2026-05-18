@@ -21,6 +21,7 @@ The application should open into environment posture, not into a blank chat pane
 Navigation should be driven by governed entities and their relationships:
 
 - environment
+- project
 - thread
 - turn
 - operation
@@ -76,6 +77,7 @@ Longer term, this shell must also host multiple applications or application-clas
 The primary navigation should include:
 
 - Environment
+- Projects
 - Conversations
 - Runtime
 - Work
@@ -101,6 +103,8 @@ Purpose:
 Must show:
 
 - environment summary
+- agent constitution
+- capability and dependency posture
 - source, image, and workflow posture
 - active thread and turn
 - pending approvals
@@ -123,6 +127,7 @@ Main regions:
 - thread detail
 - selected turn timeline
 - operation and artifact side inspector
+- current planning-context frame including project selection and uncertainty posture
 
 Must emphasize:
 
@@ -258,6 +263,8 @@ Attention categories:
 - quarantined
 - active streaming
 - background work requiring review
+- low-confidence project selection
+- degraded capability posture
 
 The attention model should be visible globally and filterable into local views.
 

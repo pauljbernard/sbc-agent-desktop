@@ -42,7 +42,8 @@ Optional live-adapter variables:
 - host posture in the footer
 - binding posture in the footer
 - whether the environment is mock-backed or live-backed
-- whether Browser, Conversations, and Execution surfaces are returning real data
+- whether Browser, Projects, Conversations, and Execution surfaces are returning real data
+- whether environment and project posture reflects the live backend rather than fallback mock content
 
 ## If The Connection Fails
 

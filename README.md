@@ -9,6 +9,7 @@ This repository does not begin with screens. It begins with the operating model 
 - governance is intrinsic to the system, not layered on after the fact
 - the shell, REPL, conversation runtime, and desktop are presentation surfaces over the same governed service layer
 - the desktop should increasingly act as a thin host over the shell desktop contract rather than inventing an independent application model
+- the desktop must increasingly surface planning context, project authority, and environment posture as first-class operator context rather than treating them as hidden backend details
 
 ## Frontend Role
 
@@ -17,6 +18,14 @@ This repository defines the desktop host for the `sbcl-agent` repository.
 That means the frontend must not invent a simpler product story than the one `sbcl-agent` already articulates and implements. Its job is to make the underlying execution kernel, compatibility lifecycle, governance model, and operator surfaces legible, powerful, and governable for developers and engineers.
 
 The desktop is therefore a presentation adapter over the `sbcl-agent` environment kernel and public services. It is not a separate application model.
+
+That now includes a stronger context contract than the earlier desktop docs implied. The backend no longer ships only transcript and runtime summaries; it also ships:
+
+- a canonical planning-context packet for provider-bound work
+- durable `agent-constitution` and `capability-inventory` authority context
+- canonical project authority and governed project records
+- actor-system hierarchy, workflow edges, and supervision state
+- environment-first summaries with active project, workflow, approval, incident, and capability posture
 
 The primary target is the native macOS application `Surface` for developers and engineers. The shell remains a peer adapter, but this repository is now implementing a desktop host over the shell workspace, governance, object-browser, inspector, and desktop action model.
 
@@ -74,6 +83,14 @@ The current desktop direction is to consume the shell-native desktop contract ex
 - `desktop/action`
 - `desktop/restore`
 
+In practice the desktop also relies on the wider public service boundary for:
+
+- environment summaries and status
+- project lists and project detail
+- thread, turn, and work-item detail
+- actor-system panel and desktop-task orchestration views
+- runtime, evidence, and incident context
+
 That contract gives the desktop a stable model for:
 
 - workspace surfaces
@@ -102,6 +119,17 @@ flowchart TB
     Actor --> Kernel
     Kernel --> Runtime
 ```
+
+The planning and context path now matters as much as the execution path. `Surface` increasingly hosts a backend that already distinguishes:
+
+- task frame
+- authority state
+- decisive evidence
+- uncertainty and obligations
+- strategy posture
+- optional support context
+
+The desktop does not yet expose every one of those packet sections as a named panel, but the UI is already built on the environment, project, conversation, execution, and orchestration surfaces that supply them.
 
 The authoritative architecture references now live in the main `sbcl-agent` docs:
 
@@ -187,6 +215,7 @@ The repository is now past pure specification and skeleton work.
 The immediate implementation priorities are:
 
 - keep the desktop host contract aligned with the evolving `sbcl-agent` shell model
+- keep the desktop documentation aligned with the newer planning/context-engineering contract in `sbcl-agent`
 - preserve shell parity while moving more UX behavior onto stable service-backed workspace surfaces
 - keep the service tier distinct from direct shell execution paths while preserving the shell as a peer operator surface
 - continue tightening documentation, naming, and metadata consistency across both repositories

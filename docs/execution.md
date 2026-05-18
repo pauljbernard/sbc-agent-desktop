@@ -7,6 +7,7 @@ title: Execution
 The Execution workspace covers:
 
 - the listener and direct evaluation surface
+- actor-system and orchestration posture
 - approvals
 - governed work and reconciliation
 - corrective and recovery routing after live runtime events
@@ -57,12 +58,24 @@ Use this page when you need to:
 
 This is also where later corrective and reconciliation obligations should remain visible after an earlier action is no longer current.
 
+## Actor System
+
+The backend now exposes an actor-system panel that includes:
+
+- actor hierarchy
+- workflow edges
+- runtime execution pressure
+- supervision incidents
+
+Where surfaced in `Surface`, this is part of the execution/orchestration picture rather than a separate toy visualization. It helps the operator understand where governed work is actually executing and where supervision or pressure is building.
+
 ## Recommended Workflow
 
 1. start in Listener for direct runtime inspection and evaluation
 2. move to Approvals when execution is blocked by policy or governance
 3. move to Work when the question is closure, validation, or reconciliation
-4. return to Conversations only after you understand the runtime and workflow consequences of the action you just took
+4. inspect actor-system or orchestration posture when execution continuity or failure routing is unclear
+5. return to Conversations only after you understand the runtime and workflow consequences of the action you just took
 
 ## Important Distinction
 

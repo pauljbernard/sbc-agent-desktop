@@ -94,6 +94,7 @@ If you are unsure which one you are in, check the footer and the visible host/bi
 ## Common First Tasks
 
 - browse systems, packages, symbols, and source in [Browser](browser.md)
+- inspect governed project posture in [Projects And Context](projects-and-context.md)
 - inspect or resume structured work in [Conversations](conversations.md)
 - use the listener and inspect runtime results in [Execution](execution.md)
 - review incidents and recovery obligations in [Recovery](recovery.md)

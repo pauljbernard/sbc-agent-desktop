@@ -24,6 +24,8 @@ It is designed to help you work across:
 - structured conversations with agents
 - governed execution and approvals
 - incidents, evidence, and reconciliation
+- governed projects and readiness posture
+- environment capability and dependency posture
 - source, runtime, and workflow context at the same time
 
 ## Current Desktop Snapshot
@@ -41,6 +43,11 @@ The desktop now supports a stronger shell model than the older documentation imp
 - docked rail panels are selected from compact rail lists instead of oversized horizontal tabs
 - panels can be undocked into floating windows in the central stage
 - floating panels can be docked back to either the left or right rail
+- the backend contract now also carries stronger context-engineering state than the earlier desktop docs described:
+  - actor-system panel data
+  - richer environment summaries
+  - governed project readiness and quality-gate detail
+  - project-aware planning context
 
 If a page elsewhere in the site still describes the older shell too loosely, prefer the current behavior of the running `Surface` application.
 
@@ -49,10 +56,11 @@ If a page elsewhere in the site still describes the older shell too loosely, pre
 1. Read [Development Model](development-model.md).
 2. Read [How sbcl-agent Works](how-sbcl-agent-works.md).
 3. Read [sbcl-agent Concepts](sbcl-agent-concepts.md).
-4. Read [Transition Guide](transition-guide.md).
-5. Read [Getting Started](getting-started.md).
-6. Take the [Desktop Tour](desktop-tour.md).
-7. Go directly to the workspace guide you need:
+4. Read [Projects And Context](projects-and-context.md).
+5. Read [Transition Guide](transition-guide.md).
+6. Read [Getting Started](getting-started.md).
+7. Take the [Desktop Tour](desktop-tour.md).
+8. Go directly to the workspace guide you need:
    - [Browser](browser.md)
    - [Conversations](conversations.md)
    - [Execution](execution.md)
@@ -76,6 +84,7 @@ The desktop assumes:
 - [Development Model](development-model.md): why this tool uses an environment-first, agentic workflow instead of a traditional file-first SDLC model
 - [How sbcl-agent Works](how-sbcl-agent-works.md): how the live image, conversations, governance, and evidence fit together as one operating environment
 - [sbcl-agent Concepts](sbcl-agent-concepts.md): the core concepts that make the environment understandable
+- [Projects And Context](projects-and-context.md): how governed project authority, readiness, and project-aware planning now appear in the desktop/backend contract
 - [Transition Guide](transition-guide.md): how to move from conventional development habits into this model
 - [Getting Started](getting-started.md): installation, launch, and first-run expectations
 - [Desktop Tour](desktop-tour.md): the shell frame, navigation model, and workspace structure

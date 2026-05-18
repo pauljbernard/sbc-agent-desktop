@@ -59,6 +59,7 @@ Queries should return:
 - relationship references
 - posture summaries where useful
 - no shell-specific rendering assumptions
+- explicit authority and binding metadata where the backend already exposes them
 
 ### Command Contract
 
@@ -76,6 +77,8 @@ Commands should return:
 - created or affected entity references
 - operation identifiers
 - next-action hints for Surface
+- project-selection hints when project context materially shapes the command
+- recovery or replay hints when the command touches resumable workflow state
 
 ### Event Contract
 
@@ -89,6 +92,7 @@ Events should expose:
 - related thread, turn, operation, work-item, incident, or artifact references
 - visibility
 - structured payload
+- actor-origin and recovery or replay annotations where the backend event stream exposes them
 
 ## Service Families
 
@@ -105,22 +109,32 @@ Primary queries:
 - `get-active-context`
 - `get-recent-evidence`
 
+The environment-facing contract should now also surface:
+
+- `agent-constitution`
+- `capability-inventory`
+- explicit context-chat project targeting state
+- project selection source and confidence where the backend computes it
+
 Primary commands:
 
 - `select-environment`
 - `refresh-environment-posture`
+- `set-context-chat-projects`
 
 Primary desktop use:
 
 - home workspace
 - sidebar posture indicators
 - top-level attention views
+- project-aware context chat orientation
 
 ### 2. Conversation Service
 
 Purpose:
 
 - expose durable thread and turn interaction
+- expose the project-aware frame of reference that shapes planning for those turns
 
 Primary queries:
 
@@ -129,6 +143,7 @@ Primary queries:
 - `get-turn`
 - `list-turn-operations`
 - `list-thread-artifacts`
+- `get-planning-context-packet` or enough linked authority state to render the same planning frame
 
 Primary commands:
 
@@ -365,6 +380,7 @@ DTOs should consistently include references to:
 - `incident-id`
 - `task-id`
 - `worker-id`
+- `project-id`
 
 ### Attention Semantics
 
@@ -387,6 +403,8 @@ Examples:
 - why a work-item is blocked
 - why an incident is still open
 - why a runtime mutation still awaits colder validation
+- why a project selection is explicit, inferred, or low-confidence
+- why capability posture is degraded or missing prerequisites
 
 ## Event Subscription Contract
 

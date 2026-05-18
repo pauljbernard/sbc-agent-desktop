@@ -15,6 +15,7 @@ Every critical workflow must preserve:
 - policy and approval context
 - evidence creation
 - resumability where supported
+- explicit project and capability frame of reference when they shape planning or execution
 
 ## Workflow 1: Approval-Gated Mutation
 
@@ -37,6 +38,7 @@ Help the user understand, evaluate, and decide on a requested governed action be
    - affected scope
    - initiating actor
    - linked thread, turn, operation, or work-item
+   - current project frame of reference and whether it is explicit or inferred
    - policy basis
    - risk and consequence summary
    - supporting evidence
@@ -73,6 +75,7 @@ Turn failure into governed, inspectable recovery work.
    - incident summary
    - trigger and timing
    - related turn, operation, runtime, and work-item context
+   - related project, linked incidents, and capability posture when relevant
    - current recovery posture
    - recommended next actions
    - linked evidence
@@ -104,6 +107,7 @@ Let expert operators inspect the live image and act on it without leaving the go
    - runtime summary
    - relevant package, symbol, or execution scope
    - current divergence posture
+   - capability readiness and missing prerequisite posture
    - available governed actions
 3. The user requests inspection or execution.
 4. The app shows:
@@ -140,6 +144,7 @@ Help the user understand and resolve divergence between the live image and durab
    - what is or is not reflected in source
    - current validation state
    - linked work-item and artifacts
+   - linked project authority and any contradiction with active governed work
    - possible next actions
 4. The user initiates or reviews reconciliation.
 5. The app updates workflow and evidence posture.
@@ -172,6 +177,7 @@ Let the user understand exactly what happened during a complex turn.
    - artifacts
    - approvals
    - linked incidents
+   - planning-context frame including project selection, capability posture, and uncertainty escalation
 3. The user follows linked context as needed.
 
 ### Non-Negotiable UX Requirements
@@ -201,7 +207,40 @@ Make concurrent tasks, workers, and future agents manageable without losing caus
    - progress and ownership
    - failures or waits
    - linked entities
+   - whether interrupted work is resumable, replayable, or requires manual intervention
 3. The user drills into any task or actor requiring attention.
+
+## Workflow 7: Context Chat Project Targeting
+
+### Goal
+
+Let the operator explicitly steer the project frame of reference for a conversation without forcing every chat to belong to a project.
+
+### Entry Points
+
+- the user starts a new context chat
+- the user notices low-confidence project selection
+- a conversation needs to pivot between related projects
+
+### Desktop Flow
+
+1. The app surfaces the current chat context posture:
+   - no selected projects
+   - explicit primary project
+   - explicit linked projects
+   - inferred project alignment
+2. The user selects zero, one, or many projects and optionally marks a primary project.
+3. The app invokes the governed context-chat project targeting command.
+4. The updated project frame becomes visible in:
+   - the conversation workspace
+   - planning and uncertainty panels
+   - project-linked workflow and incident views
+
+### Non-Negotiable UX Requirements
+
+- no project selection must remain a valid state
+- explicit selection must be distinguishable from inference
+- low-confidence or contradictory project posture must be visible before execution continues blindly
 
 ### Non-Negotiable UX Requirements
 

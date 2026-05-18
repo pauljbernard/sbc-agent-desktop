@@ -154,6 +154,107 @@ import {
 import { BrowserDataTable, type BrowserTableFilterOption } from "./browser-data-table";
 import { CalculatorSurface } from "./calculator-surface";
 import {
+  browserDomains,
+  buildBrowserSurfaceEntries,
+  selectBrowserDomainDescriptor,
+  type BrowserDomain,
+  type BrowserSurfaceEntry
+} from "./browser-support";
+import {
+  buildConversationPrompt,
+  buildEntityQuickForms,
+  buildListenerForm,
+  buildSourceOperationForms
+} from "./browser-action-forms";
+import { BrowserWorkspace } from "./browser-workspace";
+import {
+  buildDefaultReplSession,
+  buildEnvironmentFocusPresentation,
+  ensureDesktopProjects,
+  makeUniqueProjectIdentity,
+  slugifyProjectLabel
+} from "./environment-project-support";
+import {
+  buildMcpServerDraft,
+  buildProviderProfileDraft,
+  configurationSections,
+  llmProviderPresetForProfile,
+  normalizeDesktopSurfaceScalePercent,
+  normalizeParenDepthColors
+} from "./configuration-support";
+import {
+  asRecord,
+  buildDesktopTaskRecordFromSummary,
+  buildRuntimeAssistantMessageFromReply,
+  canonicalDesktopTaskCoordinate,
+  extractCompletedEditorAppendFromActorFlow,
+  extractCompletedEditorAppendFromDesktopTaskResult,
+  extractPendingConversationApprovalFromActorFlow,
+  firstStringValue
+} from "./desktop-task-support";
+import {
+  queryDesktopTaskActorFlow,
+  queryDesktopTaskActorSystemPanel,
+  queryDesktopTaskActorTrace,
+  queryDesktopTaskDeadLetters,
+  queryDesktopTaskManifests,
+  queryDesktopTaskRecords
+} from "./desktop-task-queries";
+import { refreshPendingConversationApprovalState } from "./desktop-task-orchestration";
+import {
+  loadDesktopShellModelQuery,
+  loadEnvironmentBootstrapQuery,
+  queryEnvironmentImageRegistry,
+  queryMcpServerConfigs,
+  queryPackageManagementSummary,
+  queryProviderSummary
+} from "./desktop-environment-queries";
+import {
+  continueWithCurrentEnvironmentImageState,
+  loadEnvironmentBindingState,
+  openEnvironmentImageState,
+  refreshEnvironmentImageRegistryState,
+  refreshMcpServerConfigsState,
+  refreshPackageManagementSummaryState,
+  refreshProviderSummaryState
+} from "./environment-host-orchestration";
+import {
+  queryOrchestrationFocus,
+  queryOrchestrationInbox,
+  queryOrchestrationSnapshot,
+  queryPlanVerification
+} from "./orchestration-queries";
+import { useEnvironmentRefreshEffects } from "./environment-refresh-effects";
+import { useWorkspaceLoadEffects } from "./workspace-load-effects";
+import { useBrowserTranscriptEffects } from "./browser-transcript-effects";
+import { useDetailLoadEffects } from "./detail-load-effects";
+import { DesktopWindowStage } from "./desktop-window-stage";
+import { WorkspaceInspector } from "./workspace-inspector";
+import {
+  useShellWorkspaceState,
+  type ConfigurationSection,
+  type ConversationSection,
+  type EvidenceSection,
+  type ExecutionSection,
+  type OperateSection,
+  type RecoverySection,
+  type ResolvedTheme,
+  type ThemePreference
+} from "./shell-workspace-state";
+import {
+  useConfigurationWorkspaceState,
+  type McpServerDraft
+} from "./configuration-workspace-state";
+import { useConversationWorkspaceState } from "./conversation-workspace-state";
+import { useDesktopPreferencesOrchestration } from "./desktop-preferences-orchestration";
+import {
+  initializeEnvironmentLifecycle,
+  loadDesktopInitialState
+} from "./desktop-bootstrap";
+import { useEnvironmentHostState } from "./environment-host-state";
+import { useProjectWorkspaceState } from "./project-workspace-state";
+import { useRuntimeBrowserState } from "./runtime-browser-state";
+import {
   type ConversationSurfacePacketInput,
   buildConversationSurfaceActions,
   buildConversationSurfaceContext
@@ -168,11 +269,60 @@ import {
   type SignalCounts,
   type SignalPriority
 } from "./interaction-support";
+import {
+  approvalRecommendationScore,
+  artifactRecommendationScore,
+  attentionToneWeight,
+  compressActionQueue,
+  incidentRecommendationScore,
+  primaryApprovalRecommendationReason,
+  primaryIncidentRecommendationReason,
+  primaryThreadRecommendationReason,
+  primaryWorkRecommendationReason,
+  priorityLabelForTone,
+  signalCountsFromItems,
+  signalCountsForWorkspace,
+  signalPriorityForTone,
+  threadRecommendationScore,
+  toneForApprovalDecision,
+  toneForApprovalState,
+  toneForIncidentSeverity,
+  toneForThreadState,
+  toneForTurnState,
+  toneForWorkState,
+  workItemRecommendationScore,
+  type ActionQueueItem,
+  type GlobalAttentionItem
+} from "./shell-attention";
 import { TranscriptSurface, type TranscriptSurfaceEntry } from "./transcript-surface";
 import { MemoryWorkspace } from "./memory-workspace";
 import { EditorSurface } from "./editor-surface";
 import { ConfigurationWorkspace } from "./configuration-workspace";
 import { ConversationsWorkspace } from "./conversations-workspace";
+import {
+  buildDashboardActionQueue,
+  buildEvidenceSectionSignals,
+  buildExecutionSectionSignals,
+  buildGlobalAttentionItems,
+  buildOperateSectionSignals,
+  buildPageSignalCounts,
+  buildRecoverySectionSignals,
+  buildWorkspaceAttentionMap
+} from "./shell-dashboard";
+import {
+  conversationAttachmentFromFile,
+  extractConversationStreamText,
+  mergeConversationStreamCompletion,
+  normalizeConversationStreamType
+} from "./conversation-support";
+import {
+  appendEditorTextToDraft,
+  basenameForPath,
+  countChangedEditorBufferForms,
+  createEditorBufferState,
+  joinDirectoryAndFileName,
+  parentDirectoryForPath
+} from "./editor-support";
 import { ProjectsWorkspace } from "./projects-workspace";
 import { RuntimeWorkspace } from "./runtime-workspace";
 import { ListenerWorkbenchApp } from "./listener-workbench-app";
@@ -220,15 +370,6 @@ import {
   SupervisionBoard
 } from "./workspace-support-components";
 
-interface GlobalAttentionItem {
-  id: string;
-  label: string;
-  summary: string;
-  value: number;
-  workspace: WorkspaceId;
-  tone: "active" | "warning" | "danger" | "steady";
-}
-
 interface ProjectTestingStrategySuiteExpectationDraft {
   harnessId: string;
   purpose: string;
@@ -272,25 +413,6 @@ function draftLines(value: string): string[] {
     .split("\n")
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
-}
-
-interface ActionQueueItem {
-  key: string;
-  objectType: "Thread" | "Approval" | "Work" | "Recovery" | "Artifact" | "Runtime" | "Task";
-  objectId: string;
-  title: string;
-  timestamp?: string | null;
-  stateLabel: string;
-  whyNow: string;
-  effectSummary: string;
-  references: string[];
-  tone: "active" | "warning" | "danger" | "steady";
-  score: number;
-  priorityLabel: "High" | "Medium" | "Low";
-  destinationWorkspace: WorkspaceId;
-  destinationLabel: string;
-  actionLabel: string;
-  rankReason: string;
 }
 
 function desktopWindowRecordsEqual(
@@ -360,13 +482,6 @@ interface DockJumpTarget {
   onJump: () => void;
 }
 
-interface BrowserSurfaceEntry {
-  key: string;
-  title: string;
-  detail: string;
-  meta: string;
-}
-
 interface DesktopAttentionSignal {
   id: string;
   label: string;
@@ -376,11 +491,6 @@ interface DesktopAttentionSignal {
   onOpen: () => void;
 }
 
-type ThemePreference = "system" | "light" | "dark";
-
-type ResolvedTheme = "light" | "dark";
-
-const DEFAULT_LISP_PAREN_COLORS = ["#6ec0c2", "#f4b267", "#9f8cff", "#7bc47f", "#f07c9b", "#56a3ff"];
 const DEFAULT_EDITOR_BUFFER_TITLE = "Main";
 const DEFAULT_EDITOR_BOUND_DRAFT = `;; Editor
 ;; Sustain source and form editing here without collapsing into scratch workspace posture.
@@ -418,849 +528,6 @@ function shellDockPanelIdFromUndockedWindowId(windowId: string): ShellDockPanelI
 function readDraggedShellPanelId(dataTransfer: DataTransfer | null): ShellDockPanelId | null {
   const panelId = dataTransfer?.getData(SHELL_PANEL_DRAG_MIME) ?? "";
   return panelId in SHELL_DOCK_PANEL_DEFINITIONS ? (panelId as ShellDockPanelId) : null;
-}
-
-function normalizeConversationStreamType(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  return value.trim().toLowerCase().replaceAll("_", "-");
-}
-
-function extractAssistantResponseText(value: string): string {
-  const trimmed = value.trim();
-  const structMatch = trimmed.match(
-    /^#S\(ASSISTANT-RESPONSE\s+:MESSAGE\s+([\s\S]*?)\s+:ACTIONS\b/i
-  );
-  return structMatch ? structMatch[1].trim() : value;
-}
-
-function extractConversationStreamText(value: unknown): string {
-  if (typeof value === "string") {
-    return extractAssistantResponseText(value);
-  }
-  if (!value || typeof value !== "object") {
-    return "";
-  }
-
-  const record = value as Record<string, unknown>;
-  return (
-    (typeof record.payload === "string" ? record.payload : "") ||
-    (typeof record.content === "string" ? record.content : "") ||
-    (typeof record.delta === "string" ? record.delta : "") ||
-    (typeof record.text === "string" ? record.text : "") ||
-    (typeof record.message === "string" ? record.message : "") ||
-    extractConversationStreamText(record.response)
-  );
-}
-
-function mergeConversationStreamCompletion(currentContent: string, completionContent: string): string {
-  if (currentContent.length === 0) {
-    return completionContent;
-  }
-  if (completionContent.length === 0) {
-    return currentContent;
-  }
-  if (completionContent === currentContent) {
-    return currentContent;
-  }
-  if (completionContent.startsWith(currentContent)) {
-    return completionContent;
-  }
-  if (currentContent.startsWith(completionContent) || currentContent.includes(completionContent)) {
-    return currentContent;
-  }
-  return completionContent;
-}
-
-function createEditorBufferState({
-  bufferId,
-  title,
-  draft,
-  baselineDraft,
-  packageName,
-  dirty = false,
-  result = null
-  ,
-  sourceFilePath = null
-}: {
-  bufferId?: string;
-  title: string;
-  draft: string;
-  baselineDraft?: string;
-  packageName: string;
-  dirty?: boolean;
-  result?: CommandResultDto<RuntimeEvalResultDto> | null;
-  sourceFilePath?: string | null;
-}): EditorBufferStateDto {
-  return {
-    bufferId: bufferId ?? `editor-buffer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    title,
-    draft,
-    baselineDraft: baselineDraft ?? draft,
-    packageName,
-    dirty,
-    result,
-    sourceFilePath
-  };
-}
-
-function normalizeEditorBufferFormText(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
-}
-
-function basenameForPath(path: string): string {
-  const segments = path.split(/[\\/]/).filter((segment) => segment.length > 0);
-  return segments[segments.length - 1] ?? path;
-}
-
-function parentDirectoryForPath(path: string): string {
-  const normalized = path.trim();
-  if (normalized.length === 0) {
-    return normalized;
-  }
-  const separatorIndex = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
-  if (separatorIndex <= 0) {
-    return normalized;
-  }
-  return normalized.slice(0, separatorIndex);
-}
-
-function joinDirectoryAndFileName(directoryPath: string, fileName: string): string {
-  const normalizedDirectory = directoryPath.trim();
-  const normalizedFileName = fileName.trim();
-  if (normalizedDirectory.length === 0) {
-    return normalizedFileName;
-  }
-  if (normalizedFileName.length === 0) {
-    return normalizedDirectory;
-  }
-  const separator = normalizedDirectory.includes("\\") && !normalizedDirectory.includes("/") ? "\\" : "/";
-  const trimmedDirectory = normalizedDirectory.replace(/[\\/]+$/, "");
-  return `${trimmedDirectory}${separator}${normalizedFileName}`;
-}
-
-const CONVERSATION_ATTACHMENT_TEXT_LIMIT = 240_000;
-const CONVERSATION_ATTACHMENT_IMAGE_LIMIT = 6 * 1024 * 1024;
-const CONVERSATION_ATTACHMENT_DOCUMENT_LIMIT = 12 * 1024 * 1024;
-
-function fileExtension(fileName: string): string {
-  const trimmed = fileName.trim();
-  const dotIndex = trimmed.lastIndexOf(".");
-  return dotIndex >= 0 ? trimmed.slice(dotIndex + 1).toLowerCase() : "";
-}
-
-function isTextLikeAttachment(mediaType: string, fileName: string): boolean {
-  const normalizedMediaType = mediaType.toLowerCase();
-  if (normalizedMediaType.startsWith("text/")) {
-    return true;
-  }
-  return [
-    "json",
-    "md",
-    "markdown",
-    "lisp",
-    "cl",
-    "ts",
-    "tsx",
-    "js",
-    "jsx",
-    "css",
-    "html",
-    "xml",
-    "yaml",
-    "yml",
-    "txt",
-    "svg"
-  ].includes(fileExtension(fileName));
-}
-
-function isDocumentLikeAttachment(mediaType: string, fileName: string): boolean {
-  const normalizedMediaType = mediaType.toLowerCase();
-  const extension = fileExtension(fileName);
-  return (
-    normalizedMediaType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-    normalizedMediaType === "application/msword" ||
-    normalizedMediaType === "application/rtf" ||
-    normalizedMediaType === "text/rtf" ||
-    extension === "docx" ||
-    extension === "doc" ||
-    extension === "rtf"
-  );
-}
-
-function readBrowserFileAsText(file: File): Promise<string> {
-  return new Promise((resolvePromise, rejectPromise) => {
-    const reader = new FileReader();
-    reader.onerror = () => rejectPromise(reader.error ?? new Error(`Failed to read ${file.name} as text.`));
-    reader.onload = () => resolvePromise(String(reader.result ?? ""));
-    reader.readAsText(file);
-  });
-}
-
-function readBrowserFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolvePromise, rejectPromise) => {
-    const reader = new FileReader();
-    reader.onerror = () => rejectPromise(reader.error ?? new Error(`Failed to read ${file.name} as data URL.`));
-    reader.onload = () => resolvePromise(String(reader.result ?? ""));
-    reader.readAsDataURL(file);
-  });
-}
-
-async function conversationAttachmentFromFile(
-  file: File,
-  index: number
-): Promise<ConversationAttachmentDto> {
-  const mediaType = file.type || "application/octet-stream";
-  const imageAttachment = mediaType.startsWith("image/");
-  const textAttachment = isTextLikeAttachment(mediaType, file.name);
-  const documentAttachment = isDocumentLikeAttachment(mediaType, file.name);
-  const attachmentId = `attachment-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`;
-
-  if (imageAttachment && file.size <= CONVERSATION_ATTACHMENT_IMAGE_LIMIT) {
-    return {
-      attachmentId,
-      name: file.name,
-      mediaType,
-      kind: "image",
-      source: "input",
-      summary: `${file.name} (${mediaType}, ${file.size} bytes)`,
-      sizeBytes: file.size,
-      dataUrl: await readBrowserFileAsDataUrl(file),
-      textContent: null
-    };
-  }
-
-  if (textAttachment && file.size <= CONVERSATION_ATTACHMENT_TEXT_LIMIT) {
-    return {
-      attachmentId,
-      name: file.name,
-      mediaType,
-      kind: "text",
-      source: "input",
-      summary: `${file.name} (${mediaType}, ${file.size} bytes)`,
-      sizeBytes: file.size,
-      textContent: await readBrowserFileAsText(file),
-      dataUrl: null
-    };
-  }
-
-  if (documentAttachment && file.size <= CONVERSATION_ATTACHMENT_DOCUMENT_LIMIT) {
-    try {
-      const extractConversationAttachmentText =
-        window.sbclAgentDesktop.command.extractConversationAttachmentText;
-      if (typeof extractConversationAttachmentText === "function") {
-        const dataUrl = await readBrowserFileAsDataUrl(file);
-        const extractedText = await extractConversationAttachmentText({
-          name: file.name,
-          mediaType,
-          dataUrl
-        });
-        if (extractedText && extractedText.trim().length > 0) {
-          return {
-            attachmentId,
-            name: file.name,
-            mediaType,
-            kind: "text",
-            source: "input",
-            summary: `${file.name} (${mediaType}, ${file.size} bytes, extracted text)`,
-            sizeBytes: file.size,
-            textContent: extractedText,
-            dataUrl: null
-          };
-        }
-      }
-    } catch {
-      // Fall back to opaque binary attachment if host-side extraction fails.
-    }
-  }
-
-  return {
-    attachmentId,
-    name: file.name,
-    mediaType,
-    kind: imageAttachment ? "image" : "binary",
-    source: "input",
-    summary: `${file.name} (${mediaType}, ${file.size} bytes)`,
-    sizeBytes: file.size,
-    textContent: null,
-    dataUrl: null
-  };
-}
-
-function extractTopLevelEditorBufferForms(source: string): string[] {
-  const forms: string[] = [];
-  let index = 0;
-
-  while (index < source.length) {
-    const char = source[index];
-    if (/\s/.test(char)) {
-      index += 1;
-      continue;
-    }
-    if (char === ";") {
-      while (index < source.length && source[index] !== "\n") {
-        index += 1;
-      }
-      continue;
-    }
-    if (char !== "(") {
-      const startIndex = index;
-      while (index < source.length && source[index] !== "\n") {
-        index += 1;
-      }
-      const text = source.slice(startIndex, index).trim();
-      if (text.length > 0) {
-        forms.push(text);
-      }
-      continue;
-    }
-
-    const startIndex = index;
-    let depth = 0;
-    let inString = false;
-    let escaping = false;
-    while (index < source.length) {
-      const current = source[index];
-      if (inString) {
-        if (escaping) {
-          escaping = false;
-        } else if (current === "\\") {
-          escaping = true;
-        } else if (current === "\"") {
-          inString = false;
-        }
-        index += 1;
-        continue;
-      }
-      if (current === "\"") {
-        inString = true;
-        index += 1;
-        continue;
-      }
-      if (current === ";") {
-        while (index < source.length && source[index] !== "\n") {
-          index += 1;
-        }
-        continue;
-      }
-      if (current === "(") {
-        depth += 1;
-      } else if (current === ")") {
-        depth -= 1;
-      }
-      index += 1;
-      if (depth === 0) {
-        break;
-      }
-    }
-    const text = source.slice(startIndex, index).trim();
-    if (text.length > 0) {
-      forms.push(text);
-    }
-  }
-
-  return forms;
-}
-
-function countChangedEditorBufferForms(baselineDraft: string, draft: string): number {
-  const baselineForms = extractTopLevelEditorBufferForms(baselineDraft);
-  const currentForms = extractTopLevelEditorBufferForms(draft);
-  const maxLength = Math.max(baselineForms.length, currentForms.length);
-  let count = 0;
-  for (let index = 0; index < maxLength; index += 1) {
-    const baseline = baselineForms[index] ?? null;
-    const current = currentForms[index] ?? null;
-    if (!baseline || !current) {
-      count += 1;
-      continue;
-    }
-    if (normalizeEditorBufferFormText(baseline) !== normalizeEditorBufferFormText(current)) {
-      count += 1;
-    }
-  }
-  return count;
-}
-
-function appendEditorTextToDraft(currentDraft: string, insertedText: string): string {
-  const normalizedInsert = insertedText.trim();
-  if (normalizedInsert.length === 0) {
-    return currentDraft;
-  }
-  const trimmedCurrent = currentDraft.replace(/\s+$/, "");
-  if (trimmedCurrent.length === 0) {
-    return `${normalizedInsert}\n`;
-  }
-  return `${trimmedCurrent}\n\n${normalizedInsert}\n`;
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-}
-
-function canonicalDesktopTaskCoordinate(value: string | null | undefined): string | null {
-  if (!value) {
-    return null;
-  }
-  return value.trim().replace(/^:/, "").replace(/_/g, "-").toLowerCase();
-}
-
-function firstStringValue(...values: unknown[]): string | null {
-  for (const value of values) {
-    if (typeof value === "string" && value.length > 0) {
-      return value;
-    }
-  }
-  return null;
-}
-
-function extractPendingConversationApprovalFromActorFlow(flowValue: Record<string, unknown> | null | undefined): {
-  actorMessageId: string | null;
-  approvalId: string | null;
-  sessionId: string | null;
-  threadId: string | null;
-  policyIds: string[];
-} | null {
-  const flow = asRecord(flowValue);
-  const pendingApprovalFlow = asRecord(flow.pendingApproval);
-  const approvalInbox = asRecord(flow.contextChatApprovalInbox);
-  const approvalRequest = asRecord(
-    Array.isArray(approvalInbox.requests) ? approvalInbox.requests[0] : null
-  );
-  const actorMessageId =
-    firstStringValue(
-      Array.isArray(pendingApprovalFlow.actorMessageIds)
-        ? pendingApprovalFlow.actorMessageIds[0]
-        : null,
-      pendingApprovalFlow.actorMessageId,
-      approvalRequest.actorMessageId,
-      flow.actorMessageId
-    ) ?? null;
-  const approvalId = firstStringValue(
-    Array.isArray(pendingApprovalFlow.approvalIds)
-      ? pendingApprovalFlow.approvalIds[0]
-      : null,
-    pendingApprovalFlow.approvalId,
-    approvalRequest.approvalId,
-    flow.approvalId
-  );
-  const sessionId = firstStringValue(
-    pendingApprovalFlow.sessionId,
-    approvalRequest.sessionId,
-    flow.sessionId
-  );
-  const threadId = firstStringValue(
-    pendingApprovalFlow.threadId,
-    approvalRequest.threadId,
-    flow.threadId,
-    asRecord((Array.isArray(pendingApprovalFlow.requests) ? pendingApprovalFlow.requests[0] : null)).threadId
-  );
-  const policyIds =
-    Array.isArray(pendingApprovalFlow.policyIds) && pendingApprovalFlow.policyIds.length > 0
-      ? pendingApprovalFlow.policyIds.map((value) => String(value))
-      : firstStringValue(approvalRequest.policyId)
-        ? [String(approvalRequest.policyId)]
-        : [];
-  if (!approvalId && !actorMessageId) {
-    return null;
-  }
-  return {
-    actorMessageId,
-    approvalId: approvalId ?? null,
-    sessionId: sessionId ?? null,
-    threadId: threadId ?? null,
-    policyIds
-  };
-}
-
-function extractCompletedEditorAppendFromActorFlow(flowValue: Record<string, unknown> | null | undefined): {
-  dedupeKey: string;
-  actorMessageId: string | null;
-  pendingActionId: string | null;
-  text: string;
-  scopeId: string | null;
-  bufferId: string | null;
-  packageName: string | null;
-} | null {
-  const flow = asRecord(flowValue);
-  const editorAuthorizations = asRecord(flow.editorAuthorizations);
-  const editorPendingMutations = asRecord(flow.editorPendingMutations);
-  const candidates = [
-    ...(Array.isArray(editorAuthorizations.authorizations) ? editorAuthorizations.authorizations : []),
-    ...(Array.isArray(editorPendingMutations.mutations) ? editorPendingMutations.mutations : [])
-  ]
-    .map((entry) => asRecord(entry))
-    .filter((entry) => {
-      const target = canonicalDesktopTaskCoordinate(firstStringValue(entry.target));
-      const operation = canonicalDesktopTaskCoordinate(firstStringValue(entry.operation));
-      const deliveryStatus = canonicalDesktopTaskCoordinate(firstStringValue(entry.deliveryStatus));
-      return (
-        target === "editor" &&
-        operation === "append-text" &&
-        (deliveryStatus === "applied" || deliveryStatus === "replied")
-      );
-    })
-    .sort((left, right) =>
-      String(right.completedAt ?? right.dequeuedAt ?? right.approvedAt ?? "").localeCompare(
-        String(left.completedAt ?? left.dequeuedAt ?? left.approvedAt ?? "")
-      )
-    );
-  const entry = candidates[0];
-  if (!entry) {
-    return null;
-  }
-  const text = firstStringValue(entry.text);
-  if (!text) {
-    return null;
-  }
-  const actorMessageId = firstStringValue(entry.actorMessageId, asRecord(entry.actorMessage).id);
-  const pendingActionId = firstStringValue(entry.pendingActionId);
-  const completedAt = firstStringValue(entry.completedAt, entry.dequeuedAt, entry.approvedAt);
-  const dedupeKey = actorMessageId ?? pendingActionId ?? completedAt;
-  if (!dedupeKey) {
-    return null;
-  }
-  return {
-    dedupeKey,
-    actorMessageId: actorMessageId ?? null,
-    pendingActionId: pendingActionId ?? null,
-    text,
-    scopeId: firstStringValue(entry.scopeId),
-    bufferId: firstStringValue(entry.bufferId),
-    packageName: firstStringValue(entry.packageName)
-  };
-}
-
-function buildRuntimeAssistantMessageFromReply(
-  replyValue: Record<string, unknown> | null | undefined
-): string | null {
-  const reply = asRecord(replyValue);
-  const form = firstStringValue(reply.form);
-  const packageName = firstStringValue(reply.packageName);
-  const summary = firstStringValue(reply.summary, reply.message);
-  if (summary) {
-    return summary;
-  }
-  if (Object.prototype.hasOwnProperty.call(reply, "result")) {
-    const result = reply.result;
-    const renderedResult =
-      result == null
-        ? "NIL"
-        : typeof result === "string"
-          ? result
-          : JSON.stringify(result);
-    if (form && packageName) {
-      return `Evaluated ${form} in ${packageName}. Result: ${renderedResult}.`;
-    }
-    if (form) {
-      return `Evaluated ${form}. Result: ${renderedResult}.`;
-    }
-    return `Runtime result: ${renderedResult}.`;
-  }
-  return null;
-}
-
-type OperateSection = "orientation" | "journeys" | "evidence";
-type ConversationSection = "threads" | "turns" | "draft" | "repl";
-type ConfigurationSection =
-  | "theme"
-  | "lisp-code-view"
-  | "desktop-surface"
-  | "llm"
-  | "package-management"
-  | "capabilities"
-  | "mcp-servers";
-type ExecutionSection = "listener" | "work" | "actor-system";
-type RecoverySection = "incidents";
-type EvidenceSection = "artifacts";
-
-type BrowserDomain =
-  | "systems"
-  | "packages"
-  | "symbols"
-  | "classes-methods"
-  | "runtime-objects"
-  | "console"
-  | "diagnostics"
-  | "processes"
-  | "performance"
-  | "host-io"
-  | "source"
-  | "xref"
-  | "documentation"
-  | "governance"
-  | "linked-conversations";
-
-interface BrowserDomainDescriptor {
-  id: BrowserDomain;
-  label: string;
-  summary: string;
-}
-
-const browserDomains: BrowserDomainDescriptor[] = [
-  { id: "systems", label: "Systems", summary: "Loaded systems and their attached packages." },
-  { id: "packages", label: "Packages", summary: "Namespaces, exports, internals, and use-lists." },
-  { id: "symbols", label: "Symbols", summary: "Functions, variables, macros, classes, and generic functions." },
-  { id: "classes-methods", label: "Classes & Methods", summary: "CLOS classes, slots, and dispatch surfaces." },
-  { id: "runtime-objects", label: "Runtime Objects", summary: "Active scopes and inspectable live runtime objects." },
-  { id: "console", label: "Console", summary: "Governed environment logs with source, severity, and operational correlation." },
-  { id: "diagnostics", label: "Diagnostics", summary: "Crash, spin, analytics, and retained host diagnostic reports." },
-  { id: "processes", label: "Processes", summary: "Runtime-linked processes, workers, tasks, and governed execution state." },
-  { id: "performance", label: "Performance", summary: "CPU and memory posture for the live runtime and its host." },
-  { id: "host-io", label: "Host I/O", summary: "Network and disk activity attached to the running environment." },
-  { id: "source", label: "Source", summary: "Source-backed definitions, edits, staging, and reload." },
-  { id: "xref", label: "XREF", summary: "Incoming and outgoing semantic references." },
-  { id: "documentation", label: "Documentation", summary: "Docstrings and environment-linked reference material." },
-  { id: "governance", label: "Governance", summary: "Approvals, incidents, work items, and closure state." },
-  { id: "linked-conversations", label: "Linked Conversations", summary: "Threads and turns attached to the current entity." }
-];
-
-const configurationSections: Array<{
-  id: ConfigurationSection;
-  label: string;
-  summary: string;
-  family: string;
-}> = [
-  {
-    id: "theme",
-    label: "Theme",
-    summary: "Desktop appearance preference and resolved operating-system behavior.",
-    family: "appearance"
-  },
-  {
-    id: "lisp-code-view",
-    label: "Lisp Code View",
-    summary: "Structured Lisp rendering, delimiter depth colors, and code-surface presentation.",
-    family: "editor"
-  },
-  {
-    id: "desktop-surface",
-    label: "Desktop Surface",
-    summary: "Tooltip text, control iconography, conversation text, and iconified application bar scale across the shell desktop.",
-    family: "surface"
-  },
-  {
-    id: "llm",
-    label: "LLM",
-    summary: "Provider profiles, endpoint routing, secure tokens, and model selection for the integrated language-model runtime.",
-    family: "integration"
-  },
-  {
-    id: "package-management",
-    label: "Package Management",
-    summary: "Quicklisp installs, Qlot command execution, managed source-registry entries, and graphical local-project links.",
-    family: "runtime"
-  },
-  {
-    id: "capabilities",
-    label: "Capabilities",
-    summary: "Discoverable governed desktop task manifests, including internal and MCP-backed operations.",
-    family: "integration"
-  },
-  {
-    id: "mcp-servers",
-    label: "MCP Servers",
-    summary: "Persisted MCP server configurations, transport settings, discoverability, and lifecycle maintenance.",
-    family: "integration"
-  }
-];
-
-type LlmProviderPresetId =
-  | "openai"
-  | "anthropic"
-  | "google"
-  | "xai"
-  | "microsoft"
-  | "amazon"
-  | "meta"
-  | "lm-studio"
-  | "custom-openai-compatible";
-
-interface LlmProviderPreset {
-  id: LlmProviderPresetId;
-  label: string;
-  provider: string;
-  defaultModel: string;
-  defaultFastModel: string;
-  defaultApiBase?: string | null;
-  summary: string;
-}
-
-const LLM_PROVIDER_PRESETS: LlmProviderPreset[] = [
-  {
-    id: "openai",
-    label: "OpenAI",
-    provider: "openai-compatible",
-    defaultModel: "gpt-5",
-    defaultFastModel: "gpt-4.1-mini",
-    defaultApiBase: "https://api.openai.com/v1",
-    summary: "Direct OpenAI-compatible routing."
-  },
-  {
-    id: "anthropic",
-    label: "Anthropic",
-    provider: "anthropic",
-    defaultModel: "claude-sonnet-4-20250514",
-    defaultFastModel: "claude-3-5-haiku",
-    defaultApiBase: "https://api.anthropic.com",
-    summary: "Native Anthropic messages API routing."
-  },
-  {
-    id: "google",
-    label: "Google Gemini",
-    provider: "gemini",
-    defaultModel: "gemini-2.5-pro",
-    defaultFastModel: "gemini-2.5-flash",
-    defaultApiBase: "https://generativelanguage.googleapis.com/v1beta/openai",
-    summary: "Gemini through the OpenAI-compatible endpoint."
-  },
-  {
-    id: "xai",
-    label: "xAI",
-    provider: "openai-compatible",
-    defaultModel: "grok-3",
-    defaultFastModel: "grok-3-mini",
-    defaultApiBase: "https://api.x.ai/v1",
-    summary: "OpenAI-compatible xAI endpoint."
-  },
-  {
-    id: "microsoft",
-    label: "Microsoft Azure OpenAI",
-    provider: "openai-compatible",
-    defaultModel: "gpt-4.1",
-    defaultFastModel: "gpt-4.1-mini",
-    defaultApiBase: "",
-    summary: "Requires your Azure resource-specific endpoint."
-  },
-  {
-    id: "amazon",
-    label: "Amazon-compatible gateway",
-    provider: "openai-compatible",
-    defaultModel: "claude-sonnet",
-    defaultFastModel: "claude-haiku",
-    defaultApiBase: "",
-    summary: "Requires a compatible endpoint or gateway in front of the target model."
-  },
-  {
-    id: "meta",
-    label: "Meta-compatible",
-    provider: "meta-compatible",
-    defaultModel: "llama-3.1-70b-instruct",
-    defaultFastModel: "llama-3.1-8b-instruct",
-    defaultApiBase: "",
-    summary: "Meta-compatible endpoint with an explicit base URL."
-  },
-  {
-    id: "lm-studio",
-    label: "Local LM Studio",
-    provider: "lm-studio",
-    defaultModel: "local-model",
-    defaultFastModel: "local-model",
-    defaultApiBase: "http://localhost:1234/v1",
-    summary: "Local OpenAI-compatible model serving through LM Studio."
-  },
-  {
-    id: "custom-openai-compatible",
-    label: "Custom OpenAI-compatible",
-    provider: "openai-compatible",
-    defaultModel: "gpt-5",
-    defaultFastModel: "gpt-4.1-mini",
-    defaultApiBase: "",
-    summary: "Bring your own OpenAI-compatible endpoint and model family."
-  }
-];
-
-const DEFAULT_DESKTOP_TOOLTIP_SCALE_PERCENT = 100;
-const DEFAULT_DESKTOP_CONTROL_ICON_SCALE_PERCENT = 100;
-const DEFAULT_DESKTOP_DOCK_ICON_SCALE_PERCENT = 100;
-const DEFAULT_DESKTOP_CONVERSATION_TEXT_SCALE_PERCENT = 100;
-const DEFAULT_DESKTOP_SOURCE_CODE_TEXT_SCALE_PERCENT = 100;
-
-function normalizeDesktopSurfaceScalePercent(value: number | null | undefined): number {
-  if (typeof value !== "number" || Number.isNaN(value)) {
-    return 100;
-  }
-
-  return Math.min(160, Math.max(70, Math.round(value)));
-}
-
-function llmProviderPresetForProfile(profile: {
-  provider?: string | null;
-  apiBase?: string | null;
-} | null | undefined): LlmProviderPreset {
-  const fallbackPreset = LLM_PROVIDER_PRESETS[0]!;
-  const provider = profile?.provider?.toLowerCase() ?? "openai-compatible";
-  const apiBase = profile?.apiBase?.toLowerCase() ?? "";
-
-  if (provider === "anthropic") {
-    return LLM_PROVIDER_PRESETS.find((preset) => preset.id === "anthropic") ?? fallbackPreset;
-  }
-  if (provider === "gemini" || provider === "google") {
-    return LLM_PROVIDER_PRESETS.find((preset) => preset.id === "google") ?? fallbackPreset;
-  }
-  if (provider === "lm-studio" || provider === "lmstudio" || provider === "local-openai-compatible") {
-    return LLM_PROVIDER_PRESETS.find((preset) => preset.id === "lm-studio") ?? fallbackPreset;
-  }
-  if (provider === "meta-compatible" || provider === "meta-openai-compatible") {
-    return LLM_PROVIDER_PRESETS.find((preset) => preset.id === "meta") ?? fallbackPreset;
-  }
-  if (apiBase.includes("api.x.ai")) {
-    return LLM_PROVIDER_PRESETS.find((preset) => preset.id === "xai") ?? fallbackPreset;
-  }
-  if (apiBase.includes("generativelanguage.googleapis.com")) {
-    return LLM_PROVIDER_PRESETS.find((preset) => preset.id === "google") ?? fallbackPreset;
-  }
-  if (apiBase.includes("openai.azure.com")) {
-    return LLM_PROVIDER_PRESETS.find((preset) => preset.id === "microsoft") ?? fallbackPreset;
-  }
-  if (apiBase.includes("localhost:1234")) {
-    return LLM_PROVIDER_PRESETS.find((preset) => preset.id === "lm-studio") ?? fallbackPreset;
-  }
-  if (provider === "openai-compatible" && apiBase.length > 0 && !apiBase.includes("api.openai.com")) {
-    return LLM_PROVIDER_PRESETS.find((preset) => preset.id === "custom-openai-compatible") ?? fallbackPreset;
-  }
-  return LLM_PROVIDER_PRESETS.find((preset) => preset.id === "openai") ?? fallbackPreset;
-}
-
-function buildProviderProfileDraft(
-  profile?: Partial<ConfigureProviderProfileInput> | null
-): ConfigureProviderProfileInput {
-  const preset = llmProviderPresetForProfile(profile);
-  return {
-    profileName: profile?.profileName ?? "default",
-    provider: profile?.provider ?? preset.provider,
-    model: profile?.model ?? preset.defaultModel,
-    fastModel: profile?.fastModel ?? preset.defaultFastModel,
-    apiBase: profile?.apiBase ?? preset.defaultApiBase ?? "",
-    apiKey: profile?.apiKey ?? "",
-    clearApiKey: false,
-    intents: profile?.intents ?? [],
-    latencyTier: profile?.latencyTier ?? "balanced",
-    reviewBias: profile?.reviewBias ?? "neutral",
-    executionBias: profile?.executionBias ?? "balanced",
-    locality: profile?.locality ?? (preset.id === "lm-studio" ? "local" : "network"),
-    activate: false
-  };
-}
-
-type McpServerDraft = Omit<ConfigureMcpServerInput, "environmentId">;
-
-function buildMcpServerDraft(server?: Partial<McpServerConfigDto> | null): McpServerDraft {
-  return {
-    serverId: server?.id ?? null,
-    name: server?.name ?? "",
-    transport: server?.transport === "http" ? "http" : "stdio",
-    command: server?.command ?? "",
-    arguments: server?.arguments ?? [],
-    environmentVariables: server?.environmentVariables ?? {},
-    workingDirectory: server?.workingDirectory ?? "",
-    endpoint: server?.endpoint ?? "",
-    capabilities: server?.capabilities ?? [],
-    retryPolicy: server?.retryPolicy ?? { retryableP: true, maxAttempts: 3, backoffSeconds: 5 },
-    healthStatus: server?.healthStatus ?? "unknown",
-    enabledP: server?.enabledP ?? true,
-    discoverableP: server?.discoverableP ?? true
-  };
 }
 
 const operateSections: Array<{
@@ -1348,468 +615,82 @@ const evidenceSections: Array<{
   }
 ];
 
-function buildListenerForm(input: {
-  symbol?: string | null;
-  packageName?: string | null;
-  mode?: RuntimeInspectionMode | null;
-  sourcePath?: string | null;
-  line?: number | null;
-}): string {
-  const symbol = input.symbol?.trim();
-  const packageName = input.packageName?.trim();
-  const sourcePath = input.sourcePath?.trim();
-  const qualifiedReference = symbol ? (packageName ? `${packageName}::${symbol}` : symbol) : null;
-
-  if (sourcePath) {
-    const lineComment = input.line ? ` ;; line ${input.line}` : "";
-    return `(progn
-  ;; Review source-backed artifact${lineComment}
-  (format t "Source: ~A~%" "${sourcePath}")
-  ${qualifiedReference ? `(describe '${qualifiedReference})` : ":no-symbol-focus"}
-  (values :source-review "${sourcePath}" ${qualifiedReference ? `'${qualifiedReference}` : "nil"}))`;
-  }
-
-  if (!symbol) {
-    return '(describe "sbcl-agent")';
-  }
-
-  switch (input.mode) {
-    case "methods":
-      return `(progn
-  (describe (fdefinition '${qualifiedReference}))
-  '${qualifiedReference})`;
-    case "callers":
-      return `(progn
-  ;; Inspect caller relationships for ${qualifiedReference}
-  (describe '${qualifiedReference})
-  '${qualifiedReference})`;
-    case "definitions":
-      return `(progn
-  (describe '${qualifiedReference})
-  '${qualifiedReference})`;
-    case "divergence":
-      return `(progn
-  ;; Review runtime/source drift for ${qualifiedReference}
-  (describe '${qualifiedReference})
-  '${qualifiedReference})`;
-    case "describe":
-    default:
-      return `(describe '${qualifiedReference})`;
-  }
-}
-
-function buildConversationPrompt(input: {
-  focusKind?: EnvironmentFocusState["kind"];
-  symbol?: string | null;
-  packageName?: string | null;
-  mode?: RuntimeInspectionMode | null;
-  sourcePath?: string | null;
-  line?: number | null;
-  threadTitle?: string | null;
-  threadState?: string | null;
-  latestTurnState?: string | null;
-  approvalId?: string | null;
-  workItemId?: string | null;
-  incidentId?: string | null;
-  artifactId?: string | null;
-  eventCursor?: number | null;
-}): string {
-  const focusLabel = input.symbol?.trim()
-    ? `${input.packageName?.trim() ? `${input.packageName?.trim()}::` : ""}${input.symbol.trim()}`
-    : input.sourcePath?.trim() ?? "current environment focus";
-
-  const modeLabel = input.mode ?? "describe";
-  const sourceLine = input.line ? ` at line ${input.line}` : "";
-  const threadStateLabel =
-    input.threadState || input.latestTurnState
-      ? ` It is currently ${[input.threadState, input.latestTurnState].filter(Boolean).join(" / ")}.`
-      : "";
-  const threadContext = input.threadTitle?.trim()
-    ? `Continue the linked thread "${input.threadTitle?.trim()}" while keeping the current environment focus explicit.${threadStateLabel}`
-    : "Start a new conversation continuation anchored in the current environment focus.";
-
-  switch (input.focusKind) {
-    case "governance-approval":
-      return [
-        threadContext,
-        `Review approval ${input.approvalId ?? "current approval"} as the active governed focus.`,
-        "Explain the requested action, policy basis, linked work, likely consequence of approval or denial, and the best next governed step."
-      ].join("\n");
-    case "governance-work-item":
-      return [
-        threadContext,
-        `Review work item ${input.workItemId ?? "current work item"} as the active governed focus.`,
-        "Summarize current state, blockers, validation and reconciliation posture, linked evidence, and the next closure action."
-      ].join("\n");
-    case "governance-incident":
-      return [
-        threadContext,
-        `Review incident ${input.incidentId ?? "current incident"} as the active recovery focus.`,
-        "Summarize failure posture, linked runtime and workflow context, visible evidence, and the safest next governed recovery step."
-      ].join("\n");
-    case "evidence-artifact":
-      return [
-        threadContext,
-        `Inspect artifact ${input.artifactId ?? "current artifact"} as the active evidence focus.`,
-        "Explain what this evidence proves, what it links to in runtime or workflow state, and what action it suggests next."
-      ].join("\n");
-    case "evidence-event":
-      return [
-        threadContext,
-        `Inspect event ${input.eventCursor != null ? `#${input.eventCursor}` : "current event"} as the active evidence focus.`,
-        "Reconstruct what changed, which governed objects it touches, what evidence or recovery it implies, and the next best inspection target."
-      ].join("\n");
-    default:
-      break;
-  }
-
-  if (input.sourcePath?.trim()) {
-    return [
-      threadContext,
-      `Review source artifact ${input.sourcePath.trim()}${sourceLine}.`,
-      `Explain what changed or should change around ${focusLabel}.`,
-      "Call out any runtime implications, required inspections, and next executable step."
-    ].join("\n");
-  }
-
-  return [
-    threadContext,
-    `Inspect ${focusLabel} using the current browser mode "${modeLabel}".`,
-    "Summarize what matters in the live environment, what source or runtime evidence is attached, and what to do next."
-  ].join("\n");
-}
-
-function buildEnvironmentFocusPresentation(input: {
-  focus: EnvironmentFocusState;
-  focusLabel: string;
-  selectedThread: ThreadDetailDto | null;
-  selectedTurn: TurnDetailDto | null;
-  selectedApproval: ApprovalRequestDto | null;
-  selectedWorkItem: WorkItemDetailDto | null;
-  selectedIncident: IncidentDetailDto | null;
-  selectedArtifact: ArtifactDetailDto | null;
-  selectedEvent: EnvironmentEventDto | null;
-}): {
-  title: string;
-  summary: string;
-} {
-  switch (input.focus.kind) {
-    case "conversation-turn":
-      return {
-        title: input.selectedTurn?.title ?? input.focus.turnId ?? "Conversation turn",
-        summary: input.selectedTurn?.summary ?? "Continue from the actively selected conversation turn."
-      };
-    case "conversation-thread":
-    case "linked-conversation":
-      return {
-        title: input.selectedThread?.title ?? input.focus.threadId ?? "Conversation thread",
-        summary: input.selectedThread?.summary ?? "Continue from the actively selected conversation thread."
-      };
-    case "runtime-symbol":
-      return {
-        title: input.focus.runtimeSymbol ?? "Runtime symbol",
-        summary: `The draft is anchored to ${
-          input.focus.runtimePackage ? `${input.focus.runtimePackage}::` : ""
-        }${input.focus.runtimeSymbol ?? "the active symbol"} in the live runtime.`
-      };
-    case "source-artifact":
-      return {
-        title: input.focus.sourcePath ?? "Source artifact",
-        summary: input.focus.sourceLine
-          ? `The draft is anchored to ${input.focus.sourcePath ?? "the active source artifact"} at line ${input.focus.sourceLine}.`
-          : "The draft is anchored to the active source artifact."
-      };
-    case "governance-approval":
-      return {
-        title: input.selectedApproval?.title ?? input.focus.approvalId ?? "Approval",
-        summary:
-          input.selectedApproval?.summary ??
-          "Reason from the selected approval request, its policy posture, and its likely consequences."
-      };
-    case "governance-work-item":
-      return {
-        title: input.selectedWorkItem?.title ?? input.focus.workItemId ?? "Work item",
-        summary:
-          input.selectedWorkItem?.waitingReason ??
-          "Stay attached to the selected work item, its blockers, and its closure posture."
-      };
-    case "governance-incident":
-      return {
-        title: input.selectedIncident?.title ?? input.focus.incidentId ?? "Incident",
-        summary:
-          input.selectedIncident?.summary ??
-          "Stay attached to the selected incident, its recovery posture, and the next governed remediation step."
-      };
-    case "evidence-artifact":
-      return {
-        title: input.selectedArtifact?.title ?? input.focus.artifactId ?? "Artifact",
-        summary:
-          input.selectedArtifact?.summary ??
-          "Use the selected artifact as the active evidence focus for the draft."
-      };
-    case "evidence-event":
-      return {
-        title:
-          input.selectedEvent?.kind ??
-          (input.focus.eventCursor != null ? `Event #${input.focus.eventCursor}` : "Environment event"),
-        summary:
-          input.selectedEvent?.summary ??
-          "Reconstruct the selected event and use it as the active evidence focus."
-      };
-    case "runtime-scope":
-      return {
-        title: "Runtime scope",
-        summary: "Keep the draft anchored to the active runtime scope rather than a detached chat topic."
-      };
-    case "none":
-    default:
-      return {
-        title: "Current environment",
-        summary: `${input.focusLabel}. Continue from the active environment posture rather than an isolated thread.`
-      };
-  }
-}
-
-function buildEntityQuickForms(input: {
-  symbol?: string | null;
-  packageName?: string | null;
-  entityKind?: RuntimeEntityDetailDto["entityKind"] | PackageBrowserSymbolDto["kind"] | "package" | null;
-}): Array<{ id: string; label: string; form: string }> {
-  const symbol = input.symbol?.trim();
-  const packageName = input.packageName?.trim();
-
-  if (!symbol && packageName) {
-    return [
-      {
-        id: "package-symbols",
-        label: "List Package Symbols",
-        form: `(let ((package (find-package '${packageName})))
-  (list :package package :symbols (loop for symbol being the external-symbols of package collect (symbol-name symbol))))`
-      },
-      {
-        id: "package-uses",
-        label: "Inspect Package Uses",
-        form: `(let ((package (find-package '${packageName})))
-  (package-use-list package))`
-      }
-    ];
-  }
-
-  if (!symbol) {
-    return [];
-  }
-
-  const qualifiedReference = packageName ? `${packageName}::${symbol}` : symbol;
-
-  switch (input.entityKind) {
-    case "class":
-      return [
-        {
-          id: "class-slots",
-          label: "Inspect Class Slots",
-          form: `(describe (find-class '${qualifiedReference}))`
-        },
-        {
-          id: "class-precedence",
-          label: "Inspect Class Precedence",
-          form: `(class-precedence-list (find-class '${qualifiedReference}))`
-        }
-      ];
-    case "generic-function":
-      return [
-        {
-          id: "generic-methods",
-          label: "Inspect Methods",
-          form: `(describe (fdefinition '${qualifiedReference}))`
-        },
-        {
-          id: "generic-dispatch",
-          label: "Inspect Dispatch",
-          form: `(type-of (fdefinition '${qualifiedReference}))`
-        }
-      ];
-    case "macro":
-      return [
-        {
-          id: "macro-function",
-          label: "Inspect Macro Function",
-          form: `(macro-function '${qualifiedReference})`
-        },
-        {
-          id: "macro-describe",
-          label: "Describe Macro Symbol",
-          form: `(describe '${qualifiedReference})`
-        }
-      ];
-    default:
-      return [
-        {
-          id: "describe-symbol",
-          label: "Describe Symbol",
-          form: `(describe '${qualifiedReference})`
-        },
-        {
-          id: "inspect-function",
-          label: "Inspect Function Binding",
-          form: `(when (fboundp '${qualifiedReference}) (describe (fdefinition '${qualifiedReference})))`
-        }
-      ];
-  }
-}
-
-function buildSourceOperationForms(input: {
-  symbol?: string | null;
-  packageName?: string | null;
-  path?: string | null;
-  line?: number | null;
-}): {
-  inspect: string;
-  reload: string;
-  evaluate: string;
-} {
-  const symbol = input.symbol?.trim();
-  const packageName = input.packageName?.trim();
-  const path = input.path?.trim() ?? "";
-  const lineComment = input.line ? ` ;; line ${input.line}` : "";
-  const qualifiedReference = symbol ? (packageName ? `${packageName}::${symbol}` : symbol) : null;
-
-  return {
-    inspect: `(progn
-  ;; Inspect source context${lineComment}
-  (format t "Source: ~A~%" "${path}")
-  ${qualifiedReference ? `(describe '${qualifiedReference})` : ":no-symbol-focus"})`,
-    reload: `(progn
-  ;; Reload source-backed artifact${lineComment}
-  (format t "Reload request for ~A~%" "${path}")
-  :reload-source)`,
-    evaluate: `(progn
-  ;; Evaluate near source focus${lineComment}
-  (format t "Evaluate around ~A~%" "${path}")
-  ${qualifiedReference ? `'${qualifiedReference}` : ":source-focus"})`
-  };
-}
-
-function normalizeParenDepthColors(colors?: string[] | null): string[] {
-  const normalized = Array.isArray(colors)
-    ? colors.filter((color) => typeof color === "string" && color.trim().length > 0)
-    : [];
-
-  return DEFAULT_LISP_PAREN_COLORS.map((fallback, index) => normalized[index] ?? fallback);
-}
-
-function slugifyProjectLabel(value: string): string {
-  const normalized = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return normalized || "project";
-}
-
-function ensureDesktopProjects(
-  projects: ProjectProfileDto[] | undefined,
-  binding: BindingDto | null,
-  summary: EnvironmentSummaryDto | null
-): ProjectProfileDto[] {
-  const normalized = Array.isArray(projects) ? [...projects] : [];
-  const environmentId = summary?.environmentId ?? binding?.environmentId ?? null;
-  if (!environmentId) {
-    return normalized;
-  }
-
-  if (normalized.some((project) => project.environmentId === environmentId)) {
-    return normalized;
-  }
-
-  normalized.unshift({
-    projectId: `project-${slugifyProjectLabel(environmentId)}`,
-    title: summary?.environmentLabel ?? environmentId,
-    environmentId,
-    summary: summary?.activeContext.focusSummary ?? "Current bound environment."
-  });
-  return normalized;
-}
-
-function makeUniqueProjectIdentity(
-  projects: ProjectProfileDto[],
-  requestedTitle: string
-): { projectId: string; title: string } {
-  const normalizedTitle = requestedTitle.trim() || "Untitled Project";
-  let title = normalizedTitle;
-  let suffix = 2;
-  while (projects.some((project) => project.title === title)) {
-    title = `${normalizedTitle} ${suffix}`;
-    suffix += 1;
-  }
-
-  let projectId = `project-${slugifyProjectLabel(title)}`;
-  while (projects.some((project) => project.projectId === projectId)) {
-    projectId = `project-${slugifyProjectLabel(`${title}-${suffix}`)}`;
-    suffix += 1;
-  }
-
-  return { projectId, title };
-}
-
-function buildDefaultReplSession(environmentId: string, runtimeSummary: RuntimeSummaryDto | null): ReplSessionProfileDto {
-  return {
-    sessionId: `repl-${slugifyProjectLabel(environmentId)}`,
-    title: "Primary Listener",
-    environmentId,
-    draftForm: '(describe "sbcl-agent")',
-    packageName: runtimeSummary?.currentPackage,
-    lastSummary: runtimeSummary?.divergencePosture ?? "Primary project listener session.",
-    history: []
-  };
-}
 
 export function App() {
-  const [activeHostedApp, setActiveHostedApp] = useState<HostedAppId>("control-panel");
-  const [desktopSpaces, setDesktopSpaces] = useState<Record<string, DesktopWindowRecord[]>>({
-    "desktop-1": initialDesktopWindows()
-  });
-  const [desktopLabelsById, setDesktopLabelsById] = useState<Record<string, string>>({
-    "desktop-1": "Desktop 1"
-  });
-  const [activeDesktopId, setActiveDesktopId] = useState("desktop-1");
-  const [desktopFocusById, setDesktopFocusById] = useState<Record<string, string>>({
-    "desktop-1": "window:control-panel"
-  });
-  const [desktopWindowZCounterById, setDesktopWindowZCounterById] = useState<Record<string, number>>({
-    "desktop-1": 3
-  });
-  const [desktopZoomById, setDesktopZoomById] = useState<Record<string, number>>({
-    "desktop-1": 0.66
-  });
-  const [desktopCompositionInitializedById, setDesktopCompositionInitializedById] = useState<Record<string, boolean>>({});
-  const [suppressedDesktopWindowIdsById, setSuppressedDesktopWindowIdsById] = useState<Record<string, string[]>>({
-    "desktop-1": []
-  });
-  const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceId>("environment");
-  const [selectedOperateSection, setSelectedOperateSection] = useState<OperateSection>("journeys");
-  const [selectedConversationSection, setSelectedConversationSection] =
-    useState<ConversationSection>("threads");
-  const [draftEntryFocusOverride, setDraftEntryFocusOverride] =
-    useState<EnvironmentFocusState | null>(null);
-  const [selectedBrowserDomain, setSelectedBrowserDomain] = useState<BrowserDomain>("symbols");
-  const [selectedConfigurationSection, setSelectedConfigurationSection] =
-    useState<ConfigurationSection>("theme");
-  const [selectedExecutionSection, setSelectedExecutionSection] = useState<ExecutionSection>("listener");
-  const [selectedRecoverySection, setSelectedRecoverySection] = useState<RecoverySection>("incidents");
-  const [selectedEvidenceSection, setSelectedEvidenceSection] = useState<EvidenceSection>("artifacts");
-  const [isWorkspaceTransitioning, setIsWorkspaceTransitioning] = useState(false);
-  const [shellLayout, dispatchShellLayout] = useReducer(
-    shellLayoutReducer,
-    undefined,
-    createDefaultShellLayoutState
-  );
-  const shellLayoutRef = useRef(shellLayout);
-  shellLayoutRef.current = shellLayout;
-  const [isSidebarResizing, setIsSidebarResizing] = useState(false);
-  const [isInspectorResizing, setIsInspectorResizing] = useState(false);
-  const [viewportWidth, setViewportWidth] = useState<number>(() =>
-    typeof window === "undefined" ? 1600 : window.innerWidth
-  );
+  const {
+    activeHostedApp,
+    setActiveHostedApp,
+    desktopSpaces,
+    setDesktopSpaces,
+    desktopLabelsById,
+    setDesktopLabelsById,
+    activeDesktopId,
+    setActiveDesktopId,
+    desktopFocusById,
+    setDesktopFocusById,
+    desktopWindowZCounterById,
+    setDesktopWindowZCounterById,
+    desktopZoomById,
+    setDesktopZoomById,
+    desktopCompositionInitializedById,
+    setDesktopCompositionInitializedById,
+    suppressedDesktopWindowIdsById,
+    setSuppressedDesktopWindowIdsById,
+    activeWorkspace,
+    setActiveWorkspace,
+    selectedOperateSection,
+    setSelectedOperateSection,
+    selectedConversationSection,
+    setSelectedConversationSection,
+    draftEntryFocusOverride,
+    setDraftEntryFocusOverride,
+    selectedBrowserDomain,
+    setSelectedBrowserDomain,
+    selectedConfigurationSection,
+    setSelectedConfigurationSection,
+    selectedExecutionSection,
+    setSelectedExecutionSection,
+    selectedRecoverySection,
+    setSelectedRecoverySection,
+    selectedEvidenceSection,
+    setSelectedEvidenceSection,
+    isWorkspaceTransitioning,
+    setIsWorkspaceTransitioning,
+    shellLayout,
+    dispatchShellLayout,
+    shellLayoutRef,
+    isSidebarResizing,
+    setIsSidebarResizing,
+    isInspectorResizing,
+    setIsInspectorResizing,
+    viewportWidth,
+    setViewportWidth,
+    shellTooltip,
+    setShellTooltip,
+    themePreference,
+    setThemePreference,
+    lispParenColors,
+    setLispParenColors,
+    tooltipScalePercent,
+    setTooltipScalePercent,
+    controlIconScalePercent,
+    setControlIconScalePercent,
+    dockIconScalePercent,
+    setDockIconScalePercent,
+    conversationTextScalePercent,
+    setConversationTextScalePercent,
+    sourceCodeTextScalePercent,
+    setSourceCodeTextScalePercent,
+    systemTheme,
+    setSystemTheme,
+    expandedWorkspaceMenus,
+    setExpandedWorkspaceMenus,
+    desktopWindows,
+    activeDesktopWindowId: focusedDesktopWindowId,
+    desktopWindowZCounter,
+    activeDesktopZoom,
+    suppressedDesktopWindowIds
+  } = useShellWorkspaceState();
   const sidebarPinned = shellLayout.leftRail.mode === "expanded";
   const canvasPinned = shellLayout.canvas.mode === "expanded";
   const inspectorPinned = shellLayout.rightRail.mode === "expanded";
@@ -1817,298 +698,522 @@ export function App() {
   const inspectorWidth = shellLayout.rightRail.expandedWidth;
   const leftRailPanels = shellRailPanelDefinitions(shellLayout, "left");
   const rightRailPanels = shellRailPanelDefinitions(shellLayout, "right");
-  const [shellTooltip, setShellTooltip] = useState<{ label: string; x: number; y: number } | null>(null);
-  const [themePreference, setThemePreference] = useState<ThemePreference>("system");
-  const [lispParenColors, setLispParenColors] = useState<string[]>(DEFAULT_LISP_PAREN_COLORS);
-  const [providerSummary, setProviderSummary] = useState<ProviderProfileSummaryDto | null>(null);
-  const [packageManagementSummary, setPackageManagementSummary] = useState<PackageManagementSummaryDto | null>(null);
-  const [desktopTaskManifests, setDesktopTaskManifests] = useState<DesktopTaskManifestDto[]>([]);
-  const [desktopTaskRecords, setDesktopTaskRecords] = useState<DesktopTaskRecordDto[]>([]);
-  const [desktopTaskActorFlow, setDesktopTaskActorFlow] = useState<Record<string, unknown> | null>(null);
-  const [desktopTaskActorSystemPanel, setDesktopTaskActorSystemPanel] =
-    useState<Record<string, unknown> | null>(null);
-  const [desktopTaskActorTrace, setDesktopTaskActorTrace] = useState<Record<string, unknown>[]>([]);
-  const [desktopTaskDeadLetters, setDesktopTaskDeadLetters] = useState<Record<string, unknown>[]>([]);
-  const appliedActorFlowEditorMutationKeysRef = useRef<Set<string>>(new Set());
-  const [mcpServerConfigs, setMcpServerConfigs] = useState<McpServerConfigDto[]>([]);
-  const [selectedProviderProfileName, setSelectedProviderProfileName] = useState<string>("default");
-  const [providerProfileDraft, setProviderProfileDraft] = useState<ConfigureProviderProfileInput>(
-    buildProviderProfileDraft()
-  );
-  const [selectedMcpServerId, setSelectedMcpServerId] = useState<string | null>(null);
-  const [mcpServerDraft, setMcpServerDraft] = useState<McpServerDraft>(buildMcpServerDraft());
-  const [providerProfileStatusMessage, setProviderProfileStatusMessage] = useState<string | null>(null);
-  const [providerProfileError, setProviderProfileError] = useState<string | null>(null);
-  const [packageManagementStatusMessage, setPackageManagementStatusMessage] = useState<string | null>(null);
-  const [packageManagementError, setPackageManagementError] = useState<string | null>(null);
-  const [mcpServerStatusMessage, setMcpServerStatusMessage] = useState<string | null>(null);
-  const [mcpServerError, setMcpServerError] = useState<string | null>(null);
-  const [isSavingMcpServer, setIsSavingMcpServer] = useState(false);
-  const [packageManagementCommandResult, setPackageManagementCommandResult] =
-    useState<PackageManagementCommandResultDto | null>(null);
-  const [quicklispSystemDraft, setQuicklispSystemDraft] = useState<string>("");
-  const [qlotCommandDraft, setQlotCommandDraft] = useState<string>("update");
-  const [sourceRegistryDraftPath, setSourceRegistryDraftPath] = useState<string>("");
-  const [sourceRegistryEditOriginalPath, setSourceRegistryEditOriginalPath] = useState<string | null>(null);
-  const [localProjectPathDraft, setLocalProjectPathDraft] = useState<string>("");
-  const [localProjectNameDraft, setLocalProjectNameDraft] = useState<string>("");
-  const [isPackageManagementBusy, setIsPackageManagementBusy] = useState(false);
-  const [isSavingProviderProfile, setIsSavingProviderProfile] = useState(false);
-  const [isUpdatingProviderRouting, setIsUpdatingProviderRouting] = useState(false);
-  const [tooltipScalePercent, setTooltipScalePercent] = useState<number>(
-    DEFAULT_DESKTOP_TOOLTIP_SCALE_PERCENT
-  );
-  const [controlIconScalePercent, setControlIconScalePercent] = useState<number>(
-    DEFAULT_DESKTOP_CONTROL_ICON_SCALE_PERCENT
-  );
-  const [dockIconScalePercent, setDockIconScalePercent] = useState<number>(
-    DEFAULT_DESKTOP_DOCK_ICON_SCALE_PERCENT
-  );
-  const [conversationTextScalePercent, setConversationTextScalePercent] = useState<number>(
-    DEFAULT_DESKTOP_CONVERSATION_TEXT_SCALE_PERCENT
-  );
-  const [sourceCodeTextScalePercent, setSourceCodeTextScalePercent] = useState<number>(
-    DEFAULT_DESKTOP_SOURCE_CODE_TEXT_SCALE_PERCENT
-  );
-  const [systemTheme, setSystemTheme] = useState<ResolvedTheme>("light");
-  const [expandedWorkspaceMenus, setExpandedWorkspaceMenus] = useState<Record<string, boolean>>({
-    environment: true,
-    conversations: true,
-    runtime: true,
-    incidents: true,
-    artifacts: true,
-    browser: true,
-    applications: true
+  const {
+    providerSummary,
+    setProviderSummary,
+    packageManagementSummary,
+    setPackageManagementSummary,
+    desktopTaskManifests,
+    setDesktopTaskManifests,
+    desktopTaskRecords,
+    setDesktopTaskRecords,
+    desktopTaskActorFlow,
+    setDesktopTaskActorFlow,
+    desktopTaskActorSystemPanel,
+    setDesktopTaskActorSystemPanel,
+    desktopTaskActorTrace,
+    setDesktopTaskActorTrace,
+    desktopTaskDeadLetters,
+    setDesktopTaskDeadLetters,
+    orchestrationInbox,
+    setOrchestrationInbox,
+    orchestrationFocus,
+    setOrchestrationFocus,
+    orchestrationSnapshot,
+    setOrchestrationSnapshot,
+    planVerification,
+    setPlanVerification,
+    appliedActorFlowEditorMutationKeysRef,
+    mcpServerConfigs,
+    setMcpServerConfigs,
+    selectedProviderProfileName,
+    setSelectedProviderProfileName,
+    providerProfileDraft,
+    setProviderProfileDraft,
+    selectedMcpServerId,
+    setSelectedMcpServerId,
+    mcpServerDraft,
+    setMcpServerDraft,
+    providerProfileStatusMessage,
+    setProviderProfileStatusMessage,
+    providerProfileError,
+    setProviderProfileError,
+    packageManagementStatusMessage,
+    setPackageManagementStatusMessage,
+    packageManagementError,
+    setPackageManagementError,
+    mcpServerStatusMessage,
+    setMcpServerStatusMessage,
+    mcpServerError,
+    setMcpServerError,
+    isSavingMcpServer,
+    setIsSavingMcpServer,
+    packageManagementCommandResult,
+    setPackageManagementCommandResult,
+    quicklispSystemDraft,
+    setQuicklispSystemDraft,
+    qlotCommandDraft,
+    setQlotCommandDraft,
+    sourceRegistryDraftPath,
+    setSourceRegistryDraftPath,
+    sourceRegistryEditOriginalPath,
+    setSourceRegistryEditOriginalPath,
+    localProjectPathDraft,
+    setLocalProjectPathDraft,
+    localProjectNameDraft,
+    setLocalProjectNameDraft,
+    isPackageManagementBusy,
+    setIsPackageManagementBusy,
+    isSavingProviderProfile,
+    setIsSavingProviderProfile,
+    isUpdatingProviderRouting,
+    setIsUpdatingProviderRouting
+  } = useConfigurationWorkspaceState({
+    buildProviderProfileDraft,
+    buildMcpServerDraft
   });
   const [, setIsCommandCenterOpen] = useState(false);
-  const [hostStatus, setHostStatus] = useState<HostStatusDto | null>(null);
-  const [binding, setBinding] = useState<BindingDto | null>(null);
-  const [environmentImageRegistry, setEnvironmentImageRegistry] = useState<EnvironmentImageRegistryDto | null>(null);
-  const [projects, setProjects] = useState<ProjectProfileDto[]>([]);
-  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
-  const [projectListResult, setProjectListResult] = useState<QueryResultDto<ProjectListDto> | null>(null);
-  const [memoryListResult, setMemoryListResult] = useState<QueryResultDto<MemoryListDto> | null>(null);
-  const [selectedMemoryId, setSelectedMemoryId] = useState<string | null>(null);
-  const [pendingUpdateMemoryId, setPendingUpdateMemoryId] = useState<string | null>(null);
-  const [pendingDeleteMemoryId, setPendingDeleteMemoryId] = useState<string | null>(null);
-  const [selectedGovernedProjectId, setSelectedGovernedProjectId] = useState<string | null>(null);
-  const [selectedProjectDetail, setSelectedProjectDetail] = useState<ProjectDetailDto | null>(null);
-  const [selectedConversationThreadByProject, setSelectedConversationThreadByProject] = useState<Record<string, string>>({});
-  const [replSessionsByProject, setReplSessionsByProject] = useState<Record<string, ReplSessionProfileDto[]>>({});
-  const [currentReplSessionIdByProject, setCurrentReplSessionIdByProject] = useState<Record<string, string>>({});
-  const [isProjectOpenDialogOpen, setIsProjectOpenDialogOpen] = useState(false);
-  const [isProjectCreateDialogOpen, setIsProjectCreateDialogOpen] = useState(false);
-  const [isEditorSourceFileDialogOpen, setIsEditorSourceFileDialogOpen] = useState(false);
-  const [isEditorSourceFileSaveDialogOpen, setIsEditorSourceFileSaveDialogOpen] = useState(false);
-  const [isProjectConstitutionDialogOpen, setIsProjectConstitutionDialogOpen] = useState(false);
-  const [isProjectRequirementDialogOpen, setIsProjectRequirementDialogOpen] = useState(false);
-  const [isProjectFeatureSpecificationDialogOpen, setIsProjectFeatureSpecificationDialogOpen] = useState(false);
-  const [isProjectUserJourneyDialogOpen, setIsProjectUserJourneyDialogOpen] = useState(false);
-  const [isProjectArchitectureDecisionDialogOpen, setIsProjectArchitectureDecisionDialogOpen] = useState(false);
-  const [isProjectDesignSystemDialogOpen, setIsProjectDesignSystemDialogOpen] = useState(false);
-  const [isProjectStyleGuideDialogOpen, setIsProjectStyleGuideDialogOpen] = useState(false);
-  const [isProjectTestingStrategyDialogOpen, setIsProjectTestingStrategyDialogOpen] = useState(false);
-  const [isProjectReleaseReadinessDialogOpen, setIsProjectReleaseReadinessDialogOpen] = useState(false);
-  const [isProjectReadinessObligationsDialogOpen, setIsProjectReadinessObligationsDialogOpen] = useState(false);
-  const [isProjectSourceRootDialogOpen, setIsProjectSourceRootDialogOpen] = useState(false);
-  const [isProjectTestingHarnessDialogOpen, setIsProjectTestingHarnessDialogOpen] = useState(false);
-  const [isProjectQualityGateDialogOpen, setIsProjectQualityGateDialogOpen] = useState(false);
-  const [isWorkItemSteerDialogOpen, setIsWorkItemSteerDialogOpen] = useState(false);
-  const [isWorkItemResumeDialogOpen, setIsWorkItemResumeDialogOpen] = useState(false);
-  const [isWorkItemQuarantineDialogOpen, setIsWorkItemQuarantineDialogOpen] = useState(false);
-  const [isWorkItemRollbackDialogOpen, setIsWorkItemRollbackDialogOpen] = useState(false);
-  const [isWorkItemValidationDialogOpen, setIsWorkItemValidationDialogOpen] = useState(false);
-  const [isIncidentRemediationPlanDialogOpen, setIsIncidentRemediationPlanDialogOpen] = useState(false);
-  const [newProjectTitleDraft, setNewProjectTitleDraft] = useState("");
-  const [editorSourceFilePathDraft, setEditorSourceFilePathDraft] = useState("");
-  const [editorSourceDirectoryPathDraft, setEditorSourceDirectoryPathDraft] = useState("");
-  const [editorSourceDirectoryListing, setEditorSourceDirectoryListing] = useState<FileSystemDirectoryListingDto | null>(null);
-  const [editorSourceSaveFileNameDraft, setEditorSourceSaveFileNameDraft] = useState("");
-  const [editorSourceSaveDirectoryPathDraft, setEditorSourceSaveDirectoryPathDraft] = useState("");
-  const [editorSourceSaveDirectoryListing, setEditorSourceSaveDirectoryListing] = useState<FileSystemDirectoryListingDto | null>(null);
-  const [projectConstitutionDraft, setProjectConstitutionDraft] = useState("{}");
-  const [projectReleaseReadinessStageDraft, setProjectReleaseReadinessStageDraft] = useState("");
-  const [projectReleaseReadinessSignoffStatusDraft, setProjectReleaseReadinessSignoffStatusDraft] = useState("");
-  const [projectReleaseReadinessTargetWindowDraft, setProjectReleaseReadinessTargetWindowDraft] = useState("");
-  const [projectReleaseReadinessRequiredApproversDraft, setProjectReleaseReadinessRequiredApproversDraft] = useState("");
-  const [projectReleaseReadinessObservationPlanDraft, setProjectReleaseReadinessObservationPlanDraft] = useState("");
-  const [projectReleaseReadinessOpenRisksDraft, setProjectReleaseReadinessOpenRisksDraft] = useState("");
-  const [projectReadinessObligationsDraft, setProjectReadinessObligationsDraft] = useState<ProjectReadinessObligationDraft[]>([
-    blankProjectReadinessObligationDraft()
-  ]);
-  const [projectRequirementTitleDraft, setProjectRequirementTitleDraft] = useState("");
-  const [projectRequirementSummaryDraft, setProjectRequirementSummaryDraft] = useState("");
-  const [projectRequirementPriorityDraft, setProjectRequirementPriorityDraft] = useState("high");
-  const [projectRequirementStatusDraft, setProjectRequirementStatusDraft] = useState("proposed");
-  const [projectFeatureSpecificationTitleDraft, setProjectFeatureSpecificationTitleDraft] = useState("");
-  const [projectFeatureSpecificationSummaryDraft, setProjectFeatureSpecificationSummaryDraft] = useState("");
-  const [projectFeatureSpecificationAcceptanceCriteriaDraft, setProjectFeatureSpecificationAcceptanceCriteriaDraft] = useState("");
-  const [projectFeatureSpecificationStatusDraft, setProjectFeatureSpecificationStatusDraft] = useState("proposed");
-  const [projectUserJourneyTitleDraft, setProjectUserJourneyTitleDraft] = useState("");
-  const [projectUserJourneySummaryDraft, setProjectUserJourneySummaryDraft] = useState("");
-  const [projectUserJourneyActorsDraft, setProjectUserJourneyActorsDraft] = useState("");
-  const [projectUserJourneyEntrypointsDraft, setProjectUserJourneyEntrypointsDraft] = useState("");
-  const [projectUserJourneyStepsDraft, setProjectUserJourneyStepsDraft] = useState("");
-  const [projectUserJourneyOutcomesDraft, setProjectUserJourneyOutcomesDraft] = useState("");
-  const [projectUserJourneyEdgeCasesDraft, setProjectUserJourneyEdgeCasesDraft] = useState("");
-  const [projectArchitectureDecisionTitleDraft, setProjectArchitectureDecisionTitleDraft] = useState("");
-  const [projectArchitectureDecisionSummaryDraft, setProjectArchitectureDecisionSummaryDraft] = useState("");
-  const [projectArchitectureDecisionStatusDraft, setProjectArchitectureDecisionStatusDraft] = useState("proposed");
-  const [projectArchitectureDecisionDriversDraft, setProjectArchitectureDecisionDriversDraft] = useState("");
-  const [projectArchitectureDecisionConsequencesDraft, setProjectArchitectureDecisionConsequencesDraft] = useState("");
-  const [projectArchitectureDecisionStackChoicesDraft, setProjectArchitectureDecisionStackChoicesDraft] = useState("");
-  const [projectDesignSystemDraft, setProjectDesignSystemDraft] = useState("{}");
-  const [projectStyleGuideDraft, setProjectStyleGuideDraft] = useState("{}");
-  const [projectTestingStrategyRequiredEvidenceDraft, setProjectTestingStrategyRequiredEvidenceDraft] = useState("");
-  const [projectTestingStrategySuiteExpectationsDraft, setProjectTestingStrategySuiteExpectationsDraft] = useState<ProjectTestingStrategySuiteExpectationDraft[]>([
-    blankProjectTestingStrategySuiteExpectationDraft()
-  ]);
-  const [projectTestingStrategyMaximumFailedTestsDraft, setProjectTestingStrategyMaximumFailedTestsDraft] = useState("");
-  const [projectTestingStrategyMaximumSayTurnLatencySecondsDraft, setProjectTestingStrategyMaximumSayTurnLatencySecondsDraft] = useState("");
-  const [projectTestingStrategyMaximumEnvironmentSaveLoadSecondsDraft, setProjectTestingStrategyMaximumEnvironmentSaveLoadSecondsDraft] = useState("");
-  const [projectTestingStrategyRequireCoverageDraft, setProjectTestingStrategyRequireCoverageDraft] = useState(false);
-  const [projectTestingStrategyRequireRecoveryReadyDraft, setProjectTestingStrategyRequireRecoveryReadyDraft] = useState(false);
-  const [projectSourceRootDraft, setProjectSourceRootDraft] = useState("");
-  const [projectTestingHarnessIdDraft, setProjectTestingHarnessIdDraft] = useState("");
-  const [projectTestingHarnessInventory, setProjectTestingHarnessInventory] = useState<ProjectTestingHarnessDto[]>([]);
-  const [projectQualityGateTitleDraft, setProjectQualityGateTitleDraft] = useState("");
-  const [projectQualityGateSummaryDraft, setProjectQualityGateSummaryDraft] = useState("");
-  const [projectQualityGateStatusDraft, setProjectQualityGateStatusDraft] = useState("proposed");
-  const [projectQualityGateRequiredHarnessIdsDraft, setProjectQualityGateRequiredHarnessIdsDraft] = useState("");
-  const [projectQualityGateMinimumLinkedWorkItemsDraft, setProjectQualityGateMinimumLinkedWorkItemsDraft] = useState("");
-  const [projectQualityGateMinimumLinkedIncidentsDraft, setProjectQualityGateMinimumLinkedIncidentsDraft] = useState("");
-  const [projectQualityGateMaximumFailedTestsDraft, setProjectQualityGateMaximumFailedTestsDraft] = useState("");
-  const [projectQualityGateMaximumSayTurnLatencySecondsDraft, setProjectQualityGateMaximumSayTurnLatencySecondsDraft] = useState("");
-  const [projectQualityGateMaximumEnvironmentSaveLoadSecondsDraft, setProjectQualityGateMaximumEnvironmentSaveLoadSecondsDraft] = useState("");
-  const [projectQualityGateRequireSourceRootsDraft, setProjectQualityGateRequireSourceRootsDraft] = useState(true);
-  const [projectQualityGateRequireCoverageDraft, setProjectQualityGateRequireCoverageDraft] = useState(false);
-  const [projectQualityGateRequireRecoveryReadyDraft, setProjectQualityGateRequireRecoveryReadyDraft] = useState(false);
-  const [workItemSteerPhaseDraft, setWorkItemSteerPhaseDraft] = useState("");
-  const [workItemSteerNextStepDraft, setWorkItemSteerNextStepDraft] = useState("");
-  const [workItemSteerNoteDraft, setWorkItemSteerNoteDraft] = useState("");
-  const [workItemResumeNoteDraft, setWorkItemResumeNoteDraft] = useState("");
-  const [workItemQuarantineReasonDraft, setWorkItemQuarantineReasonDraft] = useState("");
-  const [workItemRollbackReasonDraft, setWorkItemRollbackReasonDraft] = useState("");
-  const [workItemRollbackNoteDraft, setWorkItemRollbackNoteDraft] = useState("");
-  const [workItemValidationStatusDraft, setWorkItemValidationStatusDraft] = useState("passed");
-  const [incidentRemediationStatusDraft, setIncidentRemediationStatusDraft] =
-    useState<IncidentRemediationPlanDto["status"]>("draft");
-  const [incidentRemediationOwnerDraft, setIncidentRemediationOwnerDraft] = useState("");
-  const [incidentRemediationSummaryDraft, setIncidentRemediationSummaryDraft] = useState("");
-  const [incidentRemediationActionsDraft, setIncidentRemediationActionsDraft] = useState("");
-  const [incidentRemediationValidationDraft, setIncidentRemediationValidationDraft] = useState("");
-  const [incidentRemediationBlockersDraft, setIncidentRemediationBlockersDraft] = useState("");
-  const [isEnvironmentImageChooserOpen, setIsEnvironmentImageChooserOpen] = useState(false);
-  const [isEnvironmentExitDialogOpen, setIsEnvironmentExitDialogOpen] = useState(false);
-  const [environmentSaveAsNameDraft, setEnvironmentSaveAsNameDraft] = useState("");
-  const [replSessionTitleDraft, setReplSessionTitleDraft] = useState("New Listener Session");
-  const [summary, setSummary] = useState<EnvironmentSummaryDto | null>(null);
-  const [status, setStatus] = useState<EnvironmentStatusDto | null>(null);
-  const [workspaceSummary, setWorkspaceSummary] = useState<WorkspaceSummaryDto | null>(null);
-  const [desktopModel, setDesktopModel] = useState<DesktopModelDto | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [threads, setThreads] = useState<ThreadSummaryDto[]>([]);
-  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
-  const [selectedThread, setSelectedThread] = useState<ThreadDetailDto | null>(null);
-  const [selectedConversationMessageId, setSelectedConversationMessageId] = useState<string | null>(null);
-  const [selectedTurnId, setSelectedTurnId] = useState<string | null>(null);
-  const [selectedTurn, setSelectedTurn] = useState<TurnDetailDto | null>(null);
-  const [conversationSessionTitleDraft, setConversationSessionTitleDraft] = useState("");
-  const [isConversationSessionCreateDialogOpen, setIsConversationSessionCreateDialogOpen] = useState(false);
-  const [isConversationThreadRenameDialogOpen, setIsConversationThreadRenameDialogOpen] = useState(false);
-  const [conversationThreadRenameDraft, setConversationThreadRenameDraft] = useState("");
-  const [conversationThreadRenameTargetId, setConversationThreadRenameTargetId] = useState<string | null>(null);
-  const [conversationDraft, setConversationDraft] = useState(
-    "Start from the live environment focus and keep runtime, source, and governance context attached."
-  );
-  const [conversationRecoveryHandoff, setConversationRecoveryHandoff] = useState<{
-    source: "incident-restart";
-    incidentId: string;
-    restartLabel: string;
-  } | null>(null);
-  const [pendingCalculatorExpressionRequest, setPendingCalculatorExpressionRequest] = useState<{
-    expression: string;
-    shouldEvaluate: boolean;
-    token: number;
-  } | null>(null);
-  const [latestCalculatorResult, setLatestCalculatorResult] = useState<{
-    expression: string;
-    result: CalculatorResultDto;
-  } | null>(null);
-  const [conversationAttachments, setConversationAttachments] = useState<ConversationAttachmentDto[]>([]);
-  const [conversationSendError, setConversationSendError] = useState<string | null>(null);
-  const [isSendingConversation, setIsSendingConversation] = useState(false);
-  const [conversationStream, setConversationStream] = useState<{
-    threadId: string;
-    turnId: string | null;
-    content: string;
-  } | null>(null);
-  const [pendingConversationApproval, setPendingConversationApproval] = useState<{
-    actorMessageId?: string | null;
-    approvalId?: string | null;
-    sessionId?: string | null;
-    threadId: string | null;
-    policyIds: string[];
-  } | null>(null);
-  const [pendingConversationComposerFocusThreadId, setPendingConversationComposerFocusThreadId] = useState<string | null>(null);
-  const [runtimeSummary, setRuntimeSummary] = useState<RuntimeSummaryDto | null>(null);
-  const [runtimeTelemetry, setRuntimeTelemetry] = useState<RuntimeTelemetrySnapshotDto | null>(null);
-  const [selectedTelemetryProcessId, setSelectedTelemetryProcessId] = useState<string | null>(null);
-  const [consoleLogStream, setConsoleLogStream] = useState<QueryResultDto<ConsoleLogStreamDto> | null>(null);
-  const [environmentConsoleLogStream, setEnvironmentConsoleLogStream] = useState<QueryResultDto<ConsoleLogStreamDto> | null>(null);
-  const [hostConsoleLogStream, setHostConsoleLogStream] = useState<QueryResultDto<ConsoleLogStreamDto> | null>(null);
-  const [selectedConsolePlane, setSelectedConsolePlane] = useState<"environment" | "host">("environment");
-  const [selectedConsoleSourceFilter, setSelectedConsoleSourceFilter] = useState("All Sources");
-  const [selectedConsoleEntryId, setSelectedConsoleEntryId] = useState<string | null>(null);
-  const [diagnosticReports, setDiagnosticReports] = useState<DiagnosticReportSummaryDto[]>([]);
-  const [selectedDiagnosticSourceFilter, setSelectedDiagnosticSourceFilter] = useState("All Sources");
-  const [selectedDiagnosticReportId, setSelectedDiagnosticReportId] = useState<string | null>(null);
-  const [selectedDiagnosticReport, setSelectedDiagnosticReport] = useState<DiagnosticReportDetailDto | null>(null);
-  const [runtimeForm, setRuntimeForm] = useState('(describe "sbcl-agent")');
-  const [runtimeResult, setRuntimeResult] = useState<CommandResultDto<RuntimeEvalResultDto> | null>(null);
-  const [runtimeRecoveryLaunch, setRuntimeRecoveryLaunch] = useState<{
-    source: "incident-restart";
-    incidentId: string;
-    restartLabel: string;
-  } | null>(null);
-  const [editorBuffersByProject, setEditorBuffersByProject] = useState<Record<string, EditorBufferStateDto[]>>({});
-  const [selectedEditorBufferIdByProject, setSelectedEditorBufferIdByProject] = useState<Record<string, string>>({});
-  const [currentEditorCursorSymbol, setCurrentEditorCursorSymbol] = useState<string | null>(null);
-  const [currentEditorCursorSymbolPackage, setCurrentEditorCursorSymbolPackage] = useState<string>("cl-user");
-  const [currentEditorCursorSymbolHelp, setCurrentEditorCursorSymbolHelp] = useState<{
-    detail: string;
-    info: string;
-    type?: string;
-    packageName?: string;
-    signature?: string | null;
-  } | null>(null);
-  const [workspacePackageByProject, setWorkspacePackageByProject] = useState<Record<string, string>>({});
-  const [workspaceDraftByProject, setWorkspaceDraftByProject] = useState<Record<string, string>>({});
-  const [workspaceResultByProject, setWorkspaceResultByProject] = useState<
-    Record<string, CommandResultDto<RuntimeEvalResultDto> | null>
-  >({});
-  const [workspaceHistoryByProject, setWorkspaceHistoryByProject] = useState<Record<string, ReplSessionHistoryEntryDto[]>>({});
-  const [runtimeInspectorSymbol, setRuntimeInspectorSymbol] = useState("CAR");
-  const [runtimeInspectorPackage, setRuntimeInspectorPackage] = useState("");
-  const [runtimeInspectionMode, setRuntimeInspectionMode] =
-    useState<RuntimeInspectionMode>("describe");
+  const {
+    hostStatus,
+    setHostStatus,
+    binding,
+    setBinding,
+    environmentImageRegistry,
+    setEnvironmentImageRegistry,
+    isEnvironmentImageChooserOpen,
+    setIsEnvironmentImageChooserOpen,
+    isEnvironmentExitDialogOpen,
+    setIsEnvironmentExitDialogOpen,
+    environmentSaveAsNameDraft,
+    setEnvironmentSaveAsNameDraft,
+    replSessionTitleDraft,
+    setReplSessionTitleDraft,
+    summary,
+    setSummary,
+    status,
+    setStatus,
+    workspaceSummary,
+    setWorkspaceSummary,
+    desktopModel,
+    setDesktopModel,
+    errorMessage,
+    setErrorMessage
+  } = useEnvironmentHostState();
+  const {
+    projects,
+    setProjects,
+    currentProjectId,
+    setCurrentProjectId,
+    projectListResult,
+    setProjectListResult,
+    memoryListResult,
+    setMemoryListResult,
+    selectedMemoryId,
+    setSelectedMemoryId,
+    pendingUpdateMemoryId,
+    setPendingUpdateMemoryId,
+    pendingDeleteMemoryId,
+    setPendingDeleteMemoryId,
+    selectedGovernedProjectId,
+    setSelectedGovernedProjectId,
+    selectedProjectDetail,
+    setSelectedProjectDetail,
+    selectedConversationThreadByProject,
+    setSelectedConversationThreadByProject,
+    replSessionsByProject,
+    setReplSessionsByProject,
+    currentReplSessionIdByProject,
+    setCurrentReplSessionIdByProject,
+    isProjectOpenDialogOpen,
+    setIsProjectOpenDialogOpen,
+    isProjectCreateDialogOpen,
+    setIsProjectCreateDialogOpen,
+    isEditorSourceFileDialogOpen,
+    setIsEditorSourceFileDialogOpen,
+    isEditorSourceFileSaveDialogOpen,
+    setIsEditorSourceFileSaveDialogOpen,
+    isProjectConstitutionDialogOpen,
+    setIsProjectConstitutionDialogOpen,
+    isProjectRequirementDialogOpen,
+    setIsProjectRequirementDialogOpen,
+    isProjectFeatureSpecificationDialogOpen,
+    setIsProjectFeatureSpecificationDialogOpen,
+    isProjectUserJourneyDialogOpen,
+    setIsProjectUserJourneyDialogOpen,
+    isProjectArchitectureDecisionDialogOpen,
+    setIsProjectArchitectureDecisionDialogOpen,
+    isProjectDesignSystemDialogOpen,
+    setIsProjectDesignSystemDialogOpen,
+    isProjectStyleGuideDialogOpen,
+    setIsProjectStyleGuideDialogOpen,
+    isProjectTestingStrategyDialogOpen,
+    setIsProjectTestingStrategyDialogOpen,
+    isProjectReleaseReadinessDialogOpen,
+    setIsProjectReleaseReadinessDialogOpen,
+    isProjectReadinessObligationsDialogOpen,
+    setIsProjectReadinessObligationsDialogOpen,
+    isProjectSourceRootDialogOpen,
+    setIsProjectSourceRootDialogOpen,
+    isProjectTestingHarnessDialogOpen,
+    setIsProjectTestingHarnessDialogOpen,
+    isProjectQualityGateDialogOpen,
+    setIsProjectQualityGateDialogOpen,
+    isWorkItemSteerDialogOpen,
+    setIsWorkItemSteerDialogOpen,
+    isWorkItemResumeDialogOpen,
+    setIsWorkItemResumeDialogOpen,
+    isWorkItemQuarantineDialogOpen,
+    setIsWorkItemQuarantineDialogOpen,
+    isWorkItemRollbackDialogOpen,
+    setIsWorkItemRollbackDialogOpen,
+    isWorkItemValidationDialogOpen,
+    setIsWorkItemValidationDialogOpen,
+    isIncidentRemediationPlanDialogOpen,
+    setIsIncidentRemediationPlanDialogOpen,
+    newProjectTitleDraft,
+    setNewProjectTitleDraft,
+    editorSourceFilePathDraft,
+    setEditorSourceFilePathDraft,
+    editorSourceDirectoryPathDraft,
+    setEditorSourceDirectoryPathDraft,
+    editorSourceDirectoryListing,
+    setEditorSourceDirectoryListing,
+    editorSourceSaveFileNameDraft,
+    setEditorSourceSaveFileNameDraft,
+    editorSourceSaveDirectoryPathDraft,
+    setEditorSourceSaveDirectoryPathDraft,
+    editorSourceSaveDirectoryListing,
+    setEditorSourceSaveDirectoryListing,
+    projectConstitutionDraft,
+    setProjectConstitutionDraft,
+    projectReleaseReadinessStageDraft,
+    setProjectReleaseReadinessStageDraft,
+    projectReleaseReadinessSignoffStatusDraft,
+    setProjectReleaseReadinessSignoffStatusDraft,
+    projectReleaseReadinessTargetWindowDraft,
+    setProjectReleaseReadinessTargetWindowDraft,
+    projectReleaseReadinessRequiredApproversDraft,
+    setProjectReleaseReadinessRequiredApproversDraft,
+    projectReleaseReadinessObservationPlanDraft,
+    setProjectReleaseReadinessObservationPlanDraft,
+    projectReleaseReadinessOpenRisksDraft,
+    setProjectReleaseReadinessOpenRisksDraft,
+    projectReadinessObligationsDraft,
+    setProjectReadinessObligationsDraft,
+    projectRequirementTitleDraft,
+    setProjectRequirementTitleDraft,
+    projectRequirementSummaryDraft,
+    setProjectRequirementSummaryDraft,
+    projectRequirementPriorityDraft,
+    setProjectRequirementPriorityDraft,
+    projectRequirementStatusDraft,
+    setProjectRequirementStatusDraft,
+    projectFeatureSpecificationTitleDraft,
+    setProjectFeatureSpecificationTitleDraft,
+    projectFeatureSpecificationSummaryDraft,
+    setProjectFeatureSpecificationSummaryDraft,
+    projectFeatureSpecificationAcceptanceCriteriaDraft,
+    setProjectFeatureSpecificationAcceptanceCriteriaDraft,
+    projectFeatureSpecificationStatusDraft,
+    setProjectFeatureSpecificationStatusDraft,
+    projectUserJourneyTitleDraft,
+    setProjectUserJourneyTitleDraft,
+    projectUserJourneySummaryDraft,
+    setProjectUserJourneySummaryDraft,
+    projectUserJourneyActorsDraft,
+    setProjectUserJourneyActorsDraft,
+    projectUserJourneyEntrypointsDraft,
+    setProjectUserJourneyEntrypointsDraft,
+    projectUserJourneyStepsDraft,
+    setProjectUserJourneyStepsDraft,
+    projectUserJourneyOutcomesDraft,
+    setProjectUserJourneyOutcomesDraft,
+    projectUserJourneyEdgeCasesDraft,
+    setProjectUserJourneyEdgeCasesDraft,
+    projectArchitectureDecisionTitleDraft,
+    setProjectArchitectureDecisionTitleDraft,
+    projectArchitectureDecisionSummaryDraft,
+    setProjectArchitectureDecisionSummaryDraft,
+    projectArchitectureDecisionStatusDraft,
+    setProjectArchitectureDecisionStatusDraft,
+    projectArchitectureDecisionDriversDraft,
+    setProjectArchitectureDecisionDriversDraft,
+    projectArchitectureDecisionConsequencesDraft,
+    setProjectArchitectureDecisionConsequencesDraft,
+    projectArchitectureDecisionStackChoicesDraft,
+    setProjectArchitectureDecisionStackChoicesDraft,
+    projectDesignSystemDraft,
+    setProjectDesignSystemDraft,
+    projectStyleGuideDraft,
+    setProjectStyleGuideDraft,
+    projectTestingStrategyRequiredEvidenceDraft,
+    setProjectTestingStrategyRequiredEvidenceDraft,
+    projectTestingStrategySuiteExpectationsDraft,
+    setProjectTestingStrategySuiteExpectationsDraft,
+    projectTestingStrategyMaximumFailedTestsDraft,
+    setProjectTestingStrategyMaximumFailedTestsDraft,
+    projectTestingStrategyMaximumSayTurnLatencySecondsDraft,
+    setProjectTestingStrategyMaximumSayTurnLatencySecondsDraft,
+    projectTestingStrategyMaximumEnvironmentSaveLoadSecondsDraft,
+    setProjectTestingStrategyMaximumEnvironmentSaveLoadSecondsDraft,
+    projectTestingStrategyRequireCoverageDraft,
+    setProjectTestingStrategyRequireCoverageDraft,
+    projectTestingStrategyRequireRecoveryReadyDraft,
+    setProjectTestingStrategyRequireRecoveryReadyDraft,
+    projectSourceRootDraft,
+    setProjectSourceRootDraft,
+    projectTestingHarnessIdDraft,
+    setProjectTestingHarnessIdDraft,
+    projectTestingHarnessInventory,
+    setProjectTestingHarnessInventory,
+    projectQualityGateTitleDraft,
+    setProjectQualityGateTitleDraft,
+    projectQualityGateSummaryDraft,
+    setProjectQualityGateSummaryDraft,
+    projectQualityGateStatusDraft,
+    setProjectQualityGateStatusDraft,
+    projectQualityGateRequiredHarnessIdsDraft,
+    setProjectQualityGateRequiredHarnessIdsDraft,
+    projectQualityGateMinimumLinkedWorkItemsDraft,
+    setProjectQualityGateMinimumLinkedWorkItemsDraft,
+    projectQualityGateMinimumLinkedIncidentsDraft,
+    setProjectQualityGateMinimumLinkedIncidentsDraft,
+    projectQualityGateMaximumFailedTestsDraft,
+    setProjectQualityGateMaximumFailedTestsDraft,
+    projectQualityGateMaximumSayTurnLatencySecondsDraft,
+    setProjectQualityGateMaximumSayTurnLatencySecondsDraft,
+    projectQualityGateMaximumEnvironmentSaveLoadSecondsDraft,
+    setProjectQualityGateMaximumEnvironmentSaveLoadSecondsDraft,
+    projectQualityGateRequireSourceRootsDraft,
+    setProjectQualityGateRequireSourceRootsDraft,
+    projectQualityGateRequireCoverageDraft,
+    setProjectQualityGateRequireCoverageDraft,
+    projectQualityGateRequireRecoveryReadyDraft,
+    setProjectQualityGateRequireRecoveryReadyDraft,
+    workItemSteerPhaseDraft,
+    setWorkItemSteerPhaseDraft,
+    workItemSteerNextStepDraft,
+    setWorkItemSteerNextStepDraft,
+    workItemSteerNoteDraft,
+    setWorkItemSteerNoteDraft,
+    workItemResumeNoteDraft,
+    setWorkItemResumeNoteDraft,
+    workItemQuarantineReasonDraft,
+    setWorkItemQuarantineReasonDraft,
+    workItemRollbackReasonDraft,
+    setWorkItemRollbackReasonDraft,
+    workItemRollbackNoteDraft,
+    setWorkItemRollbackNoteDraft,
+    workItemValidationStatusDraft,
+    setWorkItemValidationStatusDraft,
+    incidentRemediationStatusDraft,
+    setIncidentRemediationStatusDraft,
+    incidentRemediationOwnerDraft,
+    setIncidentRemediationOwnerDraft,
+    incidentRemediationSummaryDraft,
+    setIncidentRemediationSummaryDraft,
+    incidentRemediationActionsDraft,
+    setIncidentRemediationActionsDraft,
+    incidentRemediationValidationDraft,
+    setIncidentRemediationValidationDraft,
+    incidentRemediationBlockersDraft,
+    setIncidentRemediationBlockersDraft
+  } = useProjectWorkspaceState();
+  const {
+    threads,
+    setThreads,
+    selectedThreadId,
+    setSelectedThreadId,
+    selectedThread,
+    setSelectedThread,
+    selectedConversationMessageId,
+    setSelectedConversationMessageId,
+    selectedTurnId,
+    setSelectedTurnId,
+    selectedTurn,
+    setSelectedTurn,
+    conversationSessionTitleDraft,
+    setConversationSessionTitleDraft,
+    isConversationSessionCreateDialogOpen,
+    setIsConversationSessionCreateDialogOpen,
+    isConversationThreadRenameDialogOpen,
+    setIsConversationThreadRenameDialogOpen,
+    conversationThreadRenameDraft,
+    setConversationThreadRenameDraft,
+    conversationThreadRenameTargetId,
+    setConversationThreadRenameTargetId,
+    conversationDraft,
+    setConversationDraft,
+    conversationRecoveryHandoff,
+    setConversationRecoveryHandoff,
+    pendingCalculatorExpressionRequest,
+    setPendingCalculatorExpressionRequest,
+    latestCalculatorResult,
+    setLatestCalculatorResult,
+    conversationAttachments,
+    setConversationAttachments,
+    conversationSendError,
+    setConversationSendError,
+    isSendingConversation,
+    setIsSendingConversation,
+    conversationStream,
+    setConversationStream,
+    pendingConversationApproval,
+    setPendingConversationApproval,
+    pendingConversationComposerFocusThreadId,
+    setPendingConversationComposerFocusThreadId,
+    editorBuffersByProject,
+    setEditorBuffersByProject,
+    selectedEditorBufferIdByProject,
+    setSelectedEditorBufferIdByProject,
+    currentEditorCursorSymbol,
+    setCurrentEditorCursorSymbol,
+    currentEditorCursorSymbolPackage,
+    setCurrentEditorCursorSymbolPackage,
+    currentEditorCursorSymbolHelp,
+    setCurrentEditorCursorSymbolHelp,
+    workspacePackageByProject,
+    setWorkspacePackageByProject,
+    workspaceDraftByProject,
+    setWorkspaceDraftByProject,
+    workspaceResultByProject,
+    setWorkspaceResultByProject,
+    workspaceHistoryByProject,
+    setWorkspaceHistoryByProject,
+    selectedThreadIdRef,
+    stickyConversationThreadIdRef,
+    pendingConversationApprovalRef,
+    currentEditorScopeIdRef,
+    currentEditorBufferIdRef,
+    currentEditorPackageRef,
+    pendingConversationRefreshTimerRef,
+    pendingTranscriptRefreshTimerRef
+  } = useConversationWorkspaceState(UNBOUND_EDITOR_SCOPE_ID);
+  const {
+    runtimeSummary,
+    setRuntimeSummary,
+    runtimeTelemetry,
+    setRuntimeTelemetry,
+    selectedTelemetryProcessId,
+    setSelectedTelemetryProcessId,
+    consoleLogStream,
+    setConsoleLogStream,
+    environmentConsoleLogStream,
+    setEnvironmentConsoleLogStream,
+    hostConsoleLogStream,
+    setHostConsoleLogStream,
+    selectedConsolePlane,
+    setSelectedConsolePlane,
+    selectedConsoleSourceFilter,
+    setSelectedConsoleSourceFilter,
+    selectedConsoleEntryId,
+    setSelectedConsoleEntryId,
+    diagnosticReports,
+    setDiagnosticReports,
+    selectedDiagnosticSourceFilter,
+    setSelectedDiagnosticSourceFilter,
+    selectedDiagnosticReportId,
+    setSelectedDiagnosticReportId,
+    selectedDiagnosticReport,
+    setSelectedDiagnosticReport,
+    runtimeForm,
+    setRuntimeForm,
+    runtimeResult,
+    setRuntimeResult,
+    runtimeRecoveryLaunch,
+    setRuntimeRecoveryLaunch,
+    runtimeInspectorSymbol,
+    setRuntimeInspectorSymbol,
+    runtimeInspectorPackage,
+    setRuntimeInspectorPackage,
+    runtimeInspectionMode,
+    setRuntimeInspectionMode,
+    runtimeInspection,
+    setRuntimeInspection,
+    runtimeEntityDetail,
+    setRuntimeEntityDetail,
+    packageBrowser,
+    setPackageBrowser,
+    selectedPackageName,
+    setSelectedPackageName,
+    isEvaluating,
+    setIsEvaluating,
+    isInspectingRuntime,
+    setIsInspectingRuntime,
+    sourcePreview,
+    setSourcePreview,
+    sourceDraft,
+    setSourceDraft,
+    isEditingSource,
+    setIsEditingSource,
+    isStagingSource,
+    setIsStagingSource,
+    isReloadingSource,
+    setIsReloadingSource,
+    sourceMutationResult,
+    setSourceMutationResult,
+    sourceReloadResult,
+    setSourceReloadResult,
+    approvalRequests,
+    setApprovalRequests,
+    selectedApprovalId,
+    setSelectedApprovalId,
+    selectedApproval,
+    setSelectedApproval,
+    approvalDecision,
+    setApprovalDecision,
+    isDecidingApproval,
+    setIsDecidingApproval,
+    incidents,
+    setIncidents,
+    selectedIncidentId,
+    setSelectedIncidentId,
+    selectedIncident,
+    setSelectedIncident,
+    pendingIncidentFocusId,
+    setPendingIncidentFocusId,
+    workItems,
+    setWorkItems,
+    selectedWorkItemId,
+    setSelectedWorkItemId,
+    selectedWorkItem,
+    setSelectedWorkItem,
+    selectedWorkItemPlan,
+    setSelectedWorkItemPlan,
+    selectedWorkflowRecord,
+    setSelectedWorkflowRecord,
+    pendingWorkItemFocusId,
+    setPendingWorkItemFocusId,
+    environmentEvents,
+    setEnvironmentEvents,
+    selectedEventCursor,
+    setSelectedEventCursor,
+    eventFamilyFilter,
+    setEventFamilyFilter,
+    eventVisibilityFilter,
+    setEventVisibilityFilter,
+    selectedTranscriptSourceFilter,
+    setSelectedTranscriptSourceFilter,
+    selectedTranscriptEntryKey,
+    setSelectedTranscriptEntryKey,
+    isTranscriptEventRefreshActive,
+    setIsTranscriptEventRefreshActive,
+    documentationPages,
+    setDocumentationPages,
+    selectedDocumentationSlug,
+    setSelectedDocumentationSlug,
+    selectedDocumentationPage,
+    setSelectedDocumentationPage,
+    artifacts,
+    setArtifacts,
+    selectedArtifactId,
+    setSelectedArtifactId,
+    selectedArtifact,
+    setSelectedArtifact
+  } = useRuntimeBrowserState();
   const runtimeInspectorSymbolRef = useRef(runtimeInspectorSymbol);
   const runtimeInspectorPackageRef = useRef(runtimeInspectorPackage);
   const runtimeInspectionModeRef = useRef<RuntimeInspectionMode>(runtimeInspectionMode);
-  const selectedThreadIdRef = useRef<string | null>(selectedThreadId);
-  const stickyConversationThreadIdRef = useRef<string | null>(null);
-  const pendingConversationApprovalRef = useRef<{
-    actorMessageId?: string | null;
-    approvalId?: string | null;
-    sessionId?: string | null;
-    threadId: string | null;
-    policyIds: string[];
-  } | null>(pendingConversationApproval);
-  const currentEditorScopeIdRef = useRef<string>(UNBOUND_EDITOR_SCOPE_ID);
-  const currentEditorBufferIdRef = useRef<string | null>(null);
-  const currentEditorPackageRef = useRef<string>("cl-user");
-  const pendingConversationRefreshTimerRef = useRef<number | null>(null);
-  const pendingTranscriptRefreshTimerRef = useRef<number | null>(null);
   const projectWorkspaceLoadRef = useRef(new Map<string, Promise<void>>());
   const projectDetailLoadRef = useRef(new Map<string, Promise<void>>());
   const approvalWorkspaceLoadRef = useRef(new Map<string, Promise<void>>());
@@ -2116,110 +1221,34 @@ export function App() {
   const workWorkspaceLoadRef = useRef(new Map<string, Promise<void>>());
   const workItemDetailLoadRef = useRef(new Map<string, Promise<void>>());
   const environmentFocusRef = useRef<EnvironmentFocusState>(createDefaultEnvironmentFocusState());
-  const desktopPreferencesHydratedRef = useRef(false);
-  const desktopPreferencesPersistTimeoutRef = useRef<number | null>(null);
-  const shellPendingHydrationActionsRef = useRef<ShellLayoutAction[]>([]);
-  const suppressExitDesktopPreferencesFlushRef = useRef(false);
   const startupImageSelectionHandledRef = useRef(false);
-  const [runtimeInspection, setRuntimeInspection] =
-    useState<QueryResultDto<RuntimeInspectionResultDto> | null>(null);
-  const [runtimeEntityDetail, setRuntimeEntityDetail] =
-    useState<QueryResultDto<RuntimeEntityDetailDto> | null>(null);
-  const [packageBrowser, setPackageBrowser] = useState<QueryResultDto<PackageBrowserDto> | null>(null);
-  const [selectedPackageName, setSelectedPackageName] = useState<string>("");
-  const [isEvaluating, setIsEvaluating] = useState(false);
-  const [isInspectingRuntime, setIsInspectingRuntime] = useState(false);
-  const [sourcePreview, setSourcePreview] = useState<QueryResultDto<SourcePreviewDto> | null>(null);
-  const [sourceDraft, setSourceDraft] = useState("");
-  const [isEditingSource, setIsEditingSource] = useState(false);
-  const [isStagingSource, setIsStagingSource] = useState(false);
-  const [isReloadingSource, setIsReloadingSource] = useState(false);
-  const [sourceMutationResult, setSourceMutationResult] =
-    useState<CommandResultDto<SourceMutationResultDto> | null>(null);
-  const [sourceReloadResult, setSourceReloadResult] =
-    useState<CommandResultDto<SourceReloadResultDto> | null>(null);
-  const [approvalRequests, setApprovalRequests] = useState<ApprovalRequestSummaryDto[]>([]);
-  const [selectedApprovalId, setSelectedApprovalId] = useState<string | null>(null);
-  const [selectedApproval, setSelectedApproval] = useState<ApprovalRequestDto | null>(null);
-  const [approvalDecision, setApprovalDecision] = useState<CommandResultDto<ApprovalDecisionDto> | null>(null);
-  const [isDecidingApproval, setIsDecidingApproval] = useState(false);
-  const [incidents, setIncidents] = useState<IncidentSummaryDto[]>([]);
-  const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>(null);
-  const [selectedIncident, setSelectedIncident] = useState<IncidentDetailDto | null>(null);
-  const [pendingIncidentFocusId, setPendingIncidentFocusId] = useState<string | null>(null);
-  const [workItems, setWorkItems] = useState<WorkItemSummaryDto[]>([]);
-  const [selectedWorkItemId, setSelectedWorkItemId] = useState<string | null>(null);
-  const [selectedWorkItem, setSelectedWorkItem] = useState<WorkItemDetailDto | null>(null);
-  const [selectedWorkItemPlan, setSelectedWorkItemPlan] = useState<WorkItemPlanDto | null>(null);
-  const [selectedWorkflowRecord, setSelectedWorkflowRecord] = useState<WorkflowRecordDto | null>(null);
-  const [pendingWorkItemFocusId, setPendingWorkItemFocusId] = useState<string | null>(null);
-  const [environmentEvents, setEnvironmentEvents] = useState<EnvironmentEventDto[]>([]);
-  const [selectedEventCursor, setSelectedEventCursor] = useState<number | null>(null);
-  const [eventFamilyFilter, setEventFamilyFilter] = useState<string>("all");
-  const [eventVisibilityFilter, setEventVisibilityFilter] = useState<string>("all");
-  const [selectedTranscriptSourceFilter, setSelectedTranscriptSourceFilter] = useState<
-    "all" | TranscriptSurfaceEntry["source"]
-  >("all");
-  const [selectedTranscriptEntryKey, setSelectedTranscriptEntryKey] = useState<string | null>(null);
-  const [isTranscriptEventRefreshActive, setIsTranscriptEventRefreshActive] = useState(false);
-  const [documentationPages, setDocumentationPages] = useState<DocumentationPageSummaryDto[]>([]);
-  const [selectedDocumentationSlug, setSelectedDocumentationSlug] = useState<string>("development-model");
-  const [selectedDocumentationPage, setSelectedDocumentationPage] = useState<DocumentationPageDto | null>(null);
-  const activeWorkspaceRef = useRef<WorkspaceId>(activeWorkspace);
-  activeWorkspaceRef.current = activeWorkspace;
-  const richDesktopPreferencesRef = useRef<Partial<DesktopPreferencesDto>>({});
-  richDesktopPreferencesRef.current = {
+  const {
+    desktopPreferencesHydratedRef,
+    desktopPreferencesPersistTimeoutRef,
+    shellPendingHydrationActionsRef,
+    suppressExitDesktopPreferencesFlushRef,
+    activeWorkspaceRef,
+    richDesktopPreferencesRef,
+    persistRichDesktopPreferences,
+    flushRichDesktopPreferences,
+    persistResolvedShellLayout,
+    persistShellDesktopPreferences,
+    applyShellLayoutAction
+  } = useDesktopPreferencesOrchestration({
+    activeWorkspace,
     selectedBrowserDomain,
-    selectedConfigurationSection,
     conversationDraft,
     editorBuffersByProject,
     selectedEditorBufferIdByProject,
+    selectedConfigurationSection,
     workspacePackageByProject,
     workspaceDraftByProject,
     workspaceResultByProject,
-    workspaceHistoryByProject
-  };
-  const persistRichDesktopPreferences = useCallback(async () => {
-    await window.sbclAgentDesktop.desktop.setDesktopPreferences({
-      lastWorkspace: activeWorkspaceRef.current,
-      ...richDesktopPreferencesRef.current
-    });
-  }, []);
-  const flushRichDesktopPreferences = useCallback(async () => {
-    if (desktopPreferencesPersistTimeoutRef.current !== null) {
-      window.clearTimeout(desktopPreferencesPersistTimeoutRef.current);
-      desktopPreferencesPersistTimeoutRef.current = null;
-    }
-    await persistRichDesktopPreferences();
-  }, [persistRichDesktopPreferences]);
-  const persistResolvedShellLayout = useCallback(async (nextShellLayout: ShellLayoutState) => {
-    shellLayoutRef.current = nextShellLayout;
-    await window.sbclAgentDesktop.desktop.setDesktopPreferences(
-      {
-        lastWorkspace: activeWorkspaceRef.current,
-        ...shellLayoutToDesktopPreferencesPatch(nextShellLayout)
-      }
-    );
-  }, []);
-  const persistShellDesktopPreferences = useCallback(async () => {
-    await persistResolvedShellLayout(shellLayoutRef.current);
-  }, [persistResolvedShellLayout]);
-  const applyShellLayoutAction = useCallback((action: ShellLayoutAction): ShellLayoutState => {
-    if (!desktopPreferencesHydratedRef.current) {
-      shellPendingHydrationActionsRef.current.push(action);
-    }
-    const nextShellLayout = shellLayoutReducer(shellLayoutRef.current, action);
-    shellLayoutRef.current = nextShellLayout;
-    dispatchShellLayout(action);
-    return nextShellLayout;
-  }, []);
+    workspaceHistoryByProject,
+    shellLayoutRef,
+    dispatchShellLayout
+  });
   const effectiveEnvironmentId = summary?.environmentId ?? binding?.environmentId ?? null;
-  const desktopWindows = desktopSpaces[activeDesktopId] ?? [];
-  const focusedDesktopWindowId =
-    desktopFocusById[activeDesktopId] ?? desktopWindows[0]?.id ?? "window:control-panel";
-  const desktopWindowZCounter = desktopWindowZCounterById[activeDesktopId] ?? 3;
-  const activeDesktopZoom = desktopZoomById[activeDesktopId] ?? 1;
-  const suppressedDesktopWindowIds = suppressedDesktopWindowIdsById[activeDesktopId] ?? [];
   const desktopDescriptors = Object.entries(desktopLabelsById).map(([id, label]) => ({
     id,
     label,
@@ -2328,6 +1357,28 @@ export function App() {
           return current;
         }
         return actorFlowPendingApproval;
+      });
+      return;
+    }
+
+    const orchestrationPendingApproval = resolveOrchestrationApprovalContext(selectedThreadId);
+    if (orchestrationPendingApproval?.actorMessageId || orchestrationPendingApproval?.approvalId) {
+      setPendingConversationApproval((current) => {
+        if (
+          current?.actorMessageId === orchestrationPendingApproval.actorMessageId &&
+          current?.approvalId === orchestrationPendingApproval.approvalId &&
+          current?.sessionId === orchestrationPendingApproval.sessionId &&
+          current?.threadId === orchestrationPendingApproval.threadId
+        ) {
+          return current;
+        }
+        return {
+          actorMessageId: orchestrationPendingApproval.actorMessageId,
+          approvalId: orchestrationPendingApproval.approvalId,
+          sessionId: orchestrationPendingApproval.sessionId,
+          threadId: orchestrationPendingApproval.threadId,
+          policyIds: []
+        };
       });
       return;
     }
@@ -2570,62 +1621,24 @@ export function App() {
     }
 
     for (const entry of results) {
-      const target = canonicalDesktopTaskCoordinate(firstStringValue(entry.target));
-      const operation = canonicalDesktopTaskCoordinate(firstStringValue(entry.operation));
-      const status = canonicalDesktopTaskCoordinate(firstStringValue(entry.status));
-      if (target !== "editor" || operation !== "append-text" || status !== "completed") {
+      const completedAppend = extractCompletedEditorAppendFromDesktopTaskResult({
+        entry,
+        fallbackScopeId: currentEditorScopeIdRef.current,
+        fallbackBufferId: currentEditorBufferIdRef.current,
+        fallbackPackageName: currentEditorPackageRef.current
+      });
+      if (!completedAppend?.text) {
         continue;
       }
-
-      const result = asRecord(entry.result);
-      const invocationResult = asRecord(result.invocationResult);
-      const metadata = asRecord(result.metadata);
-      const text = firstStringValue(invocationResult.text, result.text, metadata.text);
-      const scopeId = firstStringValue(
-        invocationResult.scopeId,
-        invocationResult.scope_id,
-        result.scopeId,
-        result.scope_id,
-        metadata.scopeId,
-        metadata.scope_id,
-        currentEditorScopeIdRef.current
+      applyEditorBufferMutation(
+        "append",
+        completedAppend.text,
+        completedAppend.scopeId,
+        completedAppend.bufferId,
+        completedAppend.packageName
       );
-      const bufferId = firstStringValue(
-        invocationResult.bufferId,
-        invocationResult.buffer_id,
-        result.bufferId,
-        result.buffer_id,
-        metadata.bufferId,
-        metadata.buffer_id,
-        currentEditorBufferIdRef.current
-      );
-      const packageName = firstStringValue(
-        invocationResult.packageName,
-        invocationResult.package_name,
-        result.packageName,
-        result.package_name,
-        metadata.packageName,
-        metadata.package_name,
-        currentEditorPackageRef.current
-      );
-      const actorMessageId = firstStringValue(
-        entry.actorMessageId,
-        asRecord(entry.actorMessage).id,
-        result.actorMessageId,
-        asRecord(result.actorMessage).id
-      );
-      const pendingActionId = firstStringValue(
-        entry.pendingActionId,
-        result.pendingActionId,
-        metadata.pendingActionId,
-        metadata.pending_action_id
-      );
-      if (text) {
-        applyEditorBufferMutation("append", text, scopeId, bufferId, packageName);
-        const dedupeKey = actorMessageId ?? pendingActionId ?? text;
-        if (dedupeKey) {
-          appliedActorFlowEditorMutationKeysRef.current.add(dedupeKey);
-        }
+      if (completedAppend.dedupeKey) {
+        appliedActorFlowEditorMutationKeysRef.current.add(completedAppend.dedupeKey);
       }
     }
   }
@@ -2639,47 +1652,11 @@ export function App() {
       const byId = new Map(current.map((record) => [record.id, record] as const));
 
       for (const summary of summaries) {
-        const id = firstStringValue(summary.id);
-        if (!id) {
+        const nextRecord = buildDesktopTaskRecordFromSummary(summary);
+        if (!nextRecord) {
           continue;
         }
-
-        const nextRecord: DesktopTaskRecordDto = {
-          id,
-          protocolVersion: typeof summary.protocolVersion === "number" ? summary.protocolVersion : null,
-          requestId: firstStringValue(summary.requestId),
-          requester: firstStringValue(summary.requester),
-          target: firstStringValue(summary.target) ?? "unknown",
-          operation: firstStringValue(summary.operation) ?? "unknown",
-          capability: firstStringValue(summary.capability),
-          backendKind: firstStringValue(summary.backendKind),
-          backendRef: firstStringValue(summary.backendRef),
-          status: firstStringValue(summary.status) ?? "unknown",
-          governanceStatus: firstStringValue(summary.governanceStatus),
-          approvalStatus: firstStringValue(summary.approvalStatus),
-          retryPolicy: asRecord(summary.retryPolicy),
-          retryCount: typeof summary.retryCount === "number" ? summary.retryCount : null,
-          maxAttempts: typeof summary.maxAttempts === "number" ? summary.maxAttempts : null,
-          retryableP: typeof summary.retryableP === "boolean" ? summary.retryableP : null,
-          idempotencyKey: firstStringValue(summary.idempotencyKey),
-          threadId: firstStringValue(summary.threadId),
-          turnId: firstStringValue(summary.turnId),
-          conversationOperationId: firstStringValue(summary.conversationOperationId),
-          actorMessageId: firstStringValue(summary.actorMessageId, asRecord(summary.actorMessage).id),
-          actorSlice: firstStringValue(summary.actorSlice),
-          actorMessage: asRecord(summary.actorMessage),
-          requestMetadata: asRecord(summary.requestMetadata),
-          createdAt: firstStringValue(summary.createdAt),
-          approvedAt: firstStringValue(summary.approvedAt),
-          startedAt: firstStringValue(summary.startedAt),
-          completedAt: firstStringValue(summary.completedAt),
-          lastError: asRecord(summary.lastError),
-          resolution: asRecord(summary.resolution),
-          result: asRecord(summary.result),
-          metadata: asRecord(summary.metadata)
-        };
-
-        byId.set(id, nextRecord);
+        byId.set(nextRecord.id, nextRecord);
       }
 
       return Array.from(byId.values()).sort((left, right) =>
@@ -2858,9 +1835,6 @@ export function App() {
     runtimeInspectionModeRef.current = value;
     setRuntimeInspectionMode(value);
   }
-  const [artifacts, setArtifacts] = useState<ArtifactSummaryDto[]>([]);
-  const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
-  const [selectedArtifact, setSelectedArtifact] = useState<ArtifactDetailDto | null>(null);
   const currentProjectReplSessions = currentProjectId ? replSessionsByProject[currentProjectId] ?? [] : [];
   const currentReplSessionId = currentProjectId ? currentReplSessionIdByProject[currentProjectId] ?? currentProjectReplSessions[0]?.sessionId ?? null : null;
   const currentProject = projects.find((project) => project.projectId === currentProjectId) ?? null;
@@ -3575,295 +2549,140 @@ export function App() {
     .sort((left, right) => Number(Boolean(right.recommended)) - Number(Boolean(left.recommended)) || right.score - left.score);
   const recommendedDockJumpTarget = rankedDockJumpTargets.find((target) => target.recommended) ?? null;
   const dashboardActionQueue = useMemo<ActionQueueItem[]>(() => {
-    const items: ActionQueueItem[] = [];
-    const hasAwaitingApprovals = prioritizedApprovalRequests.some((item) => item.state === "awaiting");
-    const hasOpenIncidents = prioritizedIncidents.some((item) => item.state === "open");
-    const highPressurePresent =
-      status?.runtimeState === "recovering" || hasAwaitingApprovals || hasOpenIncidents || prioritizedWorkItems.some((item) => item.state === "blocked" || item.state === "quarantined");
-
-    if (status?.runtimeState === "recovering") {
-      items.push({
-        key: "runtime:recovering",
-        objectType: "Runtime",
-        objectId: runtimeSummary?.runtimeId ?? "runtime",
-        title: "Recover runtime listener posture",
-        timestamp: status.lastUpdatedAt,
-        stateLabel: status.runtimeState,
-        whyNow: "The runtime is recovering and should be stabilized before normal mutation continues.",
-        effectSummary: "Opening the listener lets you inspect runtime state, divergence posture, and pending mutation pressure.",
-        references: [runtimeSummary?.currentPackage ?? "runtime", status.workflowState],
-        tone: "danger",
-        score: 145,
-        priorityLabel: "High",
-        destinationWorkspace: "runtime",
-        destinationLabel: "Browser > Runtime > Listener",
-        actionLabel: "Open listener",
-        rankReason: "The runtime itself is unstable, so it outranks downstream work."
-      });
-    }
-
-    for (const approval of prioritizedApprovalRequests
-      .filter((item) => item.state === "awaiting" || item.state === "denied")
-      .slice(0, 4)) {
-      const tone = toneForApprovalState(approval.state);
-      items.push({
-        key: `approval:${approval.requestId}`,
-        objectType: "Approval",
-        objectId: approval.requestId,
-        title: approval.title,
-        timestamp: approval.createdAt,
-        stateLabel: approval.state,
-        whyNow:
-          approval.state === "awaiting"
-            ? "Execution is paused until this approval is explicitly decided."
-            : "This approval was denied and may require a redirected execution path.",
-        effectSummary:
-          approval.state === "awaiting"
-            ? "Opening this approval lets you review the governed request and either unblock or deny the action."
-            : "Opening this approval lets you review the denial context and decide how work should be redirected.",
-        references: [approval.requestId, approval.summary],
-        tone,
-        score: approvalRecommendationScore(approval),
-        priorityLabel: priorityLabelForTone(tone),
-        destinationWorkspace: "runtime",
-        destinationLabel: "Actions > Actions Board",
-        actionLabel: approval.state === "awaiting" ? "Review approval" : "Inspect denial",
-        rankReason:
-          approval.state === "awaiting"
-            ? "Approvals are canonical blocking objects, so they outrank conversation symptoms of the same wait."
-            : "A denied approval changes the execution path and should be clarified before adjacent work continues."
-      });
-    }
-
-    for (const incident of prioritizedIncidents.filter((item) => item.state !== "resolved").slice(0, 4)) {
-      const tone = toneForIncidentSeverity(incident.severity);
-      items.push({
-        key: `incident:${incident.incidentId}`,
-        objectType: "Recovery",
-        objectId: incident.incidentId,
-        title: incident.title,
-        timestamp: incident.updatedAt,
-        stateLabel: incident.state,
-        whyNow:
-          incident.state === "open"
-            ? "This incident is still open and is part of the dominant recovery pressure."
-            : "Recovery is active and still needs supervision before execution fully resumes.",
-        effectSummary: "Opening this recovery record lets you inspect incident state, evidence, and next recovery context.",
-        references: [incident.severity, incident.incidentId],
-        tone,
-        score: incidentRecommendationScore(incident),
-        priorityLabel: priorityLabelForTone(tone),
-        destinationWorkspace: "incidents",
-        destinationLabel: "Actions > Actions Board",
-        actionLabel: "Open recovery",
-        rankReason:
-          incident.state === "open"
-            ? "Open incidents are the canonical recovery objects and outrank affected work that merely reflects the same failure."
-            : "Active recovery remains higher priority than secondary execution cleanup."
-      });
-    }
-
-    for (const workItem of prioritizedWorkItems
-      .filter((item) => {
-        const actionable =
-          item.state === "blocked" ||
-          item.state === "quarantined" ||
-          item.state === "waiting" ||
-          item.validationBurden === "pending" ||
-          item.reconciliationBurden === "required";
-        if (!actionable) {
-          return false;
-        }
-        if (
-          (item.state === "blocked" || item.state === "quarantined" || item.state === "waiting") &&
-          item.incidentCount > 0 &&
-          hasOpenIncidents
-        ) {
-          return false;
-        }
-        return true;
-      })
-      .slice(0, 6)) {
-      const tone = toneForWorkState(workItem.state);
-      const normalizedScore = Math.max(
-        20,
-        workItemRecommendationScore(workItem) -
-          (workItem.state === "waiting" && hasAwaitingApprovals ? 20 : 0) -
-          ((workItem.state === "blocked" || workItem.state === "quarantined") && workItem.incidentCount > 0 && hasOpenIncidents ? 18 : 0)
-      );
-      items.push({
-        key: `work:${workItem.workItemId}`,
-        objectType: "Work",
-        objectId: workItem.workItemId,
-        title: workItem.title,
-        timestamp: workItem.updatedAt,
-        stateLabel: workItem.state,
-        whyNow:
-          workItem.waitingReason ??
-          (workItem.validationBurden === "pending"
-            ? "Validation is still pending for this work item."
-            : workItem.reconciliationBurden === "required"
-              ? "Reconciliation is still required for this work item."
-              : "This work item remains a governed execution obligation."),
-        effectSummary: "Opening this work item shows its workflow record, blocking context, and closure obligations.",
-        references: [
-          workItem.workItemId,
-          `${workItem.approvalCount} approvals`,
-          `${workItem.incidentCount} incidents`,
-          `${workItem.artifactCount} artifacts`
-        ],
-        tone,
-        score: normalizedScore,
-        priorityLabel: priorityLabelForTone(tone),
-        destinationWorkspace: "runtime",
-        destinationLabel: "Actions > Actions Board",
-        actionLabel: "Open work item",
-        rankReason:
-          workItem.state === "waiting" && hasAwaitingApprovals
-            ? "This work item is still important, but the approval causing the wait is the more direct object to act on first."
-            : (workItem.state === "blocked" || workItem.state === "quarantined") && workItem.incidentCount > 0 && hasOpenIncidents
-              ? "This work item reflects recovery pressure, but the incident itself is the more direct recovery target."
-              : "This work item is the canonical governed execution obligation."
-      });
-    }
-
-    for (const taskRecord of desktopTaskRecords
-      .filter(
-        (record) =>
-          record.status === "awaiting-approval" ||
-          record.status === "retryable-failure" ||
-          record.status === "retrying" ||
-          record.status === "failed"
-      )
-      .slice(0, 6)) {
-      const tone =
-        taskRecord.status === "failed" || taskRecord.status === "retryable-failure"
-          ? "danger"
-          : "warning";
-      items.push({
-        key: `task:${taskRecord.id}`,
-        objectType: "Task",
-        objectId: taskRecord.id,
-        title: `${taskRecord.target} / ${taskRecord.operation}`,
-        timestamp: taskRecord.completedAt ?? taskRecord.startedAt ?? taskRecord.createdAt,
-        stateLabel: taskRecord.status,
-        whyNow:
-          taskRecord.approvalStatus === "awaiting-approval"
-            ? "A governed task is staged and waiting for approval before execution can continue."
-            : taskRecord.status === "retryable-failure"
-              ? "A governed task failed in a retryable way and may need operator attention before replay."
-              : taskRecord.status === "retrying"
-                ? "A governed task is actively retrying under protocol retry policy."
-                : "A governed task failed and should be inspected directly in the governed task ledger.",
-        effectSummary:
-          "Opening governance lets you inspect the task record, its approval posture, retry state, and recorded result or error.",
-        references: [
-          taskRecord.id,
-          taskRecord.capability ?? "capability-unspecified",
-          taskRecord.approvalStatus ?? "approval-unspecified"
-        ],
-        tone,
-        score: taskRecord.approvalStatus === "awaiting-approval" ? 118 : taskRecord.status === "retrying" ? 92 : 104,
-        priorityLabel: priorityLabelForTone(tone),
-        destinationWorkspace: "browser",
-        destinationLabel: "Browser > Governance",
-        actionLabel: "Open governed task",
-        rankReason: "Governed task records are now first-class operator objects, not only indirect consequences of approvals or work items."
-      });
-    }
-
-    for (const thread of prioritizedThreads.filter(
-      (item) =>
-        item.state === "blocked" ||
-        item.state === "waiting" ||
-        item.latestTurnState === "awaiting_approval" ||
-        item.latestTurnState === "interrupted" ||
-        item.latestTurnState === "failed"
-    ).slice(0, 6)) {
-      const tone =
-        thread.latestTurnState === "failed"
-          ? "danger"
-          : thread.latestTurnState === "awaiting_approval" || thread.latestTurnState === "interrupted"
-            ? "warning"
-            : toneForThreadState(thread.state);
-      const normalizedScore = Math.max(
-        15,
-        threadRecommendationScore(thread) -
-          (thread.latestTurnState === "awaiting_approval" && hasAwaitingApprovals ? 26 : 0) -
-          ((thread.latestTurnState === "failed" || thread.latestTurnState === "interrupted") && hasOpenIncidents ? 10 : 0)
-      );
-      items.push({
-        key: `thread:${thread.threadId}`,
-        objectType: "Thread",
-        objectId: thread.threadId,
-        title: thread.title,
-        timestamp: thread.latestActivityAt,
-        stateLabel: thread.latestTurnState,
-        whyNow: primaryThreadRecommendationReason(thread),
-        effectSummary: "Opening this thread lets you resume the governed conversation in its exact retained context.",
-        references: [thread.threadId, thread.state, ...thread.attentionFlags.slice(0, 2)],
-        tone,
-        score: normalizedScore,
-        priorityLabel: priorityLabelForTone(tone),
-        destinationWorkspace: "conversations",
-        destinationLabel: "Conversations > Threads",
-        actionLabel: "Resume thread",
-        rankReason:
-          thread.latestTurnState === "awaiting_approval" && hasAwaitingApprovals
-            ? "The thread matters, but the approval record is the more direct object to act on first."
-            : thread.latestTurnState === "failed" || thread.latestTurnState === "interrupted"
-              ? "This thread remains an important conversational recovery surface."
-              : "This thread is the strongest retained conversation context for continued work."
-      });
-    }
-
-    if (!highPressurePresent) {
-      for (const artifact of queueArtifacts.slice(0, 2)) {
-      items.push({
-        key: `artifact:${artifact.artifactId}`,
-        objectType: "Artifact",
-        objectId: artifact.artifactId,
-        title: artifact.title,
-        timestamp: artifact.updatedAt,
-        stateLabel: artifact.kind,
-        whyNow: "Recent evidence should remain directly reviewable while the environment is under active governance.",
-        effectSummary: "Opening this artifact lets you inspect provenance, observations, and producing context.",
-        references: [artifact.artifactId, artifact.updatedAt],
-        tone: "active",
-        score: artifactRecommendationScore(artifact),
-        priorityLabel: "Low",
-        destinationWorkspace: "artifacts",
-        destinationLabel: "Actions > Actions Board",
-        actionLabel: "Review artifact",
-        rankReason: "Artifacts are included when the queue is otherwise calm so durable evidence remains reviewable."
-      });
-    }
-    }
-
-    return compressActionQueue(
-      items.sort((left, right) => right.score - left.score || attentionToneWeight(right.tone) - attentionToneWeight(left.tone))
-    )
-      .slice(0, 24);
-  }, [desktopTaskRecords, prioritizedApprovalRequests, prioritizedIncidents, prioritizedThreads, prioritizedWorkItems, queueArtifacts, runtimeSummary?.currentPackage, runtimeSummary?.runtimeId, status?.runtimeState, status?.workflowState]);
+    return buildDashboardActionQueue({
+      desktopTaskRecords,
+      orchestrationInbox,
+      prioritizedApprovalRequests,
+      prioritizedIncidents,
+      prioritizedThreads,
+      prioritizedWorkItems,
+      queueArtifacts,
+      runtimeSummary,
+      status
+    });
+  }, [desktopTaskRecords, orchestrationInbox, prioritizedApprovalRequests, prioritizedIncidents, prioritizedThreads, prioritizedWorkItems, queueArtifacts, runtimeSummary?.currentPackage, runtimeSummary?.runtimeId, status?.runtimeState, status?.workflowState]);
+  const browserWorkspaceProps = useMemo(
+    () => ({
+      approvalRequests,
+      orchestrationInbox,
+      artifacts,
+      browseRuntimeEntity,
+      conversationDraft,
+      environmentId: effectiveEnvironmentId,
+      environmentFocus,
+      incidents,
+      inspectRuntimeSymbol,
+      isDecidingApproval,
+      isEditingSource,
+      isInspectingRuntime,
+      isReloadingSource,
+      isStagingSource,
+      loadSourcePreview,
+      consoleLogStream,
+      desktopTaskRecords,
+      diagnosticReports,
+      navigateToWorkspace: (workspaceId: WorkspaceId) => {
+        void navigateToWorkspace(workspaceId);
+      },
+      packageBrowser,
+      parenDepthColors: lispParenColors,
+      reloadSourceFile,
+      runtimeEntityDetail,
+      runtimeForm,
+      runtimeInspection,
+      runtimeInspectionMode,
+      runtimeInspectorPackage,
+      runtimeInspectorSymbol,
+      runtimeSummary,
+      runtimeTelemetry,
+      selectedDomain: selectedBrowserDomain,
+      selectedTelemetryProcessId,
+      selectedPackageName,
+      selectedThread,
+      selectedThreadId,
+      setConversationDraft,
+      setIsEditingSource,
+      setRuntimeForm,
+      setRuntimeInspectionMode: updateRuntimeInspectionMode,
+      setRuntimeInspectorPackage: updateRuntimeInspectorPackage,
+      setRuntimeInspectorSymbol: updateRuntimeInspectorSymbol,
+      setSelectedConsolePlane,
+      setSelectedConsoleSourceFilter,
+      setSelectedConsoleEntryId,
+      setSelectedDiagnosticSourceFilter,
+      setSelectedDiagnosticReportId,
+      setSelectedPackageName,
+      setSelectedTelemetryProcessId,
+      setSelectedThreadId: selectConversationThread,
+      setSourceDraft,
+      sourceDraft,
+      sourceMutationResult,
+      sourcePreview,
+      sourceReloadResult,
+      stageSourceChange,
+      selectedConsolePlane,
+      selectedConsoleSourceFilter,
+      documentationPages,
+      selectedDocumentationSlug,
+      selectedConsoleEntryId,
+      selectedDiagnosticSourceFilter,
+      selectedDiagnosticReport,
+      selectedDiagnosticReportId,
+      onOpenApprovalRequest: openApprovalRequest,
+      onSubmitApprovalDecision: (requestId: string, decision: "approve" | "deny") => {
+        void submitApprovalDecisionForRequest(requestId, decision);
+      },
+      openInspectorSurface: () => navigateToDesktopPanel("inspector"),
+      loadDocumentationPage,
+      threads,
+      workItems
+    }),
+    [approvalRequests, orchestrationInbox, artifacts, browseRuntimeEntity, conversationDraft, effectiveEnvironmentId, environmentFocus, incidents, inspectRuntimeSymbol, isDecidingApproval, isEditingSource, isInspectingRuntime, isReloadingSource, isStagingSource, loadSourcePreview, consoleLogStream, desktopTaskRecords, diagnosticReports, navigateToWorkspace, packageBrowser, lispParenColors, reloadSourceFile, runtimeEntityDetail, runtimeForm, runtimeInspection, runtimeInspectionMode, runtimeInspectorPackage, runtimeInspectorSymbol, runtimeSummary, runtimeTelemetry, selectedBrowserDomain, selectedTelemetryProcessId, selectedPackageName, selectedThread, selectedThreadId, setConversationDraft, setIsEditingSource, setRuntimeForm, updateRuntimeInspectionMode, updateRuntimeInspectorPackage, updateRuntimeInspectorSymbol, setSelectedConsolePlane, setSelectedConsoleSourceFilter, setSelectedConsoleEntryId, setSelectedDiagnosticSourceFilter, setSelectedDiagnosticReportId, setSelectedPackageName, setSelectedTelemetryProcessId, setSelectedThreadId, setSourceDraft, sourceDraft, sourceMutationResult, sourcePreview, sourceReloadResult, stageSourceChange, selectedConsolePlane, selectedConsoleSourceFilter, documentationPages, selectedDocumentationSlug, selectedConsoleEntryId, selectedDiagnosticSourceFilter, selectedDiagnosticReport, selectedDiagnosticReportId, openApprovalRequest, submitApprovalDecisionForRequest, loadDocumentationPage, threads, workItems]
+  );
+  const projectsWorkspaceProps = useMemo(
+    () => ({
+      approvalRequests,
+      orchestrationInbox,
+      currentProjectId,
+      isDecidingApproval,
+      onAddArchitectureDecision: openProjectArchitectureDecisionDialog,
+      onAddFeatureSpecification: openProjectFeatureSpecificationDialog,
+      onAddQualityGate: openProjectQualityGateDialog,
+      onAddRequirement: openProjectRequirementDialog,
+      onAddSourceRoot: openProjectSourceRootDialog,
+      onAddUserJourney: openProjectUserJourneyDialog,
+      onBindTestingHarness: () => void openProjectTestingHarnessDialog(),
+      onEditDesignSystem: openProjectDesignSystemDialog,
+      onEditStyleGuide: openProjectStyleGuideDialog,
+      onEditTestingStrategy: () => void openProjectTestingStrategyDialog(),
+      onEditReleaseReadiness: openProjectReleaseReadinessDialog,
+      onEditReadinessObligations: openProjectReadinessObligationsDialog,
+      onCreateProjectDialog: () => setIsProjectCreateDialogOpen(true),
+      onEditConstitution: openProjectConstitutionDialog,
+      onOpenProjectDialog: () => setIsProjectOpenDialogOpen(true),
+      onOpenApprovalRequest: openApprovalRequest,
+      onSelectProject: setSelectedGovernedProjectId,
+      onSubmitApprovalDecision: (requestId: string, decision: "approve" | "deny") => {
+        void submitApprovalDecisionForRequest(requestId, decision);
+      },
+      openInspectorSurface: () => navigateToDesktopPanel("inspector"),
+      projectSummaries: projectListResult?.data.projects ?? [],
+      selectedProjectDetail,
+      selectedProjectId: selectedGovernedProjectId,
+      workItems
+    }),
+    [approvalRequests, orchestrationInbox, currentProjectId, isDecidingApproval, openProjectArchitectureDecisionDialog, openProjectFeatureSpecificationDialog, openProjectQualityGateDialog, openProjectRequirementDialog, openProjectSourceRootDialog, openProjectUserJourneyDialog, openProjectTestingHarnessDialog, openProjectDesignSystemDialog, openProjectStyleGuideDialog, openProjectTestingStrategyDialog, openProjectReleaseReadinessDialog, openProjectReadinessObligationsDialog, setIsProjectCreateDialogOpen, openProjectConstitutionDialog, setIsProjectOpenDialogOpen, openApprovalRequest, setSelectedGovernedProjectId, submitApprovalDecisionForRequest, projectListResult?.data.projects, selectedProjectDetail, selectedGovernedProjectId, workItems]
+  );
   useEffect(() => {
-    async function initializeEnvironmentLifecycle(): Promise<void> {
-      try {
-        const registryResult = await window.sbclAgentDesktop.host.getEnvironmentImageRegistry();
-        setEnvironmentImageRegistry(registryResult.data);
-        if (registryResult.data.images.length > 0 && !startupImageSelectionHandledRef.current) {
-          setEnvironmentSaveAsNameDraft(registryResult.data.currentImageName ?? "");
-          setIsEnvironmentImageChooserOpen(true);
-          return;
-        }
-        await loadInitialState();
-      } catch (error) {
-        setErrorMessage(
-          error instanceof Error ? error.message : "Failed to initialize environment images."
-        );
-      }
-    }
-
-    void initializeEnvironmentLifecycle();
+    void initializeEnvironmentLifecycle({
+      startupImageSelectionHandledRef,
+      setEnvironmentImageRegistry,
+      setEnvironmentSaveAsNameDraft,
+      setIsEnvironmentImageChooserOpen,
+      refreshEnvironmentImageRegistry,
+      loadInitialState,
+      setErrorMessage
+    });
   }, []);
 
   useEffect(() => {
@@ -4307,6 +3126,157 @@ export function App() {
   }, []);
 
   const resolvedTheme: ResolvedTheme = themePreference === "system" ? systemTheme : themePreference;
+  const configurationWorkspaceProps = useMemo(
+    () => ({
+      configurationSections,
+      lispParenColors,
+      normalizeParenDepthColors,
+      resolvedTheme,
+      selectedSection: selectedConfigurationSection,
+      setSelectedSection: setSelectedConfigurationSection,
+      systemTheme,
+      themePreference,
+      tooltipScalePercent,
+      controlIconScalePercent,
+      dockIconScalePercent,
+      conversationTextScalePercent,
+      sourceCodeTextScalePercent,
+      providerSummary,
+      packageManagementSummary,
+      desktopTaskManifests,
+      desktopTaskRecords,
+      desktopTaskActorTrace,
+      desktopTaskDeadLetters,
+      mcpServerConfigs
+    }),
+    [configurationSections, lispParenColors, normalizeParenDepthColors, resolvedTheme, selectedConfigurationSection, setSelectedConfigurationSection, systemTheme, themePreference, tooltipScalePercent, controlIconScalePercent, dockIconScalePercent, conversationTextScalePercent, sourceCodeTextScalePercent, providerSummary, packageManagementSummary, desktopTaskManifests, desktopTaskRecords, desktopTaskActorTrace, desktopTaskDeadLetters, mcpServerConfigs]
+  );
+  const operateWorkspaceProps = useMemo(
+    () => ({
+      actionQueue: dashboardActionQueue,
+      approvalRequests,
+      artifacts,
+      incidents,
+      isDecidingApproval,
+      navigateToConversationSection,
+      navigateToEvidenceSection,
+      navigateToExecutionSection,
+      navigateToRecoverySection,
+      openApprovalRequest,
+      orchestrationInbox,
+      selectedApproval,
+      selectedApprovalId,
+      selectedArtifactId,
+      selectedIncidentId,
+      status,
+      summary,
+      selectedWorkItemId,
+      submitApprovalDecisionForRequest: (requestId: string, decision: "approve" | "deny") => {
+        void submitApprovalDecisionForRequest(requestId, decision);
+      },
+      workItems
+    }),
+    [dashboardActionQueue, approvalRequests, artifacts, incidents, isDecidingApproval, navigateToConversationSection, navigateToEvidenceSection, navigateToExecutionSection, navigateToRecoverySection, openApprovalRequest, orchestrationInbox, selectedApproval, selectedApprovalId, selectedArtifactId, selectedIncidentId, status, summary, selectedWorkItemId, submitApprovalDecisionForRequest, workItems]
+  );
+  const executionWorkspaceProps = useMemo(
+    () => ({
+      actorSystemPanel: desktopTaskActorSystemPanel,
+      approvalRequests,
+      createReplSession: handleCreateReplSession,
+      currentReplSessionId,
+      evaluateRuntimeForm,
+      isEvaluating,
+      inspectRuntimeSymbol,
+      isInspectingRuntime,
+      replSessionTitleDraft,
+      replSessions: currentProjectReplSessions,
+      runtimeForm,
+      runtimeInspection,
+      runtimeInspectionMode,
+      runtimeInspectorPackage,
+      runtimeInspectorSymbol,
+      runtimeResult,
+      runtimeSummary,
+      orchestrationFocus,
+      orchestrationSnapshot,
+      planVerification,
+      selectedWorkflowRecord,
+      selectedWorkItem,
+      selectedWorkItemId,
+      setReplSessionTitleDraft,
+      setRuntimeForm,
+      setRuntimeInspectionMode: updateRuntimeInspectionMode,
+      setRuntimeInspectorPackage: updateRuntimeInspectorPackage,
+      setRuntimeInspectorSymbol: updateRuntimeInspectorSymbol,
+      switchReplSession: handleSwitchReplSession,
+      openInspectorSurface: () => navigateToDesktopPanel("inspector"),
+      workItems
+    }),
+    [desktopTaskActorSystemPanel, approvalRequests, handleCreateReplSession, currentReplSessionId, evaluateRuntimeForm, isEvaluating, inspectRuntimeSymbol, isInspectingRuntime, replSessionTitleDraft, currentProjectReplSessions, runtimeForm, runtimeInspection, runtimeInspectionMode, runtimeInspectorPackage, runtimeInspectorSymbol, runtimeResult, runtimeSummary, orchestrationFocus, orchestrationSnapshot, planVerification, selectedWorkflowRecord, selectedWorkItem, selectedWorkItemId, setReplSessionTitleDraft, setRuntimeForm, updateRuntimeInspectionMode, updateRuntimeInspectorPackage, updateRuntimeInspectorSymbol, handleSwitchReplSession, workItems]
+  );
+  const incidentsWorkspaceProps = useMemo(
+    () => ({
+      clearPendingIncidentFocusId: () => setPendingIncidentFocusId(null),
+      environmentFocusLabel,
+      incidents,
+      navigateToLinkedEntity,
+      openIncidentRemediationPlanDialog,
+      openConversationDraft: () =>
+        openConversationDraftWithFocusOverride({
+          ...createDefaultEnvironmentFocusState(),
+          kind: "governance-incident",
+          sourceWorkspace: "incidents",
+          sourceSurface: "incidents",
+          incidentId: selectedIncidentId
+        }),
+      openConversationDraftForRestartSuggestion: (restartLabel: string) =>
+        openConversationDraftForIncidentRestartSuggestion(restartLabel),
+      openListenerWorkbenchForRestartSuggestion: (restartLabel: string) =>
+        openListenerWorkbenchForIncidentRestartSuggestion(restartLabel),
+      openInspectorSurface: () => navigateToDesktopPanel("inspector"),
+      pendingIncidentFocusId,
+      selectedIncident,
+      selectedIncidentId,
+      setSelectedIncidentId
+    }),
+    [setPendingIncidentFocusId, environmentFocusLabel, incidents, navigateToLinkedEntity, openIncidentRemediationPlanDialog, openConversationDraftWithFocusOverride, selectedIncidentId, openConversationDraftForIncidentRestartSuggestion, openListenerWorkbenchForIncidentRestartSuggestion, pendingIncidentFocusId, selectedIncident, setSelectedIncidentId]
+  );
+  const workWorkspaceProps = useMemo(
+    () => ({
+      approvalRequests,
+      clearPendingWorkItemFocusId: () => setPendingWorkItemFocusId(null),
+      environmentFocusLabel,
+      isDecidingApproval,
+      navigateToLinkedEntity,
+      openApprovalRequest,
+      openCompleteWorkItemValidationsDialog: openWorkItemValidationDialog,
+      openConversationDraft: () =>
+        openConversationDraftWithFocusOverride({
+          ...createDefaultEnvironmentFocusState(),
+          kind: "governance-work-item",
+          sourceWorkspace: "runtime",
+          sourceSurface: "operate",
+          workItemId: selectedWorkItemId
+        }),
+      openInspectorSurface: () => navigateToDesktopPanel("inspector"),
+      openQuarantineWorkItemDialog: openWorkItemQuarantineDialog,
+      openResumeWorkItemDialog: openWorkItemResumeDialog,
+      openRollbackWorkItemDialog: openWorkItemRollbackDialog,
+      openSteerWorkItemDialog: openWorkItemSteerDialog,
+      pendingWorkItemFocusId,
+      orchestrationFocus,
+      orchestrationSnapshot,
+      planVerification,
+      selectedWorkflowRecord,
+      selectedWorkItem,
+      selectedWorkItemPlan,
+      selectedWorkItemId,
+      setSelectedWorkItemId,
+      submitApprovalDecisionForRequest,
+      workItems
+    }),
+    [approvalRequests, setPendingWorkItemFocusId, environmentFocusLabel, isDecidingApproval, navigateToLinkedEntity, openApprovalRequest, openWorkItemValidationDialog, openConversationDraftWithFocusOverride, selectedWorkItemId, openWorkItemQuarantineDialog, openWorkItemResumeDialog, openWorkItemRollbackDialog, openWorkItemSteerDialog, pendingWorkItemFocusId, orchestrationFocus, orchestrationSnapshot, planVerification, selectedWorkflowRecord, selectedWorkItem, selectedWorkItemPlan, setSelectedWorkItemId, submitApprovalDecisionForRequest, workItems]
+  );
 
   useEffect(() => {
     document.documentElement.dataset.theme = resolvedTheme;
@@ -4319,50 +3289,23 @@ export function App() {
     });
   }, [lispParenColors]);
 
-  useEffect(() => {
-    if (activeWorkspace === "projects" && effectiveEnvironmentId) {
-      void loadProjectWorkspace(effectiveEnvironmentId);
-    }
-  }, [activeWorkspace, effectiveEnvironmentId]);
+  useWorkspaceLoadEffects({
+    activeWorkspace,
+    effectiveEnvironmentId,
+    selectedGovernedProjectId,
+    loadProjectWorkspace,
+    refreshDesktopTaskActorSystemPanel,
+    loadMemoryWorkspace,
+    loadProjectDetail,
+    loadConversationWorkspace,
+    loadRuntimeWorkspace,
+    loadRuntimeTelemetry,
+    loadWorkWorkspace,
+    loadApprovalWorkspace,
+    loadArtifactsWorkspace,
+    loadIncidentWorkspace
+  });
 
-  useEffect(() => {
-    if (
-      !effectiveEnvironmentId ||
-      (activeWorkspace !== "browser" && activeWorkspace !== "runtime")
-    ) {
-      return;
-    }
-    void refreshDesktopTaskActorSystemPanel(effectiveEnvironmentId);
-  }, [activeWorkspace, effectiveEnvironmentId]);
-
-  useEffect(() => {
-    if (activeWorkspace === "memory" && effectiveEnvironmentId) {
-      void loadMemoryWorkspace(effectiveEnvironmentId);
-    }
-  }, [activeWorkspace, effectiveEnvironmentId]);
-
-  useEffect(() => {
-    if (activeWorkspace !== "projects" || !effectiveEnvironmentId || !selectedGovernedProjectId) {
-      return;
-    }
-
-    void loadProjectDetail(selectedGovernedProjectId, effectiveEnvironmentId);
-  }, [activeWorkspace, effectiveEnvironmentId, selectedGovernedProjectId]);
-
-  useEffect(() => {
-    if (effectiveEnvironmentId) {
-      void loadConversationWorkspace(effectiveEnvironmentId);
-    }
-  }, [effectiveEnvironmentId]);
-
-  useEffect(() => {
-    if (selectedThreadId && effectiveEnvironmentId) {
-      if (selectedThread?.threadId === selectedThreadId) {
-        return;
-      }
-      void loadThreadDetail(selectedThreadId, effectiveEnvironmentId);
-    }
-  }, [selectedThreadId, effectiveEnvironmentId, selectedThread?.threadId]);
 
   useEffect(() => {
     if (selectedTurnId && effectiveEnvironmentId) {
@@ -4391,64 +3334,19 @@ export function App() {
     }));
   }, [currentEditorBuffers, currentProjectId, selectedEditorBufferIdByProject]);
 
-  useEffect(() => {
-    if (activeWorkspace === "runtime" && effectiveEnvironmentId) {
-      void loadRuntimeWorkspace(effectiveEnvironmentId);
-      void loadRuntimeTelemetry(effectiveEnvironmentId);
-      void loadWorkWorkspace(effectiveEnvironmentId);
-      void loadApprovalWorkspace(effectiveEnvironmentId);
-    }
-  }, [activeWorkspace, effectiveEnvironmentId]);
-
-  useEffect(() => {
-    if (activeWorkspace === "browser" && effectiveEnvironmentId) {
-      void loadRuntimeWorkspace(effectiveEnvironmentId);
-      void loadRuntimeTelemetry(effectiveEnvironmentId);
-      void loadWorkWorkspace(effectiveEnvironmentId);
-      void loadArtifactsWorkspace(effectiveEnvironmentId);
-      void loadConversationWorkspace(effectiveEnvironmentId);
-      void loadApprovalWorkspace(effectiveEnvironmentId);
-      void loadIncidentWorkspace(effectiveEnvironmentId);
-    }
-  }, [activeWorkspace, effectiveEnvironmentId]);
-
-  useEffect(() => {
-    if ((activeWorkspace === "environment" || activeWorkspace === "projects") && effectiveEnvironmentId) {
-      void loadWorkWorkspace(effectiveEnvironmentId);
-      void loadApprovalWorkspace(effectiveEnvironmentId);
-      void loadIncidentWorkspace(effectiveEnvironmentId);
-      const refreshTimeoutId = window.setTimeout(() => {
-        void loadWorkWorkspace(effectiveEnvironmentId);
-        void loadApprovalWorkspace(effectiveEnvironmentId);
-        void loadIncidentWorkspace(effectiveEnvironmentId);
-      }, 900);
-      return () => window.clearTimeout(refreshTimeoutId);
-    }
-  }, [activeWorkspace, effectiveEnvironmentId]);
-
-  useEffect(() => {
-    if (activeWorkspace === "configuration" && effectiveEnvironmentId) {
-      void refreshProviderSummary(effectiveEnvironmentId);
-      void refreshPackageManagementSummary(effectiveEnvironmentId);
-      void refreshDesktopTaskManifests(effectiveEnvironmentId);
-      void refreshDesktopTaskRecords(effectiveEnvironmentId);
-      void refreshDesktopTaskActorTrace(effectiveEnvironmentId);
-      void refreshDesktopTaskDeadLetters(effectiveEnvironmentId);
-      void refreshPendingConversationApproval(effectiveEnvironmentId);
-      void refreshMcpServerConfigs(effectiveEnvironmentId);
-    }
-  }, [activeWorkspace, effectiveEnvironmentId]);
-
-  useEffect(() => {
-    if (!effectiveEnvironmentId) {
-      return;
-    }
-    if (activeWorkspace === "environment" || (activeWorkspace === "browser" && selectedBrowserDomain === "governance")) {
-      void refreshDesktopTaskRecords(effectiveEnvironmentId);
-      void refreshDesktopTaskActorTrace(effectiveEnvironmentId);
-      void refreshDesktopTaskDeadLetters(effectiveEnvironmentId);
-    }
-  }, [activeWorkspace, effectiveEnvironmentId, selectedBrowserDomain]);
+  useEnvironmentRefreshEffects({
+    activeWorkspace,
+    effectiveEnvironmentId,
+    selectedBrowserDomain,
+    refreshProviderSummary,
+    refreshPackageManagementSummary,
+    refreshDesktopTaskManifests,
+    refreshDesktopTaskRecords,
+    refreshDesktopTaskActorTrace,
+    refreshDesktopTaskDeadLetters,
+    refreshPendingConversationApproval,
+    refreshMcpServerConfigs
+  });
 
   useEffect(() => {
     if (selectedConfigurationSection !== "mcp-servers") {
@@ -4464,179 +3362,65 @@ export function App() {
     }
   }, [selectedConfigurationSection, selectedMcpServerId, mcpServerConfigs]);
 
-  useEffect(() => {
-    if (
-      activeWorkspace !== "browser" ||
-      !effectiveEnvironmentId ||
-      !["processes", "performance", "host-io"].includes(selectedBrowserDomain)
-    ) {
-      return;
-    }
-
-    void loadRuntimeTelemetry(effectiveEnvironmentId);
-    const intervalId = window.setInterval(() => {
-      void loadRuntimeTelemetry(effectiveEnvironmentId);
-    }, 5000);
-
-    return () => window.clearInterval(intervalId);
-  }, [activeWorkspace, effectiveEnvironmentId, selectedBrowserDomain]);
-
-  useEffect(() => {
-    if (activeWorkspace !== "browser" || !effectiveEnvironmentId || selectedBrowserDomain !== "console") {
-      return;
-    }
-
-    void loadConsoleLogStream(effectiveEnvironmentId, selectedConsolePlane);
-  }, [activeWorkspace, effectiveEnvironmentId, selectedBrowserDomain, selectedConsolePlane]);
-
-  useEffect(() => {
-    if (activeWorkspace !== "transcript" || !effectiveEnvironmentId) {
-      return;
-    }
-
-    const shouldLoadActivity = shouldLoadTranscriptActivityEntries();
-    const shouldLoadConsole = shouldLoadTranscriptConsoleEntries();
-
-    if (shouldLoadActivity || shouldLoadConsole) {
-      void loadTranscriptWorkspace(effectiveEnvironmentId);
-    }
-    if (!shouldLoadActivity && !shouldLoadConsole) {
-      return;
-    }
-    const pollIntervalMs = isTranscriptEventRefreshActive ? 15000 : 4000;
-    const intervalId = window.setInterval(() => {
-      void loadTranscriptWorkspace(effectiveEnvironmentId);
-    }, pollIntervalMs);
-
-    return () => window.clearInterval(intervalId);
-  }, [
+  useBrowserTranscriptEffects({
     activeWorkspace,
     effectiveEnvironmentId,
+    selectedBrowserDomain,
+    selectedConsolePlane,
     eventFamilyFilter,
     eventVisibilityFilter,
+    selectedTranscriptSourceFilter,
     isTranscriptEventRefreshActive,
-    selectedTranscriptSourceFilter
-  ]);
+    setIsTranscriptEventRefreshActive,
+    pendingTranscriptRefreshTimerRef,
+    loadRuntimeTelemetry,
+    loadConsoleLogStream,
+    loadTranscriptWorkspace,
+    shouldLoadTranscriptActivityEntries,
+    shouldLoadTranscriptConsoleEntries,
+    shouldSubscribeTranscriptEnvironmentEvents,
+    shouldRefreshTranscriptFromEvent,
+    scheduleTranscriptEventRefresh
+  });
 
-  useEffect(() => {
-    if (activeWorkspace !== "transcript" || !effectiveEnvironmentId) {
-      setIsTranscriptEventRefreshActive(false);
-      return;
-    }
-    if (!shouldSubscribeTranscriptEnvironmentEvents()) {
-      setIsTranscriptEventRefreshActive(false);
-      return;
-    }
-
-    let active = true;
-    let transcriptSubscriptionId: string | null = null;
-
-    const handleTranscriptEvent = (event: EnvironmentEventDto) => {
-      if (!active) {
-        return;
-      }
-      if (!shouldRefreshTranscriptFromEvent(event)) {
-        return;
-      }
-      scheduleTranscriptEventRefresh(effectiveEnvironmentId);
-    };
-
-    void window.sbclAgentDesktop.events
-      .subscribeEnvironmentEvents(
-        {
-          environmentId: effectiveEnvironmentId,
-          families: eventFamilyFilter === "all" ? undefined : [eventFamilyFilter],
-          visibility: eventVisibilityFilter === "all" ? undefined : [eventVisibilityFilter]
-        },
-        handleTranscriptEvent
-      )
-      .then((handle) => {
-        transcriptSubscriptionId = handle.subscriptionId;
-        setIsTranscriptEventRefreshActive(true);
-      })
-      .catch(() => {
-        setIsTranscriptEventRefreshActive(false);
-        return undefined;
-      });
-
-    return () => {
-      active = false;
-      setIsTranscriptEventRefreshActive(false);
-      if (pendingTranscriptRefreshTimerRef.current != null) {
-        window.clearTimeout(pendingTranscriptRefreshTimerRef.current);
-        pendingTranscriptRefreshTimerRef.current = null;
-      }
-      if (transcriptSubscriptionId) {
-        void window.sbclAgentDesktop.events.unsubscribe(transcriptSubscriptionId);
-      }
-    };
-  }, [
+  useDetailLoadEffects({
     activeWorkspace,
     effectiveEnvironmentId,
+    selectedBrowserDomain,
+    runtimeSummary,
+    selectedPackageName,
+    runtimeInspection,
+    sourcePreview,
+    selectedApprovalId,
+    selectedIncidentId,
+    incidentCount: incidents.length,
+    openIncidentCount: summary?.attention.openIncidents ?? 0,
+    selectedWorkItemId,
+    workItemCount: workItems.length,
+    blockedWorkCount: summary?.attention.blockedWork ?? 0,
+    selectedArtifactId,
+    documentationPages,
+    selectedDocumentationPage,
+    selectedDocumentationSlug,
     eventFamilyFilter,
     eventVisibilityFilter,
-    selectedTranscriptSourceFilter
-  ]);
-
-  useEffect(() => {
-    if (activeWorkspace !== "browser" || !effectiveEnvironmentId || selectedBrowserDomain !== "diagnostics") {
-      return;
-    }
-
-    void loadDiagnosticReports(effectiveEnvironmentId);
-  }, [activeWorkspace, effectiveEnvironmentId, selectedBrowserDomain]);
-
-  useEffect(() => {
-    if (!selectedDiagnosticReportId || !effectiveEnvironmentId) {
-      return;
-    }
-
-    void loadDiagnosticReportDetail(selectedDiagnosticReportId, effectiveEnvironmentId);
-  }, [selectedDiagnosticReportId, effectiveEnvironmentId]);
-
-  useEffect(() => {
-    if (activeWorkspace === "browser" && effectiveEnvironmentId && runtimeSummary?.currentPackage) {
-      void loadPackageBrowser(selectedPackageName || runtimeSummary.currentPackage);
-    }
-  }, [activeWorkspace, effectiveEnvironmentId, runtimeSummary?.currentPackage, selectedPackageName]);
-
-  useEffect(() => {
-    if (canonicalWorkspace(activeWorkspace) !== "browser" || !runtimeInspection?.data.items.length) {
-      return;
-    }
-
-    const sourceBackedItem = runtimeInspection.data.items.find((item) => item.path);
-    if (!sourceBackedItem?.path) {
-      return;
-    }
-
-    if (
-      sourcePreview?.data.path === sourceBackedItem.path &&
-      sourcePreview.data.focusLine === (sourceBackedItem.line ?? null)
-    ) {
-      return;
-    }
-
-    void loadSourcePreview(sourceBackedItem.path, sourceBackedItem.line ?? undefined);
-  }, [activeWorkspace, runtimeInspection, sourcePreview?.data.focusLine, sourcePreview?.data.path]);
-
-  useEffect(() => {
-    if (canonicalWorkspace(activeWorkspace) !== "browser" || !runtimeInspection?.data.symbol) {
-      return;
-    }
-
-    void loadRuntimeEntityDetail(
-      runtimeInspection.data.symbol,
-      runtimeInspection.data.packageName,
-      runtimeInspection.metadata.binding?.environmentId ?? effectiveEnvironmentId
-    );
-  }, [
-    activeWorkspace,
-    effectiveEnvironmentId,
-    runtimeInspection?.data.packageName,
-    runtimeInspection?.data.symbol,
-    runtimeInspection?.metadata.binding?.environmentId
-  ]);
+    loadDiagnosticReports,
+    selectedDiagnosticReportId,
+    loadDiagnosticReportDetail,
+    loadPackageBrowser,
+    loadSourcePreview,
+    loadRuntimeEntityDetail,
+    loadApprovalDetail,
+    loadIncidentWorkspace,
+    loadIncidentDetail,
+    loadWorkWorkspace,
+    loadWorkItemDetail,
+    loadActivityWorkspace,
+    loadArtifactsWorkspace,
+    loadDocumentationPages,
+    loadDocumentationPage,
+    loadArtifactDetail
+  });
 
   useEffect(() => {
     setSourceDraft(sourcePreview?.data.editableContent ?? "");
@@ -4644,81 +3428,6 @@ export function App() {
     setSourceMutationResult(null);
     setSourceReloadResult(null);
   }, [sourcePreview?.data.path, sourcePreview?.data.editableContent]);
-
-  useEffect(() => {
-    if (selectedApprovalId && effectiveEnvironmentId) {
-      void loadApprovalDetail(selectedApprovalId, effectiveEnvironmentId);
-    }
-  }, [selectedApprovalId, effectiveEnvironmentId]);
-
-  useEffect(() => {
-    if (activeWorkspace === "incidents" && effectiveEnvironmentId) {
-      void loadIncidentWorkspace(effectiveEnvironmentId);
-    }
-  }, [activeWorkspace, effectiveEnvironmentId]);
-
-  useEffect(() => {
-    if (selectedIncidentId && effectiveEnvironmentId) {
-      void loadIncidentDetail(selectedIncidentId, effectiveEnvironmentId);
-    }
-  }, [selectedIncidentId, effectiveEnvironmentId]);
-
-  useEffect(() => {
-    if (effectiveEnvironmentId && (summary?.attention.openIncidents ?? 0) > 0 && incidents.length === 0) {
-      void loadIncidentWorkspace(effectiveEnvironmentId);
-    }
-  }, [effectiveEnvironmentId, incidents.length, summary?.attention.openIncidents]);
-
-  useEffect(() => {
-    if (activeWorkspace === "work" && effectiveEnvironmentId) {
-      void loadWorkWorkspace(effectiveEnvironmentId);
-    }
-  }, [activeWorkspace, effectiveEnvironmentId]);
-
-  useEffect(() => {
-    if (selectedWorkItemId && effectiveEnvironmentId) {
-      void loadWorkItemDetail(selectedWorkItemId, effectiveEnvironmentId);
-    }
-  }, [selectedWorkItemId, effectiveEnvironmentId]);
-
-  useEffect(() => {
-    if (effectiveEnvironmentId && (summary?.attention.blockedWork ?? 0) > 0 && workItems.length === 0) {
-      void loadWorkWorkspace(effectiveEnvironmentId);
-    }
-  }, [effectiveEnvironmentId, summary?.attention.blockedWork, workItems.length]);
-
-  useEffect(() => {
-    if (activeWorkspace === "activity" && effectiveEnvironmentId) {
-      void loadActivityWorkspace(effectiveEnvironmentId);
-    }
-  }, [activeWorkspace, effectiveEnvironmentId, eventFamilyFilter, eventVisibilityFilter]);
-
-  useEffect(() => {
-    if (activeWorkspace === "artifacts" && effectiveEnvironmentId) {
-      void loadArtifactsWorkspace(effectiveEnvironmentId);
-    }
-  }, [activeWorkspace, effectiveEnvironmentId]);
-
-  useEffect(() => {
-    if (activeWorkspace !== "documentation") {
-      return;
-    }
-
-    if (documentationPages.length === 0) {
-      void loadDocumentationPages();
-      return;
-    }
-
-    if (!selectedDocumentationPage || selectedDocumentationPage.slug !== selectedDocumentationSlug) {
-      void loadDocumentationPage(selectedDocumentationSlug);
-    }
-  }, [activeWorkspace, documentationPages.length, selectedDocumentationPage, selectedDocumentationSlug]);
-
-  useEffect(() => {
-    if (selectedArtifactId && effectiveEnvironmentId) {
-      void loadArtifactDetail(selectedArtifactId, effectiveEnvironmentId);
-    }
-  }, [selectedArtifactId, effectiveEnvironmentId]);
 
   useEffect(() => {
     if (!currentProjectId || !selectedThreadId) {
@@ -4776,89 +3485,48 @@ export function App() {
     environmentId: string,
     restorePanelState?: Record<string, unknown> | null
   ): Promise<DesktopModelDto> {
-    if (restorePanelState) {
-      const restoreResult = await window.sbclAgentDesktop.command.desktopRestore({
-        environmentId,
-        panelState: restorePanelState
-      });
-      return restoreResult.data.desktopModel;
-    }
-
-    const desktopModelResult = await window.sbclAgentDesktop.query.desktopModel(environmentId);
-    return desktopModelResult.data;
+    return loadDesktopShellModelQuery(environmentId, restorePanelState);
   }
 
   async function loadEnvironmentBootstrap(
     environmentId: string,
     restorePanelState?: Record<string, unknown> | null
   ): Promise<EnvironmentBootstrapDto> {
-    const startedAt = performance.now();
-    if (!restorePanelState && typeof window.sbclAgentDesktop.query.environmentBootstrap === "function") {
-      const bootstrapResult = await window.sbclAgentDesktop.query.environmentBootstrap(environmentId);
-      logSurfacePerf("environment.bootstrap", startedAt, { environmentId });
-      return bootstrapResult.data;
-    }
-
-    const [summaryResult, statusResult, workspaceSummaryResult, desktopModel] = await Promise.all([
-      window.sbclAgentDesktop.query.environmentSummary(environmentId),
-      window.sbclAgentDesktop.query.environmentStatus(environmentId),
-      window.sbclAgentDesktop.query.workspaceSummary(environmentId),
-      loadDesktopShellModel(environmentId, restorePanelState)
-    ]);
-    logSurfacePerf("environment.bootstrap", startedAt, {
+    return loadEnvironmentBootstrapQuery({
       environmentId,
-      fallback: true,
-      restorePanelState: Boolean(restorePanelState)
+      restorePanelState,
+      logSurfacePerf
     });
-    return {
-      summary: summaryResult.data,
-      status: statusResult.data,
-      workspaceSummary: workspaceSummaryResult.data,
-      desktopModel
-    };
   }
 
   async function refreshProviderSummary(environmentId?: string): Promise<ProviderProfileSummaryDto | null> {
-    try {
-      const providerResult = await window.sbclAgentDesktop.query.providerProfiles(environmentId);
-      setProviderSummary(providerResult.data);
-      setSelectedProviderProfileName((current) => {
-        if (providerResult.data.profiles.some((profile) => profile.name === current)) {
-          return current;
-        }
-        return providerResult.data.activeProfileName ?? providerResult.data.profiles[0]?.name ?? "default";
-      });
-      return providerResult.data;
-    } catch (error) {
-      setProviderProfileError(
-        error instanceof Error ? error.message : "Failed to load provider configuration."
-      );
-      return null;
-    }
+    return refreshProviderSummaryState({
+      environmentId,
+      queryProviderSummary,
+      setProviderSummary,
+      setSelectedProviderProfileName,
+      setProviderProfileError
+    });
   }
 
   async function refreshPackageManagementSummary(
     environmentId?: string
   ): Promise<PackageManagementSummaryDto | null> {
-    try {
-      const result = await window.sbclAgentDesktop.query.packageManagementSummary(environmentId);
-      setPackageManagementSummary(result.data);
-      return result.data;
-    } catch (error) {
-      setPackageManagementError(
-        error instanceof Error ? error.message : "Failed to load package-management summary."
-      );
-      return null;
-    }
+    return refreshPackageManagementSummaryState({
+      environmentId,
+      queryPackageManagementSummary,
+      setPackageManagementSummary,
+      setPackageManagementError
+    });
   }
 
   async function refreshDesktopTaskManifests(
     environmentId?: string
   ): Promise<DesktopTaskManifestDto[]> {
     try {
-      const result = await window.sbclAgentDesktop.query.desktopTaskManifests(environmentId);
-      setDesktopTaskManifests(result.data);
-      return result.data;
+      const next = await queryDesktopTaskManifests(environmentId);
+      setDesktopTaskManifests(next);
+      return next;
     } catch {
       setDesktopTaskManifests([]);
       return [];
@@ -4869,9 +3537,10 @@ export function App() {
     environmentId?: string
   ): Promise<DesktopTaskRecordDto[]> {
     try {
-      const result = await window.sbclAgentDesktop.query.desktopTaskRecords(environmentId);
-      setDesktopTaskRecords(result.data);
-      return result.data;
+      const next = await queryDesktopTaskRecords(environmentId);
+      setDesktopTaskRecords(next);
+      void refreshOrchestrationInbox(environmentId);
+      return next;
     } catch {
       setDesktopTaskRecords([]);
       return [];
@@ -4882,12 +3551,7 @@ export function App() {
     environmentId?: string
   ): Promise<Record<string, unknown>[]> {
     try {
-      const queryActorTrace = window.sbclAgentDesktop.query.desktopTaskActorTrace;
-      if (typeof queryActorTrace !== "function") {
-        return [];
-      }
-      const result = await queryActorTrace({ environmentId });
-      const next = Array.isArray(result.data) ? result.data : [];
+      const next = await queryDesktopTaskActorTrace(environmentId);
       setDesktopTaskActorTrace(next);
       return next;
     } catch {
@@ -4900,12 +3564,7 @@ export function App() {
     environmentId?: string
   ): Promise<Record<string, unknown>[]> {
     try {
-      const queryDeadLetters = window.sbclAgentDesktop.query.desktopTaskDeadLetterQueue;
-      if (typeof queryDeadLetters !== "function") {
-        return [];
-      }
-      const result = await queryDeadLetters({ environmentId });
-      const next = Array.isArray(result.data) ? result.data : [];
+      const next = await queryDesktopTaskDeadLetters(environmentId);
       setDesktopTaskDeadLetters(next);
       return next;
     } catch {
@@ -4925,21 +3584,7 @@ export function App() {
     }
   ): Promise<Record<string, unknown> | null> {
     try {
-      const queryActorFlow = window.sbclAgentDesktop.query.desktopTaskActorFlow;
-      if (typeof queryActorFlow !== "function") {
-        setDesktopTaskActorFlow(null);
-        return null;
-      }
-      const result = await queryActorFlow({
-        environmentId,
-        sessionId: input?.sessionId ?? undefined,
-        approvalId: input?.approvalId ?? undefined,
-        pendingActionId: input?.pendingActionId ?? undefined,
-        actorMessageId: input?.actorMessageId ?? undefined,
-        scopeId: input?.scopeId ?? undefined,
-        latestOnlyP: true
-      });
-      const nextFlow = asRecord(result.data);
+      const nextFlow = await queryDesktopTaskActorFlow(environmentId, input);
       setDesktopTaskActorFlow(nextFlow);
       void refreshDesktopTaskActorSystemPanel(environmentId, {
         sessionId: input?.sessionId ?? null
@@ -4958,35 +3603,68 @@ export function App() {
     }
   ): Promise<Record<string, unknown> | null> {
     try {
-      const queryActorSystemPanel = window.sbclAgentDesktop.query.desktopTaskActorSystemPanel;
-      if (typeof queryActorSystemPanel !== "function") {
-        setDesktopTaskActorSystemPanel(null);
-        return null;
-      }
-      const result = await queryActorSystemPanel({
-        environmentId,
-        sessionId: input?.sessionId ?? undefined
-      });
-      const nextPanel = asRecord(result.data);
-      console.info(
-        "[actor-system-panel] %s",
-        JSON.stringify({
-          status: result.status,
-          environmentId,
-          sessionId: input?.sessionId ?? null,
-          rootActorId: nextPanel?.rootActorId ?? null,
-          actorCount: Array.isArray(nextPanel?.actors) ? nextPanel.actors.length : 0,
-          workflowEdgeCount: Array.isArray(nextPanel?.workflowEdges) ? nextPanel.workflowEdges.length : 0,
-          incidentCount: Array.isArray(nextPanel?.supervisionIncidents)
-            ? nextPanel.supervisionIncidents.length
-            : 0,
-          keys: nextPanel ? Object.keys(nextPanel) : []
-        })
-      );
+      const nextPanel = await queryDesktopTaskActorSystemPanel(environmentId, input);
       setDesktopTaskActorSystemPanel(nextPanel);
       return nextPanel;
     } catch {
       setDesktopTaskActorSystemPanel(null);
+      return null;
+    }
+  }
+
+  async function refreshOrchestrationInbox(
+    environmentId?: string
+  ): Promise<Record<string, unknown>[]> {
+    try {
+      const next = await queryOrchestrationInbox(environmentId);
+      setOrchestrationInbox(next);
+      return next;
+    } catch {
+      setOrchestrationInbox([]);
+      return [];
+    }
+  }
+
+  async function refreshOrchestrationFocus(input?: {
+    environmentId?: string;
+    planId?: string | null;
+    workflowRecordId?: string | null;
+    workItemId?: string | null;
+  }): Promise<Record<string, unknown> | null> {
+    try {
+      const next = await queryOrchestrationFocus(input);
+      setOrchestrationFocus(next);
+      return next;
+    } catch {
+      setOrchestrationFocus(null);
+      return null;
+    }
+  }
+
+  async function refreshOrchestrationSnapshot(input?: {
+    environmentId?: string;
+    planId?: string | null;
+  }): Promise<Record<string, unknown> | null> {
+    try {
+      const next = await queryOrchestrationSnapshot(input);
+      setOrchestrationSnapshot(next);
+      return next;
+    } catch {
+      setOrchestrationSnapshot(null);
+      return null;
+    }
+  }
+
+  async function refreshPlanVerification(input?: {
+    environmentId?: string;
+    planId?: string | null;
+  }): Promise<Record<string, unknown> | null> {
+    try {
+      const next = await queryPlanVerification(input);
+      setPlanVerification(next);
+      return next;
+    } catch {
+      setPlanVerification(null);
       return null;
     }
   }
@@ -5000,266 +3678,135 @@ export function App() {
     threadId: string | null;
     policyIds: string[];
   } | null> {
-    try {
-      const retainedPendingApproval = pendingConversationApprovalRef.current;
-      const refreshedActorFlow = await refreshDesktopTaskActorFlow(environmentId, {
-        sessionId: retainedPendingApproval?.sessionId ?? undefined,
-        approvalId: retainedPendingApproval?.approvalId ?? undefined,
-        actorMessageId: retainedPendingApproval?.actorMessageId ?? undefined
-      });
-      if (refreshedActorFlow) {
-        const flow = asRecord(refreshedActorFlow);
-        const actorFlowPendingApproval = extractPendingConversationApprovalFromActorFlow(flow);
-        console.info(
-          "[conversation-approval] actor-flow actorMessageId=%s approvalId=%s sessionId=%s threadId=%s",
-          actorFlowPendingApproval?.actorMessageId ?? null,
-          actorFlowPendingApproval?.approvalId ?? null,
-          actorFlowPendingApproval?.sessionId ?? null,
-          actorFlowPendingApproval?.threadId ?? null
-        );
-        if (actorFlowPendingApproval) {
-          const nextPendingApproval = {
-            ...actorFlowPendingApproval,
-            threadId: actorFlowPendingApproval.threadId ?? selectedThreadIdRef.current ?? null
-          };
-          setPendingConversationApproval(nextPendingApproval);
-          return {
-            actorMessageId: nextPendingApproval.actorMessageId,
-            approvalId: nextPendingApproval.approvalId,
-            sessionId: nextPendingApproval.sessionId,
-            threadId: nextPendingApproval.threadId,
-            policyIds: nextPendingApproval.policyIds
-          };
-        }
-      }
-      const queryPendingApproval = window.sbclAgentDesktop.query.desktopTaskPendingApproval;
-      if (typeof queryPendingApproval !== "function") {
-        return null;
-      }
-      const result = await queryPendingApproval(environmentId);
-      const data = asRecord(result.data);
-      const actorMessageIds = Array.isArray(data.actorMessageIds) ? data.actorMessageIds : [];
-      const approvalIds = Array.isArray(data.approvalIds) ? data.approvalIds : [];
-      const actorMessageId =
-        firstStringValue(actorMessageIds[0]) ??
-        firstStringValue(asRecord((Array.isArray(data.actorMessages) ? data.actorMessages[0] : null)).id) ??
-        null;
-      const approvalId = firstStringValue(approvalIds[0], data.approvalId);
-      const sessionId = firstStringValue(data.sessionId);
-      const threadId = firstStringValue(data.threadId, data.turnThreadId, asRecord((Array.isArray(data.records) ? data.records[0] : null)).threadId);
-      console.info(
-        "[conversation-approval] pending-query actorMessageId=%s approvalId=%s sessionId=%s threadId=%s",
-        actorMessageId,
-        approvalId,
-        sessionId,
-        threadId
-      );
-      setDesktopTaskActorFlow(null);
-      if (approvalId || actorMessageId) {
-        const nextPendingApproval = {
-          actorMessageId,
-          approvalId: approvalId ?? null,
-          sessionId: sessionId ?? null,
-          threadId: threadId ?? selectedThreadIdRef.current ?? null,
-          policyIds: []
-        };
-        setPendingConversationApproval(nextPendingApproval);
-        return {
-          actorMessageId,
-          approvalId: approvalId ?? null,
-          sessionId: sessionId ?? null,
-          threadId: threadId ?? selectedThreadIdRef.current ?? null,
-          policyIds: []
-        };
-      }
-      const fallbackPendingApproval = pendingConversationApprovalRef.current;
-      if (fallbackPendingApproval?.approvalId || fallbackPendingApproval?.actorMessageId) {
-        return {
-          actorMessageId: fallbackPendingApproval.actorMessageId ?? null,
-          approvalId: fallbackPendingApproval.approvalId ?? null,
-          sessionId: fallbackPendingApproval.sessionId ?? null,
-          threadId: fallbackPendingApproval.threadId ?? null,
-          policyIds: fallbackPendingApproval.policyIds
-        };
-      }
-      setPendingConversationApproval(null);
-      return null;
-    } catch (error) {
-      console.info(
-        "[conversation-approval] pending-query-failed error=%o",
-        error
-      );
-      const currentPendingApproval = pendingConversationApprovalRef.current;
-      return currentPendingApproval
-        ? {
-            actorMessageId: currentPendingApproval.actorMessageId ?? null,
-            approvalId: currentPendingApproval.approvalId ?? null,
-            sessionId: currentPendingApproval.sessionId ?? null,
-            threadId: currentPendingApproval.threadId ?? null,
-            policyIds: currentPendingApproval.policyIds
-          }
-        : null;
-    }
+    const pendingApproval = await refreshPendingConversationApprovalState({
+      environmentId,
+      pendingConversationApprovalRef,
+      selectedThreadIdRef,
+      refreshDesktopTaskActorFlow,
+      setDesktopTaskActorFlow,
+      setPendingConversationApproval
+    });
+    void refreshOrchestrationInbox(environmentId);
+    return pendingApproval;
   }
 
   async function refreshMcpServerConfigs(
     environmentId?: string
   ): Promise<McpServerConfigDto[]> {
-    try {
-      const result = await window.sbclAgentDesktop.query.mcpServerConfigs(environmentId);
-      setMcpServerConfigs(result.data);
-      setSelectedMcpServerId((current) =>
-        result.data.some((entry) => entry.id === current) ? current : result.data[0]?.id ?? null
-      );
-      return result.data;
-    } catch (error) {
-      setMcpServerError(
-        error instanceof Error ? error.message : "Failed to load MCP server configurations."
-      );
-      setMcpServerConfigs([]);
-      return [];
-    }
+    return refreshMcpServerConfigsState({
+      environmentId,
+      queryMcpServerConfigs,
+      setMcpServerConfigs,
+      setSelectedMcpServerId,
+      setMcpServerError
+    });
   }
 
   async function loadInitialState(): Promise<void> {
-    try {
-      desktopPreferencesHydratedRef.current = false;
-      const [nextHostStatus, nextBinding, desktopPreferences] = await Promise.all([
-        window.sbclAgentDesktop.host.getHostStatus(),
-        window.sbclAgentDesktop.host.getCurrentBinding(),
-        window.sbclAgentDesktop.desktop.getDesktopPreferences()
-      ]);
-
-      setHostStatus(nextHostStatus);
-      setBinding(nextBinding);
-      setActiveWorkspace(desktopPreferences.lastWorkspace);
-      setSelectedBrowserDomain(
-        browserDomains.some((domain) => domain.id === desktopPreferences.selectedBrowserDomain)
-          ? (desktopPreferences.selectedBrowserDomain as BrowserDomain)
-          : "symbols"
-      );
-      setSelectedConfigurationSection(
-        configurationSections.some((section) => section.id === desktopPreferences.selectedConfigurationSection)
-          ? (desktopPreferences.selectedConfigurationSection as ConfigurationSection)
-          : "theme"
-      );
-      const hydratedShellLayout = shellLayoutReducer(createDefaultShellLayoutState(), {
-        type: "hydrate",
-        preferences: {
-          sidebarPinned: desktopPreferences.sidebarPinned ?? true,
-          sidebarWidth: desktopPreferences.sidebarWidth ?? null,
-          sidebarActivePanelId: desktopPreferences.sidebarActivePanelId ?? null,
-          sidebarDockedPanelIds: desktopPreferences.sidebarDockedPanelIds,
-          canvasPinned: desktopPreferences.canvasPinned ?? true,
-          inspectorPinned: desktopPreferences.inspectorPinned ?? true,
-          inspectorWidth: desktopPreferences.inspectorWidth ?? null,
-          inspectorActivePanelId: desktopPreferences.inspectorActivePanelId ?? null,
-          inspectorDockedPanelIds: desktopPreferences.inspectorDockedPanelIds
-        }
-      });
-      const nextShellLayout = shellPendingHydrationActionsRef.current.reduce(
-        (currentState, action) => shellLayoutReducer(currentState, action),
-        hydratedShellLayout
-      );
-      shellLayoutRef.current = nextShellLayout;
-      dispatchShellLayout({ type: "replace_state", state: nextShellLayout });
-      setThemePreference(desktopPreferences.themePreference);
-      setTooltipScalePercent(
-        normalizeDesktopSurfaceScalePercent(
-          desktopPreferences.desktopSurfaceView?.tooltipScalePercent
-        )
-      );
-      setControlIconScalePercent(
-        normalizeDesktopSurfaceScalePercent(
-          desktopPreferences.desktopSurfaceView?.controlIconScalePercent
-        )
-      );
-        setDockIconScalePercent(
-          normalizeDesktopSurfaceScalePercent(
-            desktopPreferences.desktopSurfaceView?.dockIconScalePercent
-          )
+    await loadDesktopInitialState({
+      desktopPreferencesHydratedRef,
+      shellPendingHydrationActionsRef,
+      loadEnvironmentBootstrap,
+      refreshProviderSummary,
+      ensureDesktopProjects,
+      resolveSelectedBrowserDomain: (value) =>
+        browserDomains.some((domain) => domain.id === value)
+          ? (value as BrowserDomain)
+          : "symbols",
+      resolveSelectedConfigurationSection: (value) =>
+        configurationSections.some((section) => section.id === value)
+          ? (value as ConfigurationSection)
+          : "theme",
+      hydrateShellLayout: (desktopPreferences) => {
+        const hydratedShellLayout = shellLayoutReducer(createDefaultShellLayoutState(), {
+          type: "hydrate",
+          preferences: {
+            sidebarPinned: desktopPreferences.sidebarPinned ?? true,
+            sidebarWidth: desktopPreferences.sidebarWidth ?? null,
+            sidebarActivePanelId: desktopPreferences.sidebarActivePanelId ?? null,
+            sidebarDockedPanelIds: desktopPreferences.sidebarDockedPanelIds,
+            canvasPinned: desktopPreferences.canvasPinned ?? true,
+            inspectorPinned: desktopPreferences.inspectorPinned ?? true,
+            inspectorWidth: desktopPreferences.inspectorWidth ?? null,
+            inspectorActivePanelId: desktopPreferences.inspectorActivePanelId ?? null,
+            inspectorDockedPanelIds: desktopPreferences.inspectorDockedPanelIds
+          }
+        });
+        return shellPendingHydrationActionsRef.current.reduce(
+          (currentState, action) => shellLayoutReducer(currentState, action as ShellLayoutAction),
+          hydratedShellLayout
         );
-        setConversationTextScalePercent(
-          normalizeDesktopSurfaceScalePercent(
-            desktopPreferences.desktopSurfaceView?.conversationTextScalePercent
-          )
-        );
-        setSourceCodeTextScalePercent(
-          normalizeDesktopSurfaceScalePercent(
-            desktopPreferences.desktopSurfaceView?.sourceCodeTextScalePercent
-          )
-        );
-      setLispParenColors(normalizeParenDepthColors(desktopPreferences.lispCodeView?.parenDepthColors));
-      setProjects(ensureDesktopProjects(desktopPreferences.projects, nextBinding, null));
-      setCurrentProjectId(desktopPreferences.currentProjectId ?? desktopPreferences.projects?.[0]?.projectId ?? null);
-      setSelectedConversationThreadByProject(desktopPreferences.selectedConversationThreadByProject ?? {});
-      setConversationDraft(
-        desktopPreferences.conversationDraft ??
-          "Start from the live environment focus and keep runtime, source, and governance context attached."
-      );
-      setReplSessionsByProject(desktopPreferences.replSessionsByProject ?? {});
-      setCurrentReplSessionIdByProject(desktopPreferences.currentReplSessionIdByProject ?? {});
-      setEditorBuffersByProject(desktopPreferences.editorBuffersByProject ?? {});
-      setSelectedEditorBufferIdByProject(desktopPreferences.selectedEditorBufferIdByProject ?? {});
-      setWorkspacePackageByProject(desktopPreferences.workspacePackageByProject ?? {});
-      setWorkspaceDraftByProject(desktopPreferences.workspaceDraftByProject ?? {});
-      setWorkspaceResultByProject(desktopPreferences.workspaceResultByProject ?? {});
-      setWorkspaceHistoryByProject(desktopPreferences.workspaceHistoryByProject ?? {});
-
-      if (nextBinding?.environmentId) {
-        const bootstrap = await loadEnvironmentBootstrap(nextBinding.environmentId);
-        setSummary(bootstrap.summary);
-        setStatus(bootstrap.status);
-        setWorkspaceSummary(bootstrap.workspaceSummary);
-        setDesktopModel(bootstrap.desktopModel);
-        setActiveWorkspace((current) =>
-          desktopPanelToWorkspaceId(bootstrap.desktopModel.activePanel, current)
-        );
-        const nextProjects = ensureDesktopProjects(
-          desktopPreferences.projects,
-          nextBinding,
-          bootstrap.summary
-        );
-        setProjects(nextProjects);
-        setCurrentProjectId((current) => current ?? desktopPreferences.currentProjectId ?? nextProjects[0]?.projectId ?? null);
-        await refreshProviderSummary(nextBinding.environmentId);
-      } else {
-        await refreshProviderSummary();
-      }
-      desktopPreferencesHydratedRef.current = true;
-      shellPendingHydrationActionsRef.current = [];
-      void persistResolvedShellLayout(nextShellLayout);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to load desktop state.");
-    }
+      },
+      applyHydratedShellLayout: (nextShellLayout) => {
+        shellLayoutRef.current = nextShellLayout;
+        dispatchShellLayout({ type: "replace_state", state: nextShellLayout });
+      },
+      persistResolvedShellLayout,
+      setHostStatus,
+      setBinding,
+      setActiveWorkspace,
+      setSelectedBrowserDomain,
+      setSelectedConfigurationSection,
+      setThemePreference,
+      setTooltipScalePercent,
+      setControlIconScalePercent,
+      setDockIconScalePercent,
+      setConversationTextScalePercent,
+      setSourceCodeTextScalePercent,
+      setLispParenColors,
+      normalizeDesktopSurfaceScalePercent,
+      normalizeParenDepthColors,
+      setProjects,
+      setCurrentProjectId,
+      setSelectedConversationThreadByProject,
+      setConversationDraft,
+      defaultConversationDraft:
+        "Start from the live environment focus and keep runtime, source, and governance context attached.",
+      setReplSessionsByProject,
+      setCurrentReplSessionIdByProject,
+      setEditorBuffersByProject,
+      setSelectedEditorBufferIdByProject,
+      setWorkspacePackageByProject,
+      setWorkspaceDraftByProject,
+      setWorkspaceResultByProject,
+      setWorkspaceHistoryByProject,
+      setSummary,
+      setStatus,
+      setWorkspaceSummary,
+      setDesktopModel,
+      desktopPanelToWorkspaceId,
+      setErrorMessage
+    });
   }
 
   async function refreshEnvironmentImageRegistry(): Promise<EnvironmentImageRegistryDto> {
-    const registryResult = await window.sbclAgentDesktop.host.getEnvironmentImageRegistry();
-    setEnvironmentImageRegistry(registryResult.data);
-    return registryResult.data;
+    return refreshEnvironmentImageRegistryState({
+      queryEnvironmentImageRegistry,
+      setEnvironmentImageRegistry
+    });
   }
 
   async function handleOpenEnvironmentImage(imageIdOrName: string): Promise<void> {
-    try {
-      startupImageSelectionHandledRef.current = true;
-      await window.sbclAgentDesktop.host.loadEnvironmentImage(imageIdOrName);
-      await refreshEnvironmentImageRegistry();
-      setIsEnvironmentImageChooserOpen(false);
-      await loadInitialState();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to open environment image.");
-    }
+    await openEnvironmentImageState({
+      imageIdOrName,
+      startupImageSelectionHandledRef,
+      refreshEnvironmentImageRegistry,
+      setIsEnvironmentImageChooserOpen,
+      loadInitialState,
+      setErrorMessage
+    });
   }
 
   async function handleContinueWithCurrentEnvironmentImage(): Promise<void> {
-    try {
-      startupImageSelectionHandledRef.current = true;
-      setIsEnvironmentImageChooserOpen(false);
-      await loadInitialState();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to continue with current image.");
-    }
+    await continueWithCurrentEnvironmentImageState({
+      currentImageIdOrName:
+        environmentImageRegistry?.currentImageId ?? environmentImageRegistry?.currentImageName ?? null,
+      startupImageSelectionHandledRef,
+      refreshEnvironmentImageRegistry,
+      setIsEnvironmentImageChooserOpen,
+      loadInitialState,
+      setErrorMessage
+    });
   }
 
   function openEnvironmentExitDialog(): void {
@@ -5416,20 +3963,18 @@ export function App() {
   }
 
   async function loadEnvironmentBinding(environmentId: string): Promise<void> {
-    const bindingResult = await window.sbclAgentDesktop.host.setEnvironmentBinding(environmentId);
-    const nextBinding = bindingResult.metadata.binding ?? bindingResult.data;
-    const restorePanelState =
-      desktopModel?.panels?.[desktopModel.activePanel] ?? null;
-    setBinding(nextBinding);
-    const bootstrap = await loadEnvironmentBootstrap(environmentId, restorePanelState);
-    setSummary(bootstrap.summary);
-    setStatus(bootstrap.status);
-    setWorkspaceSummary(bootstrap.workspaceSummary);
-    setDesktopModel(bootstrap.desktopModel);
-    setActiveWorkspace((current) =>
-      desktopPanelToWorkspaceId(bootstrap.desktopModel.activePanel, current)
-    );
-    setBinding(nextBinding);
+    await loadEnvironmentBindingState({
+      environmentId,
+      desktopModel,
+      setBinding,
+      loadEnvironmentBootstrap,
+      setSummary,
+      setStatus,
+      setWorkspaceSummary,
+      setDesktopModel,
+      setActiveWorkspace,
+      desktopPanelToWorkspaceId
+    });
   }
 
   async function handleProjectSwitch(projectId: string): Promise<void> {
@@ -6630,6 +5175,9 @@ export function App() {
       selectedConversationSection,
       selectedBrowserDomain,
       environmentFocus,
+      orchestrationFocus,
+      orchestrationSnapshot,
+      planVerification,
       selectedThread,
       selectedThreadId,
       conversationDraft,
@@ -6669,6 +5217,9 @@ export function App() {
       selectedConversationSection,
       selectedBrowserDomain,
       environmentFocus,
+      orchestrationFocus,
+      orchestrationSnapshot,
+      planVerification,
       selectedThread,
       selectedThreadId,
       conversationDraft,
@@ -6948,6 +5499,7 @@ export function App() {
     const trimmedPrompt = conversationDraft.trim();
     const pendingApproval = pendingConversationApprovalRef.current;
     const isAffirmativeApprovalPrompt = affirmativeConversationApprovalPrompt(trimmedPrompt);
+    const activeThreadId = selectedThreadId ?? selectedThreadIdRef.current ?? null;
     console.info(
       "[conversation-send] entry promptLength=%d selectedThreadId=%s selectedThread.threadId=%s selectedMessageCount=%d attachmentCount=%d pendingApproval=%o",
       trimmedPrompt.length,
@@ -6957,21 +5509,53 @@ export function App() {
       conversationAttachments.length,
       pendingApproval
     );
+    const orchestrationApprovalContext =
+      isAffirmativeApprovalPrompt
+        ? resolveOrchestrationApprovalContext(activeThreadId)
+        : null;
     const fallbackPendingApproval =
-      effectiveEnvironmentId && isAffirmativeApprovalPrompt && pendingApproval == null
+      effectiveEnvironmentId && isAffirmativeApprovalPrompt && pendingApproval == null && orchestrationApprovalContext == null
         ? await refreshPendingConversationApproval(effectiveEnvironmentId)
         : null;
+    const threadScopedPendingApproval =
+      pendingApproval == null ||
+      activeThreadId == null ||
+      pendingApproval.threadId == null ||
+      pendingApproval.threadId === activeThreadId
+        ? pendingApproval
+        : null;
+    const threadScopedFallbackPendingApproval =
+      fallbackPendingApproval == null ||
+      activeThreadId == null ||
+      fallbackPendingApproval.threadId == null ||
+      fallbackPendingApproval.threadId === activeThreadId
+        ? fallbackPendingApproval
+        : null;
     const approvalActorMessageId =
-      pendingApproval?.actorMessageId ?? fallbackPendingApproval?.actorMessageId ?? null;
-    const approvalId = pendingApproval?.approvalId ?? fallbackPendingApproval?.approvalId ?? null;
+      threadScopedPendingApproval?.actorMessageId ??
+      orchestrationApprovalContext?.actorMessageId ??
+      threadScopedFallbackPendingApproval?.actorMessageId ??
+      null;
+    const approvalId =
+      threadScopedPendingApproval?.approvalId ??
+      orchestrationApprovalContext?.approvalId ??
+      threadScopedFallbackPendingApproval?.approvalId ??
+      null;
     const approvalSessionId =
-      pendingApproval?.sessionId ?? fallbackPendingApproval?.sessionId ?? null;
+      threadScopedPendingApproval?.sessionId ??
+      orchestrationApprovalContext?.sessionId ??
+      threadScopedFallbackPendingApproval?.sessionId ??
+      null;
     const isApprovalConfirmation =
       isAffirmativeApprovalPrompt &&
       (approvalId != null || approvalActorMessageId != null);
     const routedThreadId =
       isApprovalConfirmation
-        ? pendingApproval?.threadId ?? fallbackPendingApproval?.threadId ?? selectedThreadId ?? selectedThreadIdRef.current
+        ? pendingApproval?.threadId ??
+          orchestrationApprovalContext?.threadId ??
+          threadScopedFallbackPendingApproval?.threadId ??
+          selectedThreadId ??
+          selectedThreadIdRef.current
         : selectedThreadId;
     console.info(
       "[conversation-send] approval-check prompt=%s affirmative=%o approvalId=%s sessionId=%s pendingActorMessageId=%s fallbackActorMessageId=%s routedThreadId=%s",
@@ -6979,8 +5563,8 @@ export function App() {
       isAffirmativeApprovalPrompt,
       approvalId,
       approvalSessionId,
-      pendingApproval?.actorMessageId ?? null,
-      fallbackPendingApproval?.actorMessageId ?? null,
+      threadScopedPendingApproval?.actorMessageId ?? null,
+      threadScopedFallbackPendingApproval?.actorMessageId ?? null,
       routedThreadId
     );
     if (isAffirmativeApprovalPrompt && !approvalId && !approvalActorMessageId) {
@@ -7079,10 +5663,12 @@ export function App() {
         );
       }
       void refreshDesktopTaskRecords(effectiveEnvironmentId);
+      void refreshOrchestrationInbox(effectiveEnvironmentId);
       void refreshDesktopTaskActorFlow(effectiveEnvironmentId, {
-        sessionId: approvalSessionId ?? pendingApproval?.sessionId ?? null,
-        approvalId: approvalId ?? pendingApproval?.approvalId ?? null,
-        actorMessageId: approvalActorMessageId ?? pendingApproval?.actorMessageId ?? null
+        sessionId: approvalSessionId ?? pendingConversationApprovalRef.current?.sessionId ?? null,
+        approvalId: approvalId ?? pendingConversationApprovalRef.current?.approvalId ?? null,
+        actorMessageId:
+          approvalActorMessageId ?? pendingConversationApprovalRef.current?.actorMessageId ?? null
       });
       void refreshDesktopTaskActorTrace(effectiveEnvironmentId);
       void refreshDesktopTaskDeadLetters(effectiveEnvironmentId);
@@ -7096,6 +5682,27 @@ export function App() {
           asRecord(effectiveResult.data.runtimeReply)
         ) ??
         "";
+      const pendingApproval = asRecord(effectiveResult.data.pendingApproval);
+      const pendingActorMessageId =
+        firstStringValue(
+          Array.isArray(pendingApproval.actorMessageIds) ? pendingApproval.actorMessageIds[0] : null,
+          pendingApproval.actorMessageId
+        ) ??
+        effectiveResult.data.taskRecordSummaries
+          ?.map((record) => asRecord(record))
+          .map((record) =>
+            firstStringValue(record.actorMessageId, asRecord(record.actorMessage).id)
+          )
+          .find((value) => Boolean(value)) ?? null;
+      const pendingApprovalId = firstStringValue(
+        Array.isArray(pendingApproval.approvalIds) ? pendingApproval.approvalIds[0] : null,
+        pendingApproval.approvalId
+      );
+      const pendingApprovalSessionId = firstStringValue(pendingApproval.sessionId);
+      const pendingApprovalThreadId = firstStringValue(pendingApproval.threadId) ?? currentThreadId;
+      const pendingPolicyIds = Array.isArray(pendingApproval.policyIds)
+        ? pendingApproval.policyIds.map((value) => String(value))
+        : [];
       console.info(
         "[conversation-send] status=%s threadId=%s turnId=%s attachmentCount=%d summaryLength=%d summary=%s assistantMessage=%s runtimeReply=%o taskResultCount=%d taskRecordCount=%d pendingApproval=%o",
         effectiveResult.status,
@@ -7116,35 +5723,30 @@ export function App() {
         effectiveResult.status === "rejected" ||
         effectiveResult.status === "awaiting_approval"
       ) {
-        const { failureSummary, nextThreadId } = await reconcileConversationSendResult(
-          effectiveResult,
-          effectiveEnvironmentId,
-          currentThreadId,
-          priorMessageCount
-        );
+        const nextThreadId =
+          effectiveResult.data.threadId && effectiveResult.data.threadId !== "thread"
+            ? effectiveResult.data.threadId
+            : currentThreadId;
+        const failureSummary =
+          effectiveResult.status === "error" || effectiveResult.status === "rejected"
+            ? effectiveResult.data.summary || "The live provider could not complete this conversation turn."
+            : null;
+        if (effectiveResult.status !== "awaiting_approval") {
+          await reconcileConversationSendResult(
+            effectiveResult,
+            effectiveEnvironmentId,
+            currentThreadId,
+            priorMessageCount
+          );
+        } else {
+          setSelectedThreadId(nextThreadId);
+          await loadThreadDetail(nextThreadId, effectiveEnvironmentId, {
+            preserveEmptyThread: true
+          });
+        }
         applyDesktopTaskCommandResults(effectiveResult.data.desktopTaskResults);
         mergeDesktopTaskRecordSummaries(effectiveResult.data.taskRecordSummaries);
-        const pendingApproval = asRecord(effectiveResult.data.pendingApproval);
-        const pendingActorMessageId =
-          firstStringValue(
-            Array.isArray(pendingApproval.actorMessageIds) ? pendingApproval.actorMessageIds[0] : null,
-            pendingApproval.actorMessageId
-          ) ??
-          effectiveResult.data.taskRecordSummaries
-            ?.map((record) => asRecord(record))
-            .map((record) =>
-              firstStringValue(record.actorMessageId, asRecord(record.actorMessage).id)
-            )
-            .find((value) => Boolean(value)) ?? null;
-        const pendingApprovalId = firstStringValue(
-          Array.isArray(pendingApproval.approvalIds) ? pendingApproval.approvalIds[0] : null,
-          pendingApproval.approvalId
-        );
-        const pendingApprovalSessionId = firstStringValue(pendingApproval.sessionId);
-        const pendingApprovalThreadId = firstStringValue(pendingApproval.threadId) ?? nextThreadId;
-        const pendingPolicyIds = Array.isArray(pendingApproval.policyIds)
-          ? pendingApproval.policyIds.map((value) => String(value))
-          : [];
+        const resolvedPendingApprovalThreadId = pendingApprovalThreadId ?? nextThreadId;
         if (failureSummary) {
           void refreshDesktopTaskRecords(effectiveEnvironmentId);
           const resolvedPendingApproval =
@@ -7153,14 +5755,39 @@ export function App() {
                   actorMessageId: pendingActorMessageId ?? null,
                   approvalId: pendingApprovalId ?? null,
                   sessionId: pendingApprovalSessionId ?? null,
-                  threadId: pendingApprovalThreadId ?? null,
+                  threadId: resolvedPendingApprovalThreadId ?? null,
                   policyIds: pendingPolicyIds
                 }
               : await refreshPendingConversationApproval(effectiveEnvironmentId);
-          if (applyApprovalRequiredConversationState(pendingApprovalThreadId, failureSummary, resolvedPendingApproval)) {
+          if (applyApprovalRequiredConversationState(resolvedPendingApprovalThreadId, failureSummary, resolvedPendingApproval)) {
             return;
           }
           failConversationSend(failureSummary);
+          return;
+        }
+      }
+
+      if (
+        effectiveResult.status === "awaiting_approval" &&
+        (pendingApprovalId || pendingActorMessageId)
+      ) {
+        const approvalSummary =
+          effectiveResult.data.summary ||
+          "This action requires approval before I can continue.";
+        if (
+          applyApprovalRequiredConversationState(currentThreadId, approvalSummary, {
+            actorMessageId: pendingActorMessageId ?? null,
+            approvalId: pendingApprovalId ?? null,
+            sessionId: pendingApprovalSessionId ?? null,
+            policyIds: pendingPolicyIds
+          })
+        ) {
+          void refreshDesktopTaskRecords(effectiveEnvironmentId);
+          void refreshDesktopTaskActorFlow(effectiveEnvironmentId, {
+            sessionId: pendingApprovalSessionId ?? null,
+            approvalId: pendingApprovalId ?? null,
+            actorMessageId: pendingActorMessageId ?? null
+          });
           return;
         }
       }
@@ -7176,7 +5803,6 @@ export function App() {
           actorMessageId: approvalActorMessageId ?? null
         });
       } else {
-        const pendingApproval = asRecord(result.data.pendingApproval);
         const actorMessageId =
           firstStringValue(
             Array.isArray(pendingApproval.actorMessageIds) ? pendingApproval.actorMessageIds[0] : null,
@@ -7505,47 +6131,21 @@ export function App() {
       });
       if (
         workspaceResult.data.threads.length > 0 &&
-        allowSeedFallback &&
-        !preferredThreadId &&
-        typeof createConversationThread === "function"
+        !preferredThreadId
       ) {
-        const result = await createConversationThread({
-          environmentId,
-          title: "Default Thread",
-          summary: "Primary context-chat thread for the current desktop session."
-        });
-        await refreshConversationThreadList(environmentId, result.data.threadId);
-        stickyConversationThreadIdRef.current = result.data.threadId;
-        setSelectedThreadId(result.data.threadId);
-        await loadThreadDetail(result.data.threadId, environmentId, {
-          preserveEmptyThread: true
-        });
-        return;
+        const existingThreadId = applyConversationThreadList(workspaceResult.data.threads, preferredThreadIdOverride);
+        if (existingThreadId) {
+          await loadThreadDetail(existingThreadId, environmentId, {
+            preserveEmptyThread: true
+          });
+          return;
+        }
       }
       if (workspaceResult.data.threads.length === 0) {
         const { threadResult, nextThreadId } = await refreshConversationThreadList(
           environmentId,
           preferredThreadIdOverride
         );
-        if (
-          threadResult.data.length > 0 &&
-          allowSeedFallback &&
-          !preferredThreadId &&
-          typeof createConversationThread === "function"
-        ) {
-          const result = await createConversationThread({
-            environmentId,
-            title: "Default Thread",
-            summary: "Primary context-chat thread for the current desktop session."
-          });
-          await refreshConversationThreadList(environmentId, result.data.threadId);
-          stickyConversationThreadIdRef.current = result.data.threadId;
-        setSelectedThreadId(result.data.threadId);
-          await loadThreadDetail(result.data.threadId, environmentId, {
-            preserveEmptyThread: true
-          });
-          return;
-        }
         if (threadResult.data.length > 0) {
           if (nextThreadId) {
             await loadThreadDetail(nextThreadId, environmentId);
@@ -7599,10 +6199,12 @@ export function App() {
           selectedThread?.turns.length ?? 0,
           workspaceSelectedThread.turns.length
         );
-      } else if (nextThreadId && selectedThread?.threadId !== nextThreadId) {
-        setSelectedThread(null);
-        setSelectedTurnId(null);
-        setSelectedTurn(null);
+      } else if (nextThreadId) {
+        if (selectedThread?.threadId !== nextThreadId) {
+          await loadThreadDetail(nextThreadId, environmentId, {
+            preserveEmptyThread: true
+          });
+        }
       } else if (!nextThreadId) {
         setSelectedThread(null);
         setSelectedTurnId(null);
@@ -7823,6 +6425,19 @@ export function App() {
       setSelectedTurn(detailResult.data);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Failed to load turn detail.");
+    }
+  }
+
+  function selectConversationThread(threadId: string): void {
+    stickyConversationThreadIdRef.current = threadId;
+    setSelectedThreadId(threadId);
+    if (
+      effectiveEnvironmentId &&
+      (selectedThreadIdRef.current !== threadId || !selectedThread || selectedThread.threadId !== threadId)
+    ) {
+      void loadThreadDetail(threadId, effectiveEnvironmentId, {
+        preserveEmptyThread: true
+      });
     }
   }
 
@@ -8751,6 +7366,37 @@ export function App() {
       try {
         const result = await window.sbclAgentDesktop.query.approvalRequestDetail(requestId, environmentId);
         setSelectedApproval(result.data);
+        const linkedWorkItemId =
+          result.data.linkedEntities.find((entity) => entity.entityType === "work-item")?.entityId ?? null;
+        if (linkedWorkItemId) {
+          const focus = await refreshOrchestrationFocus({
+            environmentId,
+            workItemId: linkedWorkItemId
+          });
+          const resolvedPlanId = firstStringValue(
+            asRecord(focus).planId,
+            asRecord(asRecord(focus).plan).id
+          );
+          if (resolvedPlanId) {
+            await Promise.all([
+              refreshOrchestrationSnapshot({
+                environmentId,
+                planId: resolvedPlanId
+              }),
+              refreshPlanVerification({
+                environmentId,
+                planId: resolvedPlanId
+              })
+            ]);
+          } else {
+            setOrchestrationSnapshot(null);
+            setPlanVerification(null);
+          }
+        } else {
+          setOrchestrationFocus(null);
+          setOrchestrationSnapshot(null);
+          setPlanVerification(null);
+        }
       } catch (error) {
         setErrorMessage(error instanceof Error ? error.message : "Failed to load approval detail.");
       } finally {
@@ -8788,6 +7434,7 @@ export function App() {
       await loadApprovalWorkspace(effectiveEnvironmentId);
       await loadApprovalDetail(requestId, effectiveEnvironmentId);
       await loadWorkWorkspace(effectiveEnvironmentId);
+      await refreshOrchestrationInbox(effectiveEnvironmentId);
       if (decision === "approve") {
         await loadProjectWorkspace(effectiveEnvironmentId);
       }
@@ -8836,6 +7483,7 @@ export function App() {
         const result = await window.sbclAgentDesktop.query.workItemList(environmentId);
         setWorkItems(result.data);
         setSelectedWorkItemId((current) => current ?? result.data[0]?.workItemId ?? null);
+        void refreshOrchestrationInbox(environmentId);
       } catch (error) {
         setErrorMessage(error instanceof Error ? error.message : "Failed to load work workspace.");
       } finally {
@@ -8863,6 +7511,30 @@ export function App() {
         setSelectedWorkItemPlan(plan.data);
         const workflow = await window.sbclAgentDesktop.query.workflowRecordDetail(result.data.workflowRecordId, environmentId);
         setSelectedWorkflowRecord(workflow.data);
+        const focus = await refreshOrchestrationFocus({
+          environmentId,
+          workflowRecordId: result.data.workflowRecordId,
+          workItemId
+        });
+        const resolvedPlanId = firstStringValue(
+          asRecord(focus).planId,
+          asRecord(asRecord(focus).plan).id
+        );
+        if (resolvedPlanId) {
+          await Promise.all([
+            refreshOrchestrationSnapshot({
+              environmentId,
+              planId: resolvedPlanId
+            }),
+            refreshPlanVerification({
+              environmentId,
+              planId: resolvedPlanId
+            })
+          ]);
+        } else {
+          setOrchestrationSnapshot(null);
+          setPlanVerification(null);
+        }
       } catch (error) {
         setErrorMessage(error instanceof Error ? error.message : "Failed to load work item detail.");
       } finally {
@@ -8882,7 +7554,11 @@ export function App() {
     await loadWorkWorkspace(effectiveEnvironmentId);
     if (workItemId) {
       await loadWorkItemDetail(workItemId, effectiveEnvironmentId);
+      return;
     }
+    setOrchestrationFocus(null);
+    setOrchestrationSnapshot(null);
+    setPlanVerification(null);
   }
 
   async function loadActivityWorkspace(environmentId: string): Promise<void> {
@@ -8930,179 +7606,417 @@ export function App() {
     () => environmentEvents.find((event) => event.cursor === selectedEventCursor) ?? null,
     [environmentEvents, selectedEventCursor]
   );
+  const workspaceInspectorProps = useMemo(
+    () => ({
+      activeWorkspace,
+      artifacts,
+      binding,
+      onToggleInspector: () => void toggleInspectorPinned(),
+      panelRef: undefined,
+      renderChrome: false,
+      conversationDraft,
+      selectedBrowserDomain,
+      conversationRecoveryHandoff,
+      runtimeRecoveryLaunch,
+      environmentEvents,
+      lispParenColors,
+      resolvedTheme,
+      runtimeForm,
+      runtimeEntityDetail,
+      runtimeInspection,
+      runtimeSummary,
+      runtimeTelemetry,
+      consoleLogStream,
+      diagnosticReports,
+      selectedConsolePlane,
+      selectedConsoleSourceFilter,
+      visibleConsoleEntryCount: (consoleLogStream?.data.entries ?? []).filter(
+        (entry) => selectedConsoleSourceFilter === "All Sources" || entry.source === selectedConsoleSourceFilter
+      ).length,
+      selectedDiagnosticSourceFilter,
+      visibleDiagnosticReportCount: diagnosticReports.filter(
+        (report) =>
+          selectedDiagnosticSourceFilter === "All Sources" || report.source === selectedDiagnosticSourceFilter
+      ).length,
+      transcriptEntries,
+      currentWorkspaceHistoryCount: currentWorkspaceHistory.length,
+      currentReplHistoryCount: currentProjectReplFocus?.history?.length ?? 0,
+      memoryEntries,
+      currentProject,
+      selectedProjectDetail,
+      selectedProjectSummary,
+      workspaceDraft: currentWorkspaceDraft,
+      workspaceResult: currentWorkspaceResult,
+      workspaceTitle: currentProject?.title ?? "Workspace",
+      selectedApproval,
+      selectedArtifact,
+      selectedConfigurationSection,
+      selectedConsoleEntry:
+        consoleLogStream?.data.entries.find((entry) => entry.entryId === selectedConsoleEntryId) ??
+        consoleLogStream?.data.entries[0] ??
+        null,
+      selectedConversationMessage,
+      selectedConversationSection,
+      selectedDiagnosticReport,
+      selectedDiagnosticReportSummary:
+        diagnosticReports.find((report) => report.reportId === selectedDiagnosticReportId) ??
+        diagnosticReports[0] ??
+        null,
+      currentEditorChangedFormCount,
+      currentEditorBufferDirty,
+      currentEditorBufferTitle,
+      currentEditorBuffers,
+      editorDraft: currentEditorDraft,
+      editorResult: currentEditorResult,
+      editorPackage: currentEditorPackage,
+      currentEditorCursorSymbol,
+      currentEditorCursorSymbolPackage,
+      currentEditorCursorSymbolHelp,
+      selectedDocumentationPage,
+      selectedEvidenceSection,
+      selectedEvent,
+      selectedIncident,
+      selectedMemory,
+      selectedOperateSection,
+      selectedTelemetryProcess:
+        runtimeTelemetry?.processes.find((process) => process.processId === selectedTelemetryProcessId) ??
+        runtimeTelemetry?.processes[0] ??
+        null,
+      selectedThread,
+      selectedTurn,
+      selectedWorkItem,
+      selectedWorkItemPlan,
+      selectedWorkflowRecord,
+      navigateToLinkedEntity,
+      setSelectedConversationMessageId,
+      sourcePreview,
+      status,
+      summary,
+      systemTheme,
+      themePreference,
+      providerSummary,
+      packageManagementSummary,
+      desktopTaskManifests,
+      desktopTaskRecords,
+      desktopTaskActorTrace,
+      desktopTaskDeadLetters,
+      orchestrationInbox,
+      orchestrationFocus,
+      orchestrationSnapshot,
+      planVerification,
+      mcpServerConfigs,
+      packageManagementStatusMessage,
+      packageManagementError,
+      packageManagementCommandResult,
+      quicklispSystemDraft,
+      qlotCommandDraft,
+      sourceRegistryDraftPath,
+      sourceRegistryEditOriginalPath,
+      localProjectPathDraft,
+      localProjectNameDraft,
+      providerProfileDraft,
+      selectedMcpServerId,
+      mcpServerDraft,
+      selectedProviderProfileName,
+      providerProfileStatusMessage,
+      providerProfileError,
+      mcpServerStatusMessage,
+      mcpServerError,
+      isSavingProviderProfile,
+      isUpdatingProviderRouting,
+      isSavingMcpServer,
+      isPackageManagementBusy,
+      tooltipScalePercent,
+      controlIconScalePercent,
+      dockIconScalePercent,
+      conversationTextScalePercent,
+      sourceCodeTextScalePercent,
+      openPublishedDocumentation: () =>
+        window.sbclAgentDesktop.desktop.openExternalLink(PUBLISHED_DOCUMENTATION_URL),
+      updateLispParenColor,
+      updateThemePreference: applyThemePreference,
+      updateDesktopSurfaceScalePreference,
+      setProviderProfileDraft,
+      setSelectedProviderProfileName,
+      setQuicklispSystemDraft,
+      setQlotCommandDraft,
+      setSourceRegistryDraftPath,
+      setSourceRegistryEditOriginalPath,
+      setLocalProjectPathDraft,
+      setLocalProjectNameDraft,
+      setSelectedMcpServerId,
+      setMcpServerDraft,
+      applyProviderRoutingMode,
+      activateProviderProfile,
+      saveProviderProfile,
+      installQuicklispPackage,
+      executeQlotCommand,
+      saveSourceRegistryEntry,
+      removeSourceRegistryPath,
+      saveLocalProject,
+      removeLocalProjectByName,
+      saveMcpServer,
+      removeMcpServer,
+      workItems
+    }),
+    [activeWorkspace, artifacts, binding, toggleInspectorPinned, conversationDraft, selectedBrowserDomain, conversationRecoveryHandoff, runtimeRecoveryLaunch, environmentEvents, lispParenColors, resolvedTheme, runtimeForm, runtimeEntityDetail, runtimeInspection, runtimeSummary, runtimeTelemetry, consoleLogStream, diagnosticReports, selectedConsolePlane, selectedConsoleSourceFilter, selectedDiagnosticSourceFilter, transcriptEntries, currentWorkspaceHistory.length, currentProjectReplFocus?.history?.length, memoryEntries, currentProject, selectedProjectDetail, selectedProjectSummary, currentWorkspaceDraft, currentWorkspaceResult, selectedApproval, selectedArtifact, selectedConfigurationSection, selectedConsoleEntryId, selectedConversationMessage, selectedConversationSection, selectedDiagnosticReport, selectedDiagnosticReportId, currentEditorChangedFormCount, currentEditorBufferDirty, currentEditorBufferTitle, currentEditorBuffers, currentEditorDraft, currentEditorResult, currentEditorPackage, currentEditorCursorSymbol, currentEditorCursorSymbolPackage, currentEditorCursorSymbolHelp, selectedDocumentationPage, selectedEvidenceSection, selectedEvent, selectedIncident, selectedMemory, selectedOperateSection, selectedTelemetryProcessId, selectedThread, selectedTurn, selectedWorkItem, selectedWorkItemPlan, selectedWorkflowRecord, navigateToLinkedEntity, setSelectedConversationMessageId, sourcePreview, status, summary, systemTheme, themePreference, providerSummary, packageManagementSummary, desktopTaskManifests, desktopTaskRecords, desktopTaskActorTrace, desktopTaskDeadLetters, orchestrationInbox, orchestrationFocus, orchestrationSnapshot, planVerification, mcpServerConfigs, packageManagementStatusMessage, packageManagementError, packageManagementCommandResult, quicklispSystemDraft, qlotCommandDraft, sourceRegistryDraftPath, sourceRegistryEditOriginalPath, localProjectPathDraft, localProjectNameDraft, providerProfileDraft, selectedMcpServerId, mcpServerDraft, selectedProviderProfileName, providerProfileStatusMessage, providerProfileError, mcpServerStatusMessage, mcpServerError, isSavingProviderProfile, isUpdatingProviderRouting, isSavingMcpServer, isPackageManagementBusy, tooltipScalePercent, controlIconScalePercent, dockIconScalePercent, conversationTextScalePercent, sourceCodeTextScalePercent, updateLispParenColor, applyThemePreference, updateDesktopSurfaceScalePreference, setProviderProfileDraft, setSelectedProviderProfileName, setQuicklispSystemDraft, setQlotCommandDraft, setSourceRegistryDraftPath, setSourceRegistryEditOriginalPath, setLocalProjectPathDraft, setLocalProjectNameDraft, setSelectedMcpServerId, setMcpServerDraft, applyProviderRoutingMode, activateProviderProfile, saveProviderProfile, installQuicklispPackage, executeQlotCommand, saveSourceRegistryEntry, removeSourceRegistryPath, saveLocalProject, removeLocalProjectByName, saveMcpServer, removeMcpServer, workItems]
+  );
+  const evidenceWorkspaceProps = useMemo(
+    () => ({
+      artifacts,
+      environmentFocusLabel,
+      eventFamilyFilter,
+      eventVisibilityFilter,
+      events: environmentEvents,
+      navigateToLinkedEntity,
+      openConversationDraft: () =>
+        openConversationDraftWithFocusOverride(
+          selectedArtifactId
+            ? {
+                ...createDefaultEnvironmentFocusState(),
+                kind: "evidence-artifact",
+                sourceWorkspace: "artifacts",
+                sourceSurface: "artifacts",
+                artifactId: selectedArtifactId
+              }
+            : {
+                ...createDefaultEnvironmentFocusState(),
+                kind: "evidence-event",
+                sourceWorkspace: "artifacts",
+                sourceSurface: "artifacts",
+                eventCursor: selectedEventCursor
+              }
+        ),
+      openInspectorSurface: () => navigateToDesktopPanel("inspector"),
+      selectedArtifact,
+      selectedArtifactId,
+      selectedEvent,
+      selectedEventCursor,
+      setEventFamilyFilter,
+      setEventVisibilityFilter,
+      setSelectedArtifactId,
+      setSelectedEventCursor
+    }),
+    [artifacts, environmentFocusLabel, eventFamilyFilter, eventVisibilityFilter, environmentEvents, navigateToLinkedEntity, openConversationDraftWithFocusOverride, selectedArtifactId, selectedEventCursor, selectedArtifact, selectedEvent, setEventFamilyFilter, setEventVisibilityFilter, setSelectedArtifactId, setSelectedEventCursor]
+  );
+  const editorSurfaceProps = useMemo(
+    () => ({
+      acceptCurrentBufferBaseline: acceptCurrentEditorBufferBaseline,
+      cloneEditorBuffer: cloneCurrentEditorBuffer,
+      createEditorBuffer,
+      currentBufferDirty: currentEditorBufferDirty,
+      currentBufferTitle: currentEditorBufferTitle,
+      deleteEditorBuffers: deleteCurrentEditorBuffers,
+      editorBuffers: currentEditorBuffers,
+      editorPackage: currentEditorPackage,
+      editorDraft: currentEditorDraft,
+      setEditorDraft: setCurrentEditorDraft,
+      editorResult: currentEditorResult,
+      packageBrowser,
+      runtimeEntityDetail,
+      runtimeInspection,
+      selectedBufferId: currentEditorBufferId,
+      setSelectedBufferId: setCurrentEditorBufferId,
+      sourcePreview,
+      runtimeSummary,
+      isEvaluating,
+      parenDepthColors: lispParenColors,
+      sourceCodeTextScalePercent,
+      inspectDefinitionSymbol: async (symbol: string, packageName?: string, mode?: RuntimeInspectionMode) => {
+        await browseRuntimeEntity(symbol, packageName, mode ?? "definitions");
+      },
+      fetchRuntimeSymbolHelp: async (symbol: string, packageName?: string) => {
+        if (!effectiveEnvironmentId || symbol.trim().length === 0) {
+          return null;
+        }
+        try {
+          const result = await window.sbclAgentDesktop.query.runtimeEntityDetail({
+            environmentId: effectiveEnvironmentId,
+            symbol: symbol.trim(),
+            packageName
+          });
+          return {
+            detail: result.data.signature
+              ? `${result.data.entityKind} • ${result.data.signature}`
+              : result.data.entityKind,
+            info: result.data.summary,
+            signature: result.data.signature ?? null,
+            type:
+              result.data.entityKind === "macro"
+                ? "keyword"
+                : result.data.entityKind === "function" || result.data.entityKind === "generic-function"
+                  ? "function"
+                  : result.data.entityKind === "variable"
+                    ? "variable"
+                    : result.data.entityKind === "class"
+                      ? "class"
+                      : "text",
+            packageName: result.data.packageName
+          };
+        } catch (_error) {
+          return null;
+        }
+      },
+      reportEditorCursorContext: ({
+        symbol,
+        packageName,
+        help
+      }: {
+        symbol: string | null;
+        packageName: string;
+        help: typeof currentEditorCursorSymbolHelp;
+      }) => {
+        setCurrentEditorCursorSymbol(symbol);
+        setCurrentEditorCursorSymbolPackage(packageName);
+        setCurrentEditorCursorSymbolHelp(help);
+      },
+      evaluateEditorBuffer,
+      openEditorSourceFileDialog,
+      openEditorSourceFileSaveDialog,
+      saveCurrentEditorBuffer: handleSaveCurrentEditorBuffer,
+      revertCurrentBufferToBaseline: revertCurrentEditorBufferToBaseline,
+      openSourcePreview: loadSourcePreview,
+      openConversationRepl: async (form: string) => {
+        setRuntimeForm(form);
+        updateRuntimeInspectorPackage(currentEditorPackage);
+        await navigateToConversationSection("repl");
+      },
+      setRuntimeForm,
+      openInspectorSurface: () => navigateToDesktopPanel("inspector")
+    }),
+    [acceptCurrentEditorBufferBaseline, cloneCurrentEditorBuffer, createEditorBuffer, currentEditorBufferDirty, currentEditorBufferTitle, deleteCurrentEditorBuffers, currentEditorBuffers, currentEditorPackage, currentEditorDraft, setCurrentEditorDraft, currentEditorResult, packageBrowser, runtimeEntityDetail, runtimeInspection, currentEditorBufferId, setCurrentEditorBufferId, sourcePreview, runtimeSummary, isEvaluating, lispParenColors, sourceCodeTextScalePercent, browseRuntimeEntity, effectiveEnvironmentId, currentEditorCursorSymbolHelp, evaluateEditorBuffer, openEditorSourceFileDialog, openEditorSourceFileSaveDialog, handleSaveCurrentEditorBuffer, revertCurrentEditorBufferToBaseline, loadSourcePreview, setRuntimeForm, updateRuntimeInspectorPackage, navigateToConversationSection]
+  );
+  const transcriptSurfaceProps = useMemo(
+    () => ({
+      openConversationRepl: async (form: string) => {
+        setRuntimeForm(form);
+        updateRuntimeInspectorPackage(currentWorkspacePackage);
+        await navigateToConversationSection("repl");
+      },
+      openConversationContext: async (threadId: string, turnId?: string | null) => {
+        setSelectedThreadId(threadId);
+        if (turnId) {
+          setSelectedTurnId(turnId);
+          await navigateToConversationSection("turns");
+          return;
+        }
+        await navigateToConversationSection("threads");
+      },
+      openEvidenceObservation: () => navigateToEvidenceSection("artifacts"),
+      openInspectorSurface: () => navigateToDesktopPanel("inspector"),
+      openListener: async (form: string) => {
+        setRuntimeForm(form);
+        await navigateToExecutionSection("listener");
+      },
+      selectedEntryKey: selectedTranscriptEntryKey,
+      selectedSourceFilter: selectedTranscriptSourceFilter,
+      setWorkspaceDraft: setCurrentWorkspaceDraft,
+      setSelectedEntryKey: setSelectedTranscriptEntryKey,
+      setSelectedSourceFilter: setSelectedTranscriptSourceFilter,
+      transcriptEntries
+    }),
+    [setRuntimeForm, updateRuntimeInspectorPackage, currentWorkspacePackage, navigateToConversationSection, setSelectedThreadId, setSelectedTurnId, navigateToEvidenceSection, navigateToExecutionSection, selectedTranscriptEntryKey, selectedTranscriptSourceFilter, setCurrentWorkspaceDraft, setSelectedTranscriptEntryKey, setSelectedTranscriptSourceFilter, transcriptEntries]
+  );
+  const memoryWorkspaceProps = useMemo(
+    () => ({
+      memories: memoryEntries,
+      selectedMemoryId,
+      setSelectedMemoryId,
+      onUpdateMemory: handleUpdateMemory,
+      onDeleteMemory: handleDeleteMemory,
+      pendingDeleteMemoryId,
+      pendingUpdateMemoryId
+    }),
+    [memoryEntries, selectedMemoryId, setSelectedMemoryId, handleUpdateMemory, handleDeleteMemory, pendingDeleteMemoryId, pendingUpdateMemoryId]
+  );
 
   const globalAttentionItems = useMemo<GlobalAttentionItem[]>(() => {
-    if (!summary || !status) {
-      return [];
-    }
-
-    const actorSystemPanel = asRecord(desktopTaskActorSystemPanel);
-    const supervisionIncidents = asRecord(actorSystemPanel.supervisionIncidents);
-    const actorSystemOpenIncidents =
-      typeof supervisionIncidents.incidentCount === "number"
-        ? supervisionIncidents.incidentCount
-        : Array.isArray(supervisionIncidents.incidents)
-          ? supervisionIncidents.incidents.length
-          : 0;
-
-    const items: GlobalAttentionItem[] = [
-      {
-        id: "approvals-awaiting",
-        label: "Approvals Awaiting",
-        summary: "Governed actions are paused until explicit approval decisions are made.",
-        value: summary.attention.approvalsAwaiting,
-        workspace: "runtime",
-        tone: summary.attention.approvalsAwaiting > 0 ? "warning" : "steady"
-      },
-      {
-        id: "open-incidents",
-        label: "Open Incidents",
-        summary: "Failure and recovery obligations are active and remain durable operator work.",
-        value: summary.attention.openIncidents,
-        workspace: "incidents",
-        tone: summary.attention.openIncidents > 0 ? "danger" : "steady"
-      },
-      {
-        id: "blocked-work",
-        label: "Blocked Work",
-        summary: "Execution success is not enough; blocked workflow obligations still prevent closure.",
-        value: summary.attention.blockedWork,
-        workspace: "runtime",
-        tone: summary.attention.blockedWork > 0 ? "warning" : "steady"
-      },
-      {
-        id: "interrupted-turns",
-        label: "Interrupted Turns",
-        summary: "Structured conversation state contains interrupted or deferred turns that still matter.",
-        value: summary.attention.interruptedTurns,
-        workspace: "conversations",
-        tone: summary.attention.interruptedTurns > 0 ? "warning" : "steady"
-      },
-      {
-        id: "active-streams",
-        label: "Active Streams",
-        summary: "Replayable event evidence should remain legible across the environment, not buried in logs.",
-        value: summary.attention.activeStreams,
-        workspace: "artifacts",
-        tone: summary.attention.activeStreams > 0 ? "active" : "steady"
-      },
-      {
-        id: "runtime-posture",
-        label: "Runtime Posture",
-        summary:
-          status.runtimeState === "recovering"
-            ? "The runtime is recovering and needs direct attention before normal mutation resumes."
-            : "The runtime is warm, but its current state still needs to remain governed and inspectable.",
-        value: status.runtimeState === "recovering" ? 1 : 0,
-        workspace: "runtime",
-        tone: status.runtimeState === "recovering" ? "danger" : "active"
-      },
-      {
-        id: "artifact-surface",
-        label: "Artifact Surface",
-        summary: "Recent durable outputs and evidence remain available as first-class engineering objects.",
-        value: summary.recentArtifacts.length,
-        workspace: "artifacts",
-        tone: summary.recentArtifacts.length > 0 ? "active" : "steady"
-      },
-      {
-        id: "actor-system",
-        label: "Actor System",
-        summary:
-          actorSystemOpenIncidents > 0
-            ? "Actor supervision incidents are open and should be inspected through hierarchy and workflow state."
-            : "Actor hierarchy, workflow edges, and mailbox state are available for direct inspection.",
-        value: actorSystemOpenIncidents,
-        workspace: "runtime",
-        tone: actorSystemOpenIncidents > 0 ? "danger" : "active"
-      }
-    ];
-
-    return items.sort((left, right) => attentionToneWeight(right.tone) - attentionToneWeight(left.tone) || right.value - left.value);
+    return buildGlobalAttentionItems({
+      desktopTaskActorSystemPanel,
+      status,
+      summary
+    });
   }, [desktopTaskActorSystemPanel, status, summary]);
 
   const workspaceAttention = useMemo(() => {
-    const base = new Map<WorkspaceId, SignalCounts>();
-
-    for (const workspace of workspaceOrder.filter((item) => item.primary)) {
-      base.set(workspace.id, { red: 0, yellow: 0, blue: 0 });
-    }
-
-    for (const item of globalAttentionItems) {
-      const journeyWorkspace = topLevelJourneyWorkspace(canonicalWorkspace(item.workspace));
-      const current = base.get(journeyWorkspace);
-      const priority = signalPriorityForTone(item.tone);
-      if (!current || !priority || item.value <= 0) {
-        continue;
-      }
-      current[priority] += item.value;
-    }
-
-    return base;
+    return buildWorkspaceAttentionMap(globalAttentionItems);
   }, [globalAttentionItems]);
 
   const pageSignalCounts = useMemo<SignalCounts>(
-    () => signalCountsForWorkspace(activeWorkspace, globalAttentionItems),
+    () => buildPageSignalCounts(activeWorkspace, globalAttentionItems),
     [activeWorkspace, globalAttentionItems]
   );
+  const conversationsWorkspaceProps = useMemo(
+    () => ({
+      activateConversationInspectorSection,
+      actorSystemPanel: desktopTaskActorSystemPanel,
+      conversationDraft,
+      conversationRecoveryHandoff,
+      draftFocusActions: conversationDraftFocusActions,
+      environmentFocusLabel,
+      environmentFocusSummary: environmentFocusPresentation.summary,
+      environmentFocusTitle: environmentFocusPresentation.title,
+      conversationSections,
+      currentReplSessionId,
+      createReplSession: handleCreateReplSession,
+      evaluateRuntimeForm,
+      inspectRuntimeSymbol,
+      isEvaluating,
+      isInspectingRuntime,
+      navigateToLinkedEntity,
+      onOpenCreateConversationSession: () => {
+        setIsConversationSessionCreateDialogOpen(true);
+      },
+      onOpenRenameConversationSession: (threadId: string, title: string) => {
+        setConversationThreadRenameTargetId(threadId);
+        setConversationThreadRenameDraft(title);
+        setIsConversationThreadRenameDialogOpen(true);
+      },
+      pageSignalCounts,
+      replSessionTitleDraft,
+      replSessions: currentProjectReplSessions,
+      runtimeForm,
+      runtimeInspection,
+      runtimeInspectionMode,
+      runtimeInspectorPackage,
+      runtimeInspectorSymbol,
+      runtimeResult,
+      runtimeSummary,
+      switchReplSession: handleSwitchReplSession,
+      selectedSection: selectedConversationSection,
+      selectedConversationMessageId,
+      selectedThread,
+      selectedThreadId,
+      selectedTurn,
+      selectedTurnId,
+      setReplSessionTitleDraft,
+      setConversationDraft,
+      setSelectedConversationMessageId,
+      setRuntimeForm,
+      setRuntimeInspectionMode: updateRuntimeInspectionMode,
+      setRuntimeInspectorPackage: updateRuntimeInspectorPackage,
+      setRuntimeInspectorSymbol: updateRuntimeInspectorSymbol,
+      setSelectedThreadId: selectConversationThread,
+      setSelectedTurnId,
+      openInspectorSurface: () => navigateToDesktopPanel("inspector"),
+      threads
+    }),
+    [activateConversationInspectorSection, desktopTaskActorSystemPanel, conversationDraft, conversationRecoveryHandoff, conversationDraftFocusActions, environmentFocusLabel, environmentFocusPresentation.summary, environmentFocusPresentation.title, conversationSections, currentReplSessionId, handleCreateReplSession, evaluateRuntimeForm, inspectRuntimeSymbol, isEvaluating, isInspectingRuntime, navigateToLinkedEntity, pageSignalCounts, replSessionTitleDraft, currentProjectReplSessions, runtimeForm, runtimeInspection, runtimeInspectionMode, runtimeInspectorPackage, runtimeInspectorSymbol, runtimeResult, runtimeSummary, handleSwitchReplSession, selectedConversationSection, selectedConversationMessageId, selectedThread, selectedThreadId, selectedTurn, selectedTurnId, setReplSessionTitleDraft, setConversationDraft, setSelectedConversationMessageId, setRuntimeForm, updateRuntimeInspectionMode, updateRuntimeInspectorPackage, updateRuntimeInspectorSymbol, selectConversationThread, setSelectedTurnId, threads]
+  );
   const operateSectionSignals = useMemo(
-    () =>
-      new Map<OperateSection, SignalCounts>([
-        [
-          "orientation",
-          signalCountsFromItems(globalAttentionItems.filter((item) => item.id === "runtime-posture"))
-        ],
-        [
-          "journeys",
-          signalCountsFromItems(
-            globalAttentionItems.filter((item) =>
-              ["approvals-awaiting", "open-incidents", "blocked-work", "interrupted-turns"].includes(item.id)
-            )
-          )
-        ],
-        [
-          "evidence",
-          signalCountsFromItems(
-            globalAttentionItems.filter((item) => ["active-streams", "artifact-surface"].includes(item.id))
-          )
-        ]
-      ]),
+    () => buildOperateSectionSignals(globalAttentionItems) as Map<OperateSection, SignalCounts>,
     [globalAttentionItems]
   );
   const executionSectionSignals = useMemo(
-    () =>
-      new Map<ExecutionSection, SignalCounts>([
-        [
-          "listener",
-          signalCountsFromItems(globalAttentionItems.filter((item) => item.id === "runtime-posture"))
-        ],
-        [
-          "work",
-          signalCountsFromItems(globalAttentionItems.filter((item) => item.id === "blocked-work"))
-        ]
-      ]),
+    () => buildExecutionSectionSignals(globalAttentionItems) as Map<ExecutionSection, SignalCounts>,
     [globalAttentionItems]
   );
   const recoverySectionSignals = useMemo(
-    () =>
-      new Map<RecoverySection, SignalCounts>([
-        [
-          "incidents",
-          signalCountsFromItems(globalAttentionItems.filter((item) => item.id === "open-incidents"))
-        ]
-      ]),
+    () => buildRecoverySectionSignals(globalAttentionItems) as Map<RecoverySection, SignalCounts>,
     [globalAttentionItems]
   );
   const evidenceSectionSignals = useMemo(
-    () =>
-      new Map<EvidenceSection, SignalCounts>([
-        [
-          "artifacts",
-          signalCountsFromItems(
-            globalAttentionItems.filter((item) => item.id === "artifact-surface" || item.id === "active-streams")
-          )
-        ]
-      ]),
+    () => buildEvidenceSectionSignals(globalAttentionItems) as Map<EvidenceSection, SignalCounts>,
     [globalAttentionItems]
   );
   const centerAttentionSignals = useMemo<DesktopAttentionSignal[]>(() => {
@@ -9297,7 +8211,7 @@ export function App() {
   }, [activeHostedApp, activeHostedAppDescriptor.label, desktopModel?.activePanel]);
 
   const selectedBrowserDomainDescriptor = useMemo(
-    () => browserDomains.find((domain) => domain.id === selectedBrowserDomain) ?? browserDomains[0],
+    () => selectBrowserDomainDescriptor(selectedBrowserDomain),
     [selectedBrowserDomain]
   );
 
@@ -9324,206 +8238,23 @@ export function App() {
 
 
   const browserSurfaceEntries = useMemo<BrowserSurfaceEntry[]>(() => {
-    switch (selectedBrowserDomain) {
-      case "systems":
-        return (runtimeSummary?.loadedSystemEntries ?? []).slice(0, 4).map((system) => ({
-          key: system.name,
-          title: system.name,
-          detail: system.status,
-          meta: system.type === "asdf-system" ? "ASDF system" : "System"
-        }));
-      case "packages": {
-        const packageNames = Array.from(
-          new Set([
-            runtimeSummary?.currentPackage,
-            packageBrowser?.data.packageName,
-            ...(runtimeSummary?.scopes.map((scope) => scope.packageName) ?? [])
-          ].filter((value): value is string => Boolean(value)))
-        );
-        return packageNames.slice(0, 4).map((packageName) => ({
-          key: packageName,
-          title: packageName,
-          detail:
-            packageName === packageBrowser?.data.packageName
-              ? packageBrowser?.data.summary ?? "Current package browser target."
-              : "Available package surface in the live image.",
-          meta: packageName === runtimeSummary?.currentPackage ? "Current package" : "Package"
-        }));
-      }
-      case "symbols": {
-        const symbols = [
-          ...(packageBrowser?.data.externalSymbols ?? []),
-          ...(packageBrowser?.data.internalSymbols ?? [])
-        ];
-        return symbols.slice(0, 4).map((symbol) => ({
-          key: `${symbol.visibility}:${symbol.symbol}`,
-          title: symbol.symbol,
-          detail: symbol.kind,
-          meta: symbol.visibility
-        }));
-      }
-      case "classes-methods": {
-        const symbols = [
-          ...(packageBrowser?.data.externalSymbols ?? []),
-          ...(packageBrowser?.data.internalSymbols ?? [])
-        ].filter((symbol) => symbol.kind === "class" || symbol.kind === "generic-function");
-        return symbols.slice(0, 4).map((symbol) => ({
-          key: `${symbol.kind}:${symbol.symbol}`,
-          title: symbol.symbol,
-          detail: symbol.kind === "class" ? "Class" : "Generic function",
-          meta: "Live entity"
-        }));
-      }
-      case "runtime-objects":
-        return (runtimeSummary?.scopes ?? []).slice(0, 4).map((scope) => ({
-          key: scope.scopeId,
-          title: scope.symbolName ?? scope.packageName,
-          detail: scope.summary,
-          meta: scope.kind
-        }));
-      case "console":
-        return (consoleLogStream?.data.entries ?? []).slice(0, 4).map((entry) => ({
-          key: entry.entryId,
-          title: entry.source,
-          detail: entry.message,
-          meta: entry.type
-        }));
-      case "diagnostics":
-        return diagnosticReports.slice(0, 4).map((report) => ({
-          key: report.reportId,
-          title: report.title,
-          detail: report.summary,
-          meta: report.kind
-        }));
-      case "processes":
-        return (runtimeTelemetry?.processes ?? []).slice(0, 4).map((process) => ({
-          key: process.processId,
-          title: process.label,
-          detail: process.summary,
-          meta: process.state
-        }));
-      case "performance":
-        return [
-          {
-            key: "cpu",
-            title: "CPU Posture",
-            detail: runtimeTelemetry?.cpu.summary ?? "CPU telemetry is not yet available.",
-            meta:
-              runtimeTelemetry?.cpu.utilizationPercent != null
-                ? `${runtimeTelemetry.cpu.utilizationPercent.toFixed(1)}%`
-                : "n/a"
-          },
-          {
-            key: "memory",
-            title: "Memory Posture",
-            detail: runtimeTelemetry?.memory.summary ?? "Memory telemetry is not yet available.",
-            meta:
-              runtimeTelemetry?.memory.rssMb != null
-                ? `${runtimeTelemetry.memory.rssMb.toFixed(1)} MB`
-                : "n/a"
-          }
-        ];
-      case "host-io":
-        return [
-          {
-            key: "network",
-            title: "Network",
-            detail: runtimeTelemetry?.network.summary ?? "Network telemetry is not yet available.",
-            meta:
-              runtimeTelemetry?.network.openConnectionCount != null
-                ? `${runtimeTelemetry.network.openConnectionCount} open`
-                : "n/a"
-          },
-          {
-            key: "disk",
-            title: "Disk I/O",
-            detail: runtimeTelemetry?.disk.summary ?? "Disk telemetry is not yet available.",
-            meta:
-              runtimeTelemetry?.disk.readKbps != null || runtimeTelemetry?.disk.writeKbps != null
-                ? `${runtimeTelemetry.disk.readKbps ?? 0}/${runtimeTelemetry.disk.writeKbps ?? 0} KB/s`
-                : "n/a"
-          }
-        ];
-      case "source": {
-        const sourceEntries = [
-          ...(runtimeEntityDetail?.data.relatedItems ?? []),
-          ...(runtimeInspection?.data.items ?? [])
-        ].filter((item, index, items) => Boolean(item.path) && items.findIndex((entry) => entry.path === item.path && entry.line === item.line) === index);
-        return sourceEntries.slice(0, 4).map((entry) => ({
-          key: `${entry.path}:${entry.line ?? 0}`,
-          title: entry.label,
-          detail: entry.path ?? "No source path",
-          meta: entry.line ? `Line ${entry.line}` : entry.emphasis ?? "Source"
-        }));
-      }
-      case "xref":
-        return (runtimeEntityDetail?.data.relatedItems ?? []).slice(0, 4).map((item, index) => ({
-          key: `${item.label}:${item.path ?? index}`,
-          title: item.label,
-          detail: item.detail,
-          meta: item.emphasis ?? "Reference"
-        }));
-      case "governance":
-        return [
-          ...approvalRequests.slice(0, 2).map((request) => ({
-            key: request.requestId,
-            title: request.title,
-            detail: request.summary,
-            meta: request.state
-          })),
-          ...incidents.slice(0, 1).map((incident) => ({
-            key: incident.incidentId,
-            title: incident.title,
-            detail: `Severity ${incident.severity}`,
-            meta: incident.state
-          })),
-          ...workItems.slice(0, 1).map((item) => ({
-            key: item.workItemId,
-            title: item.title,
-            detail: item.waitingReason ?? "Governed work remains attached to this environment.",
-            meta: item.state
-          }))
-        ].slice(0, 4);
-      case "linked-conversations":
-        return threads.slice(0, 4).map((thread) => ({
-          key: thread.threadId,
-          title: thread.title,
-          detail: thread.summary,
-          meta: thread.state
-        }));
-      case "documentation":
-        return [
-          {
-            key: "focus",
-            title: runtimeInspection?.data.symbol ?? runtimeEntityDetail?.data.symbol ?? "Current Focus",
-            detail:
-              runtimeInspection?.data.summary ??
-              runtimeEntityDetail?.data.summary ??
-              "No focused entity summary is available yet.",
-            meta: "Runtime focus"
-          },
-          {
-            key: "package",
-            title: packageBrowser?.data.packageName ?? runtimeSummary?.currentPackage ?? "Package Context",
-            detail:
-              packageBrowser?.data.summary ??
-              "Package-linked documentation becomes available when a package is selected.",
-            meta: "Package"
-          },
-          {
-            key: "source",
-            title: sourcePreview?.data.path ?? "Source Relationship",
-            detail:
-              sourcePreview?.data.summary ??
-              runtimeSummary?.sourceRelationship ??
-              "Source-backed documentation becomes available when a source artifact is in focus.",
-            meta: "Source"
-          }
-        ];
-      default:
-        return [];
-    }
-  }, [approvalRequests, consoleLogStream, diagnosticReports, incidents, packageBrowser, runtimeEntityDetail, runtimeInspection, runtimeSummary, runtimeTelemetry, selectedBrowserDomain, sourcePreview, threads, workItems]);
+    return buildBrowserSurfaceEntries({
+      approvalRequests,
+      orchestrationInbox,
+      consoleLogStream,
+      diagnosticReports,
+      incidents,
+      packageBrowser,
+      runtimeEntityDetail,
+      runtimeInspection,
+      runtimeSummary,
+      runtimeTelemetry,
+      selectedBrowserDomain,
+      sourcePreview,
+      threads,
+      workItems
+    });
+  }, [approvalRequests, orchestrationInbox, consoleLogStream, diagnosticReports, incidents, packageBrowser, runtimeEntityDetail, runtimeInspection, runtimeSummary, runtimeTelemetry, selectedBrowserDomain, sourcePreview, threads, workItems]);
   const shellProactiveLead = useMemo(
     () => globalAttentionItems.find((item) => item.value > 0) ?? globalAttentionItems[0] ?? null,
     [globalAttentionItems]
@@ -10798,6 +9529,67 @@ export function App() {
     }
   }
 
+
+  function resolveOrchestrationApprovalContext(threadIdHint?: string | null): {
+    approvalId: string | null;
+    actorMessageId: string | null;
+    sessionId: string | null;
+    threadId: string | null;
+    operator: string | null;
+  } | null {
+    const candidates = [asRecord(orchestrationFocus), ...orchestrationInbox.map((entry) => asRecord(entry))];
+    const normalizedThreadIdHint = firstStringValue(threadIdHint);
+    const matchingCandidate =
+      candidates.find((candidate) => {
+        const operator = firstStringValue(
+          candidate.primaryCommandOperator,
+          asRecord(candidate.primaryCommand).operator
+        );
+        if (operator !== "desktop-task/approve-approval") {
+          return false;
+        }
+        const candidateThreadId = firstStringValue(candidate.threadId);
+        return normalizedThreadIdHint == null || candidateThreadId == null || candidateThreadId === normalizedThreadIdHint;
+      }) ??
+      (normalizedThreadIdHint == null
+        ? candidates.find((candidate) => {
+            const operator = firstStringValue(
+              candidate.primaryCommandOperator,
+              asRecord(candidate.primaryCommand).operator
+            );
+            return operator === "desktop-task/approve-approval";
+          })
+        : undefined);
+    if (!matchingCandidate) {
+      return null;
+    }
+    const primaryCommand = asRecord(matchingCandidate.primaryCommand);
+    const payload = asRecord(primaryCommand.payload);
+    return {
+      approvalId: firstStringValue(
+        matchingCandidate.approvalId,
+        payload.approvalId,
+        asRecord(matchingCandidate.approvalSummary).approvalId
+      ),
+      actorMessageId: firstStringValue(
+        matchingCandidate.actorMessageId,
+        payload.actorMessageId,
+        asRecord(matchingCandidate.approvalSummary).actorMessageId
+      ),
+      sessionId: firstStringValue(
+        matchingCandidate.sessionId,
+        payload.sessionId,
+        asRecord(matchingCandidate.approvalSummary).sessionId
+      ),
+      threadId: firstStringValue(
+        matchingCandidate.threadId,
+        asRecord(matchingCandidate.approvalSummary).threadId,
+        normalizedThreadIdHint
+      ),
+      operator: firstStringValue(matchingCandidate.primaryCommandOperator, primaryCommand.operator)
+    };
+  }
+
   function focusDesktopWindow(windowId: string): void {
     setDesktopFocusById((current) => ({ ...current, [activeDesktopId]: windowId }));
     setDesktopWindowZCounterById((current) => {
@@ -11616,6 +10408,9 @@ export function App() {
         conversationSendError={conversationSendError}
         conversationStream={conversationStream}
         isSendingConversation={isSendingConversation}
+        orchestrationFocus={orchestrationFocus}
+        orchestrationSnapshot={orchestrationSnapshot}
+        planVerification={planVerification}
         onConversationAttachmentSelection={handleConversationAttachmentSelection}
         pendingConversationComposerFocusThreadId={pendingConversationComposerFocusThreadId}
         removeConversationAttachment={removeConversationAttachment}
@@ -11627,162 +10422,7 @@ export function App() {
       />
     ),
     "workspace-inspector": (
-      <WorkspaceInspector
-        activeWorkspace={activeWorkspace}
-        artifacts={artifacts}
-        binding={binding}
-        onToggleInspector={() => void toggleInspectorPinned()}
-        panelRef={undefined}
-        renderChrome={false}
-        conversationDraft={conversationDraft}
-        selectedBrowserDomain={selectedBrowserDomain}
-        conversationRecoveryHandoff={conversationRecoveryHandoff}
-        runtimeRecoveryLaunch={runtimeRecoveryLaunch}
-        environmentEvents={environmentEvents}
-        lispParenColors={lispParenColors}
-        resolvedTheme={resolvedTheme}
-        runtimeForm={runtimeForm}
-        runtimeEntityDetail={runtimeEntityDetail}
-        runtimeInspection={runtimeInspection}
-        runtimeSummary={runtimeSummary}
-        runtimeTelemetry={runtimeTelemetry}
-        consoleLogStream={consoleLogStream}
-        diagnosticReports={diagnosticReports}
-        selectedConsolePlane={selectedConsolePlane}
-        selectedConsoleSourceFilter={selectedConsoleSourceFilter}
-        visibleConsoleEntryCount={
-          (consoleLogStream?.data.entries ?? []).filter(
-            (entry) => selectedConsoleSourceFilter === "All Sources" || entry.source === selectedConsoleSourceFilter
-          ).length
-        }
-        selectedDiagnosticSourceFilter={selectedDiagnosticSourceFilter}
-        visibleDiagnosticReportCount={
-          diagnosticReports.filter(
-            (report) =>
-              selectedDiagnosticSourceFilter === "All Sources" || report.source === selectedDiagnosticSourceFilter
-          ).length
-        }
-        transcriptEntries={transcriptEntries}
-        currentWorkspaceHistoryCount={currentWorkspaceHistory.length}
-        currentReplHistoryCount={currentProjectReplFocus?.history?.length ?? 0}
-        memoryEntries={memoryEntries}
-        currentProject={currentProject}
-        selectedProjectDetail={selectedProjectDetail}
-        selectedProjectSummary={selectedProjectSummary}
-        workspaceDraft={currentWorkspaceDraft}
-        workspaceResult={currentWorkspaceResult}
-        workspaceTitle={currentProject?.title ?? "Workspace"}
-        selectedApproval={selectedApproval}
-        selectedArtifact={selectedArtifact}
-        selectedConfigurationSection={selectedConfigurationSection}
-        selectedConsoleEntry={
-          consoleLogStream?.data.entries.find((entry) => entry.entryId === selectedConsoleEntryId) ??
-          consoleLogStream?.data.entries[0] ??
-          null
-        }
-        selectedConversationMessage={selectedConversationMessage}
-        selectedConversationSection={selectedConversationSection}
-        selectedDiagnosticReport={selectedDiagnosticReport}
-        selectedDiagnosticReportSummary={
-          diagnosticReports.find((report) => report.reportId === selectedDiagnosticReportId) ??
-          diagnosticReports[0] ??
-          null
-        }
-        currentEditorChangedFormCount={currentEditorChangedFormCount}
-        currentEditorBufferDirty={currentEditorBufferDirty}
-        currentEditorBufferTitle={currentEditorBufferTitle}
-        currentEditorBuffers={currentEditorBuffers}
-        editorDraft={currentEditorDraft}
-        editorResult={currentEditorResult}
-        editorPackage={currentEditorPackage}
-        currentEditorCursorSymbol={currentEditorCursorSymbol}
-        currentEditorCursorSymbolPackage={currentEditorCursorSymbolPackage}
-        currentEditorCursorSymbolHelp={currentEditorCursorSymbolHelp}
-        selectedDocumentationPage={selectedDocumentationPage}
-        selectedEvidenceSection={selectedEvidenceSection}
-        selectedEvent={selectedEvent}
-        selectedIncident={selectedIncident}
-        selectedMemory={selectedMemory}
-        selectedOperateSection={selectedOperateSection}
-        selectedTelemetryProcess={
-          runtimeTelemetry?.processes.find((process) => process.processId === selectedTelemetryProcessId) ??
-          runtimeTelemetry?.processes[0] ??
-          null
-        }
-        selectedThread={selectedThread}
-        selectedTurn={selectedTurn}
-        selectedWorkItem={selectedWorkItem}
-        selectedWorkItemPlan={selectedWorkItemPlan}
-        selectedWorkflowRecord={selectedWorkflowRecord}
-        navigateToLinkedEntity={navigateToLinkedEntity}
-        setSelectedConversationMessageId={setSelectedConversationMessageId}
-        sourcePreview={sourcePreview}
-        status={status}
-        summary={summary}
-        systemTheme={systemTheme}
-        themePreference={themePreference}
-        providerSummary={providerSummary}
-        packageManagementSummary={packageManagementSummary}
-        desktopTaskManifests={desktopTaskManifests}
-        desktopTaskRecords={desktopTaskRecords}
-        desktopTaskActorTrace={desktopTaskActorTrace}
-        desktopTaskDeadLetters={desktopTaskDeadLetters}
-        mcpServerConfigs={mcpServerConfigs}
-        packageManagementStatusMessage={packageManagementStatusMessage}
-        packageManagementError={packageManagementError}
-        packageManagementCommandResult={packageManagementCommandResult}
-        quicklispSystemDraft={quicklispSystemDraft}
-        qlotCommandDraft={qlotCommandDraft}
-        sourceRegistryDraftPath={sourceRegistryDraftPath}
-        sourceRegistryEditOriginalPath={sourceRegistryEditOriginalPath}
-        localProjectPathDraft={localProjectPathDraft}
-        localProjectNameDraft={localProjectNameDraft}
-        providerProfileDraft={providerProfileDraft}
-        selectedMcpServerId={selectedMcpServerId}
-        mcpServerDraft={mcpServerDraft}
-        selectedProviderProfileName={selectedProviderProfileName}
-        providerProfileStatusMessage={providerProfileStatusMessage}
-        providerProfileError={providerProfileError}
-        mcpServerStatusMessage={mcpServerStatusMessage}
-        mcpServerError={mcpServerError}
-        isSavingProviderProfile={isSavingProviderProfile}
-        isUpdatingProviderRouting={isUpdatingProviderRouting}
-        isSavingMcpServer={isSavingMcpServer}
-        isPackageManagementBusy={isPackageManagementBusy}
-        tooltipScalePercent={tooltipScalePercent}
-        controlIconScalePercent={controlIconScalePercent}
-        dockIconScalePercent={dockIconScalePercent}
-        conversationTextScalePercent={conversationTextScalePercent}
-        sourceCodeTextScalePercent={sourceCodeTextScalePercent}
-        openPublishedDocumentation={() =>
-          window.sbclAgentDesktop.desktop.openExternalLink(PUBLISHED_DOCUMENTATION_URL)
-        }
-        updateLispParenColor={updateLispParenColor}
-        updateThemePreference={applyThemePreference}
-        updateDesktopSurfaceScalePreference={updateDesktopSurfaceScalePreference}
-        setProviderProfileDraft={setProviderProfileDraft}
-        setSelectedProviderProfileName={setSelectedProviderProfileName}
-        setQuicklispSystemDraft={setQuicklispSystemDraft}
-        setQlotCommandDraft={setQlotCommandDraft}
-        setSourceRegistryDraftPath={setSourceRegistryDraftPath}
-        setSourceRegistryEditOriginalPath={setSourceRegistryEditOriginalPath}
-        setLocalProjectPathDraft={setLocalProjectPathDraft}
-        setLocalProjectNameDraft={setLocalProjectNameDraft}
-        setSelectedMcpServerId={setSelectedMcpServerId}
-        setMcpServerDraft={setMcpServerDraft}
-        applyProviderRoutingMode={applyProviderRoutingMode}
-        activateProviderProfile={activateProviderProfile}
-        saveProviderProfile={saveProviderProfile}
-        installQuicklispPackage={installQuicklispPackage}
-        executeQlotCommand={executeQlotCommand}
-        saveSourceRegistryEntry={saveSourceRegistryEntry}
-        removeSourceRegistryPath={removeSourceRegistryPath}
-        saveLocalProject={saveLocalProject}
-        removeLocalProjectByName={removeLocalProjectByName}
-        saveMcpServer={saveMcpServer}
-        removeMcpServer={removeMcpServer}
-        workItems={workItems}
-      />
+      <WorkspaceInspector {...workspaceInspectorProps} />
     ),
     "editor-symbol": (
       <EditorSymbolRailPanel
@@ -11806,6 +10446,210 @@ export function App() {
 
   const activeLeftRailPanelEntry = resolveActiveShellRailPanel(leftRailPanelEntries, shellLayout.leftRail.activePanelId);
   const activeRightRailPanelEntry = resolveActiveShellRailPanel(rightRailPanelEntries, shellLayout.rightRail.activePanelId);
+
+  const desktopWindowStageProps = {
+    className: "desktop-window-stage desktop-window-stage-floating",
+    activeDesktopId,
+    approvalRequests,
+    orchestrationInbox,
+    attentionItems: globalAttentionItems,
+    createReplSession: handleCreateReplSession,
+    currentProjectReplFocus,
+    currentFocusSummary: summary?.activeContext.focusSummary ?? "Environment posture is not yet available.",
+    currentFocusTitle: summary?.activeContext.currentThreadTitle ?? summary?.environmentLabel ?? "Environment",
+    calculatorRefreshToken,
+    desktopDescriptors,
+    desktopZoom: activeDesktopZoom,
+    actionQueue: dashboardActionQueue,
+    displayCount: desktopModel?.displayCount ?? 0,
+    displayPanel: desktopModel?.panels?.display ?? null,
+    topDisplaySurface: desktopModel?.topDisplaySurface ?? null,
+    focusedWindowId: focusedDesktopWindowId,
+    inspectorPanel: desktopModel?.panels?.inspector ?? null,
+    activeHostedAppId: activeHostedApp,
+    activeHostedAppLabel: activeHostedAppDescriptor.label,
+    activeHostedAppSummary: activeHostedAppDescriptor.summary,
+    browserWorkspaceProps,
+    projectsWorkspaceProps,
+    operateWorkspaceProps,
+    executionWorkspaceProps,
+    incidentsWorkspaceProps,
+    workWorkspaceProps,
+    evidenceWorkspaceProps,
+    conversationsWorkspaceProps,
+    configurationWorkspaceProps,
+    editorSurfaceProps,
+    transcriptSurfaceProps,
+    memoryWorkspaceProps,
+    activeWorkspace,
+    selectedExecutionSection,
+    currentProjectTitle: currentProject?.title ?? "implicit",
+    environmentId: effectiveEnvironmentId,
+    bindingId: binding?.environmentId ?? "unbound",
+    centerAttentionSignals,
+    hostState: hostStatus?.hostState ?? "starting",
+    runtimeState: status?.runtimeState ?? "unknown",
+    workflowState: status?.workflowState ?? "unknown",
+    shellCurrentSurfaceSummary,
+    leadAttention: shellProactiveLead,
+    governedAttentionSignalCount,
+    currentReplSessionId,
+    evaluateRuntimeForm,
+    incidents,
+    isEvaluating,
+    isInspectingRuntime,
+    isDecidingApproval,
+    onCloseWindow: (windowId: string) => {
+      closeDesktopWindow(windowId);
+    },
+    onCascadeLayout: () => {
+      cascadeDesktopWindowLayoutState();
+    },
+    onCreateDesktop: createDesktopSpace,
+    onFocusWindow: (window: DesktopWindowRecord) => {
+      focusDesktopWindow(window.id);
+      if (window.hostedAppId === "listener-workbench") {
+        void openListenerWorkbench();
+      } else if (window.hostedAppId === "control-panel") {
+        void navigateToHostedApp("control-panel");
+      } else {
+        const windowWorkspace = workspaceForDesktopWindow(window);
+        if (windowWorkspace) {
+          void navigateToWorkspace(windowWorkspace);
+        } else if (window.panelId) {
+          void navigateToDesktopPanel(window.panelId);
+        }
+      }
+    },
+    onMinimizeWindow: (windowId: string) => {
+      minimizeDesktopWindow(windowId);
+    },
+    onMoveWindowToPreviousDesktop: (windowId: string) => {
+      moveWindowToPreviousDesktop(windowId);
+    },
+    onMoveWindowToNextDesktop: (windowId: string) => {
+      moveWindowToNextDesktop(windowId);
+    },
+    onResetLayout: () => {
+      resetDesktopWindowLayoutState();
+    },
+    onRestoreWindow: (windowId: string) => {
+      restoreDesktopWindow(windowId);
+    },
+    onMoveWindow: (windowId: string, direction: DesktopWindowMoveDirection) => {
+      moveDesktopWindowState(windowId, direction);
+    },
+    onPositionWindow: (windowId: string, x: number, y: number) => {
+      positionDesktopWindowState(windowId, x, y);
+    },
+    onResizeWindow: (windowId: string, preset: DesktopWindowSizePreset) => {
+      resizeDesktopWindowState(windowId, preset);
+    },
+    onResizeWindowToDimensions: (windowId: string, width: number, height: number) => {
+      resizeDesktopWindowDimensionsState(windowId, width, height);
+    },
+    onSetWindowFrame: (windowId: string, x: number, y: number, width: number, height: number) => {
+      setDesktopWindowFrameState(windowId, x, y, width, height);
+    },
+    onTileLayout: () => {
+      tileDesktopWindowLayoutState();
+    },
+    onOpenAttentionItem: (item: GlobalAttentionItem) => {
+      void navigateToWorkspace(item.workspace);
+    },
+    onOpenActionQueueItem: (item: ActionQueueItem) => {
+      void navigateToActionQueueItem(item);
+    },
+    onOpenDisplaySurface: () => {
+      void navigateToDesktopPanel("display");
+    },
+    onOpenInspectorSurface: () => {
+      void navigateToDesktopPanel("inspector");
+    },
+    browserSurfaceEntries,
+    browserSurfaceSummary: selectedBrowserDomainDescriptor.summary,
+    browserSurfaceTitle: selectedBrowserDomainDescriptor.label,
+    onOpenShellContextWindow: () => {
+      openDesktopWindow("window:shell-context");
+    },
+    onOpenProactivityWindow: () => {
+      void navigateToWorkspace("environment");
+    },
+    onOpenDetailedSurfaceWindow: () => {
+      openDesktopWindow("window:detailed-surface");
+    },
+    onOpenBrowserSurfaceWindow: () => {
+      openDesktopWindow("window:browser-surface");
+    },
+    onOpenRuntimeWindow: () => {
+      void openListenerWorkbench();
+    },
+    onOpenWorkflowWindow: () => {
+      void navigateToWorkspace("environment");
+    },
+    onOpenIncident: (incidentId: string) => {
+      void continueRecovery(incidentId);
+    },
+    onSubmitApprovalDecision: (requestId: string, decision: "approve" | "deny") => {
+      void submitApprovalDecisionForRequest(requestId, decision);
+    },
+    onSwitchDesktop: switchDesktopSpace,
+    onZoomIn: () => {
+      updateActiveDesktopZoom(activeDesktopZoom + 0.1);
+    },
+    onZoomOut: () => {
+      updateActiveDesktopZoom(activeDesktopZoom - 0.1);
+    },
+    onZoomReset: () => {
+      updateActiveDesktopZoom(1);
+    },
+    onOpenDetailedWorkspace: () => {
+      if (activeHostedApp === "listener-workbench") {
+        void openListenerWorkbench();
+        return;
+      }
+      void navigateToWorkspace(activeWorkspace);
+    },
+    undockedPanelContentById: allShellPanelContentById,
+    undockDropTargetActive: shellPanelDragState?.target === "undocked",
+    undockDropTargetRef: desktopWindowStageDropTargetRef,
+    onDropUndockedPanel: (panelId: ShellDockPanelId) => {
+      void undockShellPanel(panelId);
+      endNativeShellPanelDrag();
+    },
+    onDockUndockedPanelLeft: (panelId: ShellDockPanelId) => {
+      void dockShellPanel(panelId, "left");
+    },
+    onDockUndockedPanelRight: (panelId: ShellDockPanelId) => {
+      void dockShellPanel(panelId, "right");
+    },
+    replSessionTitleDraft,
+    replSessions: currentProjectReplSessions,
+    runtimeForm,
+    runtimeRecoveryLaunch,
+    runtimeInspectionMode,
+    runtimeInspectorPackage,
+    runtimeInspectorSymbol,
+    runtimeInspection,
+    runtimeEntityDetail,
+    runtimeResult,
+    runtimeSummary,
+    inspectRuntimeSymbol,
+    setReplSessionTitleDraft,
+    setRuntimeInspectionMode: updateRuntimeInspectionMode,
+    setRuntimeInspectorPackage: updateRuntimeInspectorPackage,
+    setRuntimeInspectorSymbol: updateRuntimeInspectorSymbol,
+    setRuntimeForm,
+    switchReplSession: handleSwitchReplSession,
+    calculatorDraftExpression: conversationDraft,
+    pendingCalculatorExpressionRequest,
+    clearPendingCalculatorExpressionRequest,
+    insertCalculatorResultIntoConversationDraft,
+    openConversationDraft: () => navigateToConversationSection("draft"),
+    recordCalculatorEvaluation: (input: { expression: string; result: CalculatorResultDto }) =>
+      setLatestCalculatorResult(input),
+    windows: desktopWindowSnapshots
+  };
 
   return (
     <div
@@ -12349,630 +11193,7 @@ export function App() {
             <span className="panel-titlebar-label">Surface</span>
           </div>
           <div className="canvas-body desktop-primary-mode">
-            <DesktopWindowStage
-              className="desktop-window-stage desktop-window-stage-floating"
-              activeDesktopId={activeDesktopId}
-              approvalRequests={approvalRequests}
-              attentionItems={globalAttentionItems}
-              createReplSession={handleCreateReplSession}
-              currentProjectReplFocus={currentProjectReplFocus}
-              currentFocusSummary={summary?.activeContext.focusSummary ?? "Environment posture is not yet available."}
-              currentFocusTitle={summary?.activeContext.currentThreadTitle ?? summary?.environmentLabel ?? "Environment"}
-              calculatorRefreshToken={calculatorRefreshToken}
-              desktopDescriptors={desktopDescriptors}
-              desktopZoom={activeDesktopZoom}
-              actionQueue={dashboardActionQueue}
-              displayCount={desktopModel?.displayCount ?? 0}
-              displayPanel={desktopModel?.panels?.display ?? null}
-              topDisplaySurface={desktopModel?.topDisplaySurface ?? null}
-              focusedWindowId={focusedDesktopWindowId}
-              inspectorPanel={desktopModel?.panels?.inspector ?? null}
-              activeHostedAppId={activeHostedApp}
-              activeHostedAppLabel={activeHostedAppDescriptor.label}
-              activeHostedAppSummary={activeHostedAppDescriptor.summary}
-              browserWorkspaceProps={{
-                approvalRequests,
-                artifacts,
-                browseRuntimeEntity,
-                conversationDraft,
-                environmentId: effectiveEnvironmentId,
-                environmentFocus,
-                incidents,
-                inspectRuntimeSymbol,
-                isDecidingApproval,
-                isEditingSource,
-                isInspectingRuntime,
-                isReloadingSource,
-                isStagingSource,
-                loadSourcePreview,
-                consoleLogStream,
-                desktopTaskRecords,
-                diagnosticReports,
-                navigateToWorkspace: (workspaceId) => {
-                  void navigateToWorkspace(workspaceId);
-                },
-                packageBrowser,
-                parenDepthColors: lispParenColors,
-                reloadSourceFile,
-                runtimeEntityDetail,
-                runtimeForm,
-                runtimeInspection,
-                runtimeInspectionMode,
-                runtimeInspectorPackage,
-                runtimeInspectorSymbol,
-                runtimeSummary,
-                runtimeTelemetry,
-                selectedDomain: selectedBrowserDomain,
-                selectedTelemetryProcessId,
-                selectedPackageName,
-                selectedThread,
-                selectedThreadId,
-                setConversationDraft,
-                setIsEditingSource,
-                setRuntimeForm,
-                setRuntimeInspectionMode: updateRuntimeInspectionMode,
-                setRuntimeInspectorPackage: updateRuntimeInspectorPackage,
-                setRuntimeInspectorSymbol: updateRuntimeInspectorSymbol,
-                setSelectedConsolePlane,
-                setSelectedConsoleSourceFilter,
-                setSelectedConsoleEntryId,
-                setSelectedDiagnosticSourceFilter,
-                setSelectedDiagnosticReportId,
-                setSelectedPackageName,
-                setSelectedTelemetryProcessId,
-                setSelectedThreadId,
-                setSourceDraft,
-                sourceDraft,
-                sourceMutationResult,
-                sourcePreview,
-                sourceReloadResult,
-                stageSourceChange,
-                selectedConsolePlane,
-                selectedConsoleSourceFilter,
-                documentationPages,
-                selectedDocumentationSlug,
-                selectedConsoleEntryId,
-                selectedDiagnosticSourceFilter,
-                selectedDiagnosticReport,
-                selectedDiagnosticReportId,
-                onOpenApprovalRequest: openApprovalRequest,
-                onSubmitApprovalDecision: (requestId, decision) => {
-                  void submitApprovalDecisionForRequest(requestId, decision);
-                },
-                openInspectorSurface: () => navigateToDesktopPanel("inspector"),
-                loadDocumentationPage,
-                threads,
-                workItems
-              }}
-              projectsWorkspaceProps={{
-                approvalRequests,
-                currentProjectId,
-                isDecidingApproval,
-                onAddArchitectureDecision: openProjectArchitectureDecisionDialog,
-                onAddFeatureSpecification: openProjectFeatureSpecificationDialog,
-                onAddQualityGate: openProjectQualityGateDialog,
-                onAddRequirement: openProjectRequirementDialog,
-                onAddSourceRoot: openProjectSourceRootDialog,
-                onAddUserJourney: openProjectUserJourneyDialog,
-                onBindTestingHarness: () => void openProjectTestingHarnessDialog(),
-                onEditDesignSystem: openProjectDesignSystemDialog,
-                onEditStyleGuide: openProjectStyleGuideDialog,
-                onEditTestingStrategy: () => void openProjectTestingStrategyDialog(),
-                onEditReleaseReadiness: openProjectReleaseReadinessDialog,
-                onEditReadinessObligations: openProjectReadinessObligationsDialog,
-                onCreateProjectDialog: () => setIsProjectCreateDialogOpen(true),
-                onEditConstitution: openProjectConstitutionDialog,
-                onOpenProjectDialog: () => setIsProjectOpenDialogOpen(true),
-                onOpenApprovalRequest: openApprovalRequest,
-                onSelectProject: setSelectedGovernedProjectId,
-                onSubmitApprovalDecision: (requestId, decision) => {
-                  void submitApprovalDecisionForRequest(requestId, decision);
-                },
-                openInspectorSurface: () => navigateToDesktopPanel("inspector"),
-                projectSummaries: projectListResult?.data.projects ?? [],
-                selectedProjectDetail,
-                selectedProjectId: selectedGovernedProjectId,
-                workItems
-              }}
-              operateWorkspaceProps={{
-                actionQueue: dashboardActionQueue,
-                approvalRequests,
-                artifacts,
-                incidents,
-                isDecidingApproval,
-                navigateToConversationSection,
-                navigateToEvidenceSection,
-                navigateToExecutionSection,
-                navigateToRecoverySection,
-                openApprovalRequest,
-                selectedApproval,
-                selectedApprovalId,
-                selectedArtifactId,
-                selectedIncidentId,
-                status,
-                summary,
-                selectedWorkItemId,
-                submitApprovalDecisionForRequest: (requestId, decision) => {
-                  void submitApprovalDecisionForRequest(requestId, decision);
-                },
-                workItems
-              }}
-              executionWorkspaceProps={{
-                actorSystemPanel: desktopTaskActorSystemPanel,
-                approvalRequests,
-                createReplSession: handleCreateReplSession,
-                currentReplSessionId,
-                evaluateRuntimeForm,
-                isEvaluating,
-                inspectRuntimeSymbol,
-                isInspectingRuntime,
-                replSessionTitleDraft,
-                replSessions: currentProjectReplSessions,
-                runtimeForm,
-                runtimeInspection,
-                runtimeInspectionMode,
-                runtimeInspectorPackage,
-                runtimeInspectorSymbol,
-                runtimeResult,
-                runtimeSummary,
-                selectedWorkflowRecord,
-                selectedWorkItem,
-                selectedWorkItemId,
-                setReplSessionTitleDraft,
-                setRuntimeForm,
-                setRuntimeInspectionMode: updateRuntimeInspectionMode,
-                setRuntimeInspectorPackage: updateRuntimeInspectorPackage,
-                setRuntimeInspectorSymbol: updateRuntimeInspectorSymbol,
-                switchReplSession: handleSwitchReplSession,
-                openInspectorSurface: () => navigateToDesktopPanel("inspector"),
-                workItems
-              }}
-              incidentsWorkspaceProps={{
-                clearPendingIncidentFocusId: () => setPendingIncidentFocusId(null),
-                environmentFocusLabel,
-                incidents,
-                navigateToLinkedEntity,
-                openIncidentRemediationPlanDialog,
-                openConversationDraft: () =>
-                  openConversationDraftWithFocusOverride({
-                    ...createDefaultEnvironmentFocusState(),
-                    kind: "governance-incident",
-                    sourceWorkspace: "incidents",
-                    sourceSurface: "incidents",
-                    incidentId: selectedIncidentId
-                  }),
-                openConversationDraftForRestartSuggestion: (restartLabel) =>
-                  openConversationDraftForIncidentRestartSuggestion(restartLabel),
-                openListenerWorkbenchForRestartSuggestion: (restartLabel) =>
-                  openListenerWorkbenchForIncidentRestartSuggestion(restartLabel),
-                openInspectorSurface: () => navigateToDesktopPanel("inspector"),
-                pendingIncidentFocusId,
-                selectedIncident,
-                selectedIncidentId,
-                setSelectedIncidentId
-              }}
-              workWorkspaceProps={{
-                approvalRequests,
-                clearPendingWorkItemFocusId: () => setPendingWorkItemFocusId(null),
-                environmentFocusLabel,
-                isDecidingApproval,
-                navigateToLinkedEntity,
-                openApprovalRequest,
-                openCompleteWorkItemValidationsDialog: openWorkItemValidationDialog,
-                openConversationDraft: () =>
-                  openConversationDraftWithFocusOverride({
-                    ...createDefaultEnvironmentFocusState(),
-                    kind: "governance-work-item",
-                    sourceWorkspace: "runtime",
-                    sourceSurface: "operate",
-                    workItemId: selectedWorkItemId
-                  }),
-                openInspectorSurface: () => navigateToDesktopPanel("inspector"),
-                openQuarantineWorkItemDialog: openWorkItemQuarantineDialog,
-                openResumeWorkItemDialog: openWorkItemResumeDialog,
-                openRollbackWorkItemDialog: openWorkItemRollbackDialog,
-                openSteerWorkItemDialog: openWorkItemSteerDialog,
-                pendingWorkItemFocusId,
-                selectedWorkflowRecord,
-                selectedWorkItem,
-                selectedWorkItemPlan,
-                selectedWorkItemId,
-                setSelectedWorkItemId,
-                submitApprovalDecisionForRequest,
-                workItems
-              }}
-              evidenceWorkspaceProps={{
-                artifacts,
-                environmentFocusLabel,
-                eventFamilyFilter,
-                eventVisibilityFilter,
-                events: environmentEvents,
-                navigateToLinkedEntity,
-                openConversationDraft: () =>
-                  openConversationDraftWithFocusOverride(
-                    selectedArtifactId
-                      ? {
-                          ...createDefaultEnvironmentFocusState(),
-                          kind: "evidence-artifact",
-                          sourceWorkspace: "artifacts",
-                          sourceSurface: "artifacts",
-                          artifactId: selectedArtifactId
-                        }
-                      : {
-                          ...createDefaultEnvironmentFocusState(),
-                          kind: "evidence-event",
-                          sourceWorkspace: "artifacts",
-                          sourceSurface: "artifacts",
-                          eventCursor: selectedEventCursor
-                        }
-                  ),
-                openInspectorSurface: () => navigateToDesktopPanel("inspector"),
-                selectedArtifact,
-                selectedArtifactId,
-                selectedEvent,
-                selectedEventCursor,
-                setEventFamilyFilter,
-                setEventVisibilityFilter,
-                setSelectedArtifactId,
-                setSelectedEventCursor
-              }}
-              conversationsWorkspaceProps={{
-                activateConversationInspectorSection,
-                actorSystemPanel: desktopTaskActorSystemPanel,
-                conversationDraft,
-                conversationRecoveryHandoff,
-                draftFocusActions: conversationDraftFocusActions,
-                environmentFocusLabel,
-                environmentFocusSummary: environmentFocusPresentation.summary,
-                environmentFocusTitle: environmentFocusPresentation.title,
-                conversationSections,
-                currentReplSessionId,
-                createReplSession: handleCreateReplSession,
-                evaluateRuntimeForm,
-                inspectRuntimeSymbol,
-                isEvaluating,
-                isInspectingRuntime,
-                navigateToLinkedEntity,
-                onOpenCreateConversationSession: () => {
-                  setIsConversationSessionCreateDialogOpen(true);
-                },
-                onOpenRenameConversationSession: (threadId, title) => {
-                  setConversationThreadRenameTargetId(threadId);
-                  setConversationThreadRenameDraft(title);
-                  setIsConversationThreadRenameDialogOpen(true);
-                },
-                pageSignalCounts,
-                replSessionTitleDraft,
-                replSessions: currentProjectReplSessions,
-                runtimeForm,
-                runtimeInspection,
-                runtimeInspectionMode,
-                runtimeInspectorPackage,
-                runtimeInspectorSymbol,
-                runtimeResult,
-                runtimeSummary,
-                switchReplSession: handleSwitchReplSession,
-                selectedSection: selectedConversationSection,
-                selectedConversationMessageId,
-                selectedThread,
-                selectedThreadId,
-                selectedTurn,
-                selectedTurnId,
-                setReplSessionTitleDraft,
-                setConversationDraft,
-                setSelectedConversationMessageId,
-                setRuntimeForm,
-                setRuntimeInspectionMode: updateRuntimeInspectionMode,
-                setRuntimeInspectorPackage: updateRuntimeInspectorPackage,
-                setRuntimeInspectorSymbol: updateRuntimeInspectorSymbol,
-                setSelectedThreadId,
-                setSelectedTurnId,
-                openInspectorSurface: () => navigateToDesktopPanel("inspector"),
-                threads
-              }}
-              configurationWorkspaceProps={{
-                configurationSections,
-                lispParenColors: lispParenColors,
-                normalizeParenDepthColors,
-                resolvedTheme,
-                selectedSection: selectedConfigurationSection,
-                setSelectedSection: setSelectedConfigurationSection,
-                systemTheme,
-                themePreference,
-                tooltipScalePercent,
-                controlIconScalePercent,
-                dockIconScalePercent,
-                conversationTextScalePercent,
-                sourceCodeTextScalePercent,
-                providerSummary,
-                packageManagementSummary,
-                desktopTaskManifests,
-                desktopTaskRecords,
-                desktopTaskActorTrace,
-                desktopTaskDeadLetters,
-                mcpServerConfigs
-              }}
-              editorSurfaceProps={{
-                acceptCurrentBufferBaseline: acceptCurrentEditorBufferBaseline,
-                cloneEditorBuffer: cloneCurrentEditorBuffer,
-                createEditorBuffer,
-                currentBufferDirty: currentEditorBufferDirty,
-                currentBufferTitle: currentEditorBufferTitle,
-                deleteEditorBuffers: deleteCurrentEditorBuffers,
-                editorBuffers: currentEditorBuffers,
-                editorPackage: currentEditorPackage,
-                editorDraft: currentEditorDraft,
-                setEditorDraft: setCurrentEditorDraft,
-                editorResult: currentEditorResult,
-                packageBrowser,
-                runtimeEntityDetail,
-                runtimeInspection,
-                selectedBufferId: currentEditorBufferId,
-                setSelectedBufferId: setCurrentEditorBufferId,
-                sourcePreview,
-                runtimeSummary,
-                isEvaluating,
-                parenDepthColors: lispParenColors,
-                sourceCodeTextScalePercent,
-                inspectDefinitionSymbol: async (symbol, packageName, mode) => {
-                  await browseRuntimeEntity(symbol, packageName, mode ?? "definitions");
-                },
-                fetchRuntimeSymbolHelp: async (symbol, packageName) => {
-                  if (!effectiveEnvironmentId || symbol.trim().length === 0) {
-                    return null;
-                  }
-                  try {
-                    const result = await window.sbclAgentDesktop.query.runtimeEntityDetail({
-                      environmentId: effectiveEnvironmentId,
-                      symbol: symbol.trim(),
-                      packageName
-                    });
-                    return {
-                      detail: result.data.signature
-                        ? `${result.data.entityKind} • ${result.data.signature}`
-                        : result.data.entityKind,
-                      info: result.data.summary,
-                      signature: result.data.signature ?? null,
-                      type:
-                        result.data.entityKind === "macro"
-                          ? "keyword"
-                          : result.data.entityKind === "function" || result.data.entityKind === "generic-function"
-                            ? "function"
-                            : result.data.entityKind === "variable"
-                              ? "variable"
-                              : result.data.entityKind === "class"
-                                ? "class"
-                                : "text",
-                      packageName: result.data.packageName
-                    };
-                  } catch (_error) {
-                    return null;
-                  }
-                },
-                reportEditorCursorContext: ({ symbol, packageName, help }) => {
-                  setCurrentEditorCursorSymbol(symbol);
-                  setCurrentEditorCursorSymbolPackage(packageName);
-                  setCurrentEditorCursorSymbolHelp(help);
-                },
-                evaluateEditorBuffer,
-                openEditorSourceFileDialog,
-                openEditorSourceFileSaveDialog,
-                saveCurrentEditorBuffer: handleSaveCurrentEditorBuffer,
-                revertCurrentBufferToBaseline: revertCurrentEditorBufferToBaseline,
-                openSourcePreview: loadSourcePreview,
-                openConversationRepl: async (form) => {
-                  setRuntimeForm(form);
-                  updateRuntimeInspectorPackage(currentEditorPackage);
-                  await navigateToConversationSection("repl");
-                },
-                setRuntimeForm,
-                openInspectorSurface: () => navigateToDesktopPanel("inspector")
-              }}
-              transcriptSurfaceProps={{
-                openConversationRepl: async (form: string) => {
-                  setRuntimeForm(form);
-                  updateRuntimeInspectorPackage(currentWorkspacePackage);
-                  await navigateToConversationSection("repl");
-                },
-                openConversationContext: async (threadId, turnId) => {
-                  setSelectedThreadId(threadId);
-                  if (turnId) {
-                    setSelectedTurnId(turnId);
-                    await navigateToConversationSection("turns");
-                    return;
-                  }
-                  await navigateToConversationSection("threads");
-                },
-                openEvidenceObservation: () => navigateToEvidenceSection("artifacts"),
-                openInspectorSurface: () => navigateToDesktopPanel("inspector"),
-                openListener: async (form) => {
-                  setRuntimeForm(form);
-                  await navigateToExecutionSection("listener");
-                },
-                selectedEntryKey: selectedTranscriptEntryKey,
-                selectedSourceFilter: selectedTranscriptSourceFilter,
-                setWorkspaceDraft: setCurrentWorkspaceDraft,
-                setSelectedEntryKey: setSelectedTranscriptEntryKey,
-                setSelectedSourceFilter: setSelectedTranscriptSourceFilter,
-                transcriptEntries
-              }}
-              memoryWorkspaceProps={{
-                memories: memoryEntries,
-                selectedMemoryId,
-                setSelectedMemoryId,
-                onUpdateMemory: handleUpdateMemory,
-                onDeleteMemory: handleDeleteMemory,
-                pendingDeleteMemoryId,
-                pendingUpdateMemoryId
-              }}
-              activeWorkspace={activeWorkspace}
-              selectedExecutionSection={selectedExecutionSection}
-              currentProjectTitle={currentProject?.title ?? "implicit"}
-              environmentId={effectiveEnvironmentId}
-              bindingId={binding?.environmentId ?? "unbound"}
-              centerAttentionSignals={centerAttentionSignals}
-              hostState={hostStatus?.hostState ?? "starting"}
-              runtimeState={status?.runtimeState ?? "unknown"}
-              workflowState={status?.workflowState ?? "unknown"}
-              shellCurrentSurfaceSummary={shellCurrentSurfaceSummary}
-              leadAttention={shellProactiveLead}
-              governedAttentionSignalCount={governedAttentionSignalCount}
-              currentReplSessionId={currentReplSessionId}
-              evaluateRuntimeForm={evaluateRuntimeForm}
-              incidents={incidents}
-              isEvaluating={isEvaluating}
-              isInspectingRuntime={isInspectingRuntime}
-              isDecidingApproval={isDecidingApproval}
-              onCloseWindow={(windowId) => {
-                closeDesktopWindow(windowId);
-              }}
-              onCascadeLayout={() => {
-                cascadeDesktopWindowLayoutState();
-              }}
-              onCreateDesktop={createDesktopSpace}
-              onFocusWindow={(window) => {
-                focusDesktopWindow(window.id);
-                if (window.hostedAppId === "listener-workbench") {
-                  void openListenerWorkbench();
-                } else if (window.hostedAppId === "control-panel") {
-                  void navigateToHostedApp("control-panel");
-                } else {
-                  const windowWorkspace = workspaceForDesktopWindow(window);
-                  if (windowWorkspace) {
-                    void navigateToWorkspace(windowWorkspace);
-                  } else if (window.panelId) {
-                    void navigateToDesktopPanel(window.panelId);
-                  }
-                }
-              }}
-              onMinimizeWindow={(windowId) => {
-                minimizeDesktopWindow(windowId);
-              }}
-              onMoveWindowToPreviousDesktop={(windowId) => {
-                moveWindowToPreviousDesktop(windowId);
-              }}
-              onMoveWindowToNextDesktop={(windowId) => {
-                moveWindowToNextDesktop(windowId);
-              }}
-              onResetLayout={() => {
-                resetDesktopWindowLayoutState();
-              }}
-              onRestoreWindow={(windowId) => {
-                restoreDesktopWindow(windowId);
-              }}
-              onMoveWindow={(windowId, direction) => {
-                moveDesktopWindowState(windowId, direction);
-              }}
-              onPositionWindow={(windowId, x, y) => {
-                positionDesktopWindowState(windowId, x, y);
-              }}
-              onResizeWindow={(windowId, preset) => {
-                resizeDesktopWindowState(windowId, preset);
-              }}
-              onResizeWindowToDimensions={(windowId, width, height) => {
-                resizeDesktopWindowDimensionsState(windowId, width, height);
-              }}
-              onSetWindowFrame={(windowId, x, y, width, height) => {
-                setDesktopWindowFrameState(windowId, x, y, width, height);
-              }}
-              onTileLayout={() => {
-                tileDesktopWindowLayoutState();
-              }}
-              onOpenAttentionItem={(item) => {
-                void navigateToWorkspace(item.workspace);
-              }}
-              onOpenActionQueueItem={(item) => {
-                void navigateToActionQueueItem(item);
-              }}
-              onOpenDisplaySurface={() => {
-                void navigateToDesktopPanel("display");
-              }}
-              onOpenInspectorSurface={() => {
-                void navigateToDesktopPanel("inspector");
-              }}
-              browserSurfaceEntries={browserSurfaceEntries}
-              browserSurfaceSummary={selectedBrowserDomainDescriptor.summary}
-              browserSurfaceTitle={selectedBrowserDomainDescriptor.label}
-              onOpenShellContextWindow={() => {
-                openDesktopWindow("window:shell-context");
-              }}
-              onOpenProactivityWindow={() => {
-                void navigateToWorkspace("environment");
-              }}
-              onOpenDetailedSurfaceWindow={() => {
-                openDesktopWindow("window:detailed-surface");
-              }}
-              onOpenBrowserSurfaceWindow={() => {
-                openDesktopWindow("window:browser-surface");
-              }}
-              onOpenRuntimeWindow={() => {
-                void openListenerWorkbench();
-              }}
-              onOpenWorkflowWindow={() => {
-                void navigateToWorkspace("environment");
-              }}
-              onOpenIncident={(incidentId) => {
-                void continueRecovery(incidentId);
-              }}
-              onSubmitApprovalDecision={(requestId, decision) => {
-                void submitApprovalDecisionForRequest(requestId, decision);
-              }}
-              onSwitchDesktop={switchDesktopSpace}
-              onZoomIn={() => {
-                updateActiveDesktopZoom(activeDesktopZoom + 0.1);
-              }}
-              onZoomOut={() => {
-                updateActiveDesktopZoom(activeDesktopZoom - 0.1);
-              }}
-              onZoomReset={() => {
-                updateActiveDesktopZoom(1);
-              }}
-              onOpenDetailedWorkspace={() => {
-                if (activeHostedApp === "listener-workbench") {
-                  void openListenerWorkbench();
-                  return;
-                }
-                void navigateToWorkspace(activeWorkspace);
-              }}
-              undockedPanelContentById={allShellPanelContentById}
-              undockDropTargetActive={shellPanelDragState?.target === "undocked"}
-              undockDropTargetRef={desktopWindowStageDropTargetRef}
-              onDropUndockedPanel={(panelId) => {
-                void undockShellPanel(panelId);
-                endNativeShellPanelDrag();
-              }}
-              onDockUndockedPanelLeft={(panelId) => {
-                void dockShellPanel(panelId, "left");
-              }}
-              onDockUndockedPanelRight={(panelId) => {
-                void dockShellPanel(panelId, "right");
-              }}
-              replSessionTitleDraft={replSessionTitleDraft}
-              replSessions={currentProjectReplSessions}
-              runtimeForm={runtimeForm}
-              runtimeRecoveryLaunch={runtimeRecoveryLaunch}
-              runtimeInspectionMode={runtimeInspectionMode}
-              runtimeInspectorPackage={runtimeInspectorPackage}
-              runtimeInspectorSymbol={runtimeInspectorSymbol}
-              runtimeInspection={runtimeInspection}
-              runtimeEntityDetail={runtimeEntityDetail}
-              runtimeResult={runtimeResult}
-              runtimeSummary={runtimeSummary}
-              inspectRuntimeSymbol={inspectRuntimeSymbol}
-              setReplSessionTitleDraft={setReplSessionTitleDraft}
-              setRuntimeInspectionMode={updateRuntimeInspectionMode}
-              setRuntimeInspectorPackage={updateRuntimeInspectorPackage}
-              setRuntimeInspectorSymbol={updateRuntimeInspectorSymbol}
-              setRuntimeForm={setRuntimeForm}
-              switchReplSession={handleSwitchReplSession}
-              calculatorDraftExpression={conversationDraft}
-              pendingCalculatorExpressionRequest={pendingCalculatorExpressionRequest}
-              clearPendingCalculatorExpressionRequest={clearPendingCalculatorExpressionRequest}
-              insertCalculatorResultIntoConversationDraft={insertCalculatorResultIntoConversationDraft}
-              openConversationDraft={() => navigateToConversationSection("draft")}
-              recordCalculatorEvaluation={(input) => setLatestCalculatorResult(input)}
-              windows={desktopWindowSnapshots}
-            />
+            <DesktopWindowStage {...desktopWindowStageProps} />
           </div>
         </main>
       ) : (
@@ -13082,6 +11303,9 @@ function ConversationContextPanel({
   conversationAttachments,
   conversationStream,
   isSendingConversation,
+  orchestrationFocus,
+  orchestrationSnapshot,
+  planVerification,
   sendConversationMessage,
   onConversationAttachmentSelection,
   removeConversationAttachment,
@@ -13101,6 +11325,9 @@ function ConversationContextPanel({
     content: string;
   } | null;
   isSendingConversation: boolean;
+  orchestrationFocus: Record<string, unknown> | null;
+  orchestrationSnapshot: Record<string, unknown> | null;
+  planVerification: Record<string, unknown> | null;
   sendConversationMessage: () => Promise<void>;
   onConversationAttachmentSelection: (files: FileList | null) => Promise<void>;
   removeConversationAttachment: (attachmentId: string) => void;
@@ -13129,6 +11356,25 @@ function ConversationContextPanel({
           }
         ]
       : selectedThread?.messages ?? [];
+  const orchestrationFocusRecord = asRecord(orchestrationFocus);
+  const orchestrationSnapshotRecord = asRecord(orchestrationSnapshot);
+  const orchestrationPostureSummary = asRecord(orchestrationSnapshotRecord.postureSummary);
+  const latestOrchestrationStepSummary = asRecord(orchestrationSnapshotRecord.latestStepSummary);
+  const planVerificationRecord = asRecord(planVerification);
+  const verificationCounts = asRecord(planVerificationRecord.verificationCounts);
+  const focusedPlanId =
+    firstStringValue(
+      orchestrationFocusRecord.planId,
+      asRecord(orchestrationFocusRecord.plan).id,
+      orchestrationSnapshotRecord.planId
+    ) ?? "None";
+  const orchestrationAction =
+    firstStringValue(orchestrationFocusRecord.action, orchestrationPostureSummary.nextAction) ?? "inspect";
+  const orchestrationWaitingOn =
+    firstStringValue(orchestrationPostureSummary.waitingOn, orchestrationFocusRecord.waitingOn) ?? "none";
+  const orchestrationReconciliation =
+    firstStringValue(latestOrchestrationStepSummary.reconciliationStatus) ?? "unknown";
+  const verifiedStepCount = String(verificationCounts.verifiedCount ?? 0);
 
   useEffect(() => {
     const messageStack = messageStackRef.current;
@@ -13204,16 +11450,37 @@ function ConversationContextPanel({
       <section className="inspector-card conversation-thread-panel conversation-thread-transcript-panel">
         {selectedThread ? (
           displayedConversationMessages.length > 0 ? (
-            <div className="message-stack" onScroll={handleMessageStackScroll} ref={messageStackRef}>
-              {displayedConversationMessages.map((message) => (
-                <MessageBubble
-                  key={message.messageId}
-                  isSelected={selectedConversationMessage?.messageId === message.messageId}
-                  message={message}
-                  onSelect={() => setSelectedConversationMessageId(message.messageId)}
-                />
-              ))}
-            </div>
+            <>
+              <div className="browser-focus-card">
+                <div>
+                  <p className="context-label">Orchestration</p>
+                  <strong>{focusedPlanId}</strong>
+                  <p>
+                    {firstStringValue(
+                      orchestrationWaitingOn,
+                      orchestrationAction,
+                      latestOrchestrationStepSummary.resultSummary
+                    ) ?? "No orchestration posture is currently attached to this thread context."}
+                  </p>
+                </div>
+                <Badge tone="steady">{verifiedStepCount} verified</Badge>
+              </div>
+              <div className="approval-facts">
+                <DetailRow label="Action" value={orchestrationAction} />
+                <DetailRow label="Waiting On" value={orchestrationWaitingOn} />
+                <DetailRow label="Reconciliation" value={orchestrationReconciliation} />
+              </div>
+              <div className="message-stack" onScroll={handleMessageStackScroll} ref={messageStackRef}>
+                {displayedConversationMessages.map((message) => (
+                  <MessageBubble
+                    key={message.messageId}
+                    isSelected={selectedConversationMessage?.messageId === message.messageId}
+                    message={message}
+                    onSelect={() => setSelectedConversationMessageId(message.messageId)}
+                  />
+                ))}
+              </div>
+            </>
           ) : (
             <div className="empty-state conversation-inline-empty">
               <p className="eyebrow">{selectedThread.title}</p>
@@ -13309,6943 +11576,4 @@ function ConversationContextPanel({
       </section>
     </div>
   );
-}
-
-function WorkspaceInspector({
-  activeWorkspace,
-  binding,
-  onToggleInspector,
-  panelRef,
-  summary,
-  status,
-  selectedThread,
-  selectedTurn,
-  conversationDraft,
-  conversationRecoveryHandoff,
-  runtimeRecoveryLaunch,
-  selectedConversationSection,
-  selectedConfigurationSection,
-  runtimeEntityDetail,
-  runtimeSummary,
-  runtimeInspection,
-  runtimeTelemetry,
-  consoleLogStream,
-  diagnosticReports,
-  selectedConsolePlane,
-  selectedConsoleSourceFilter,
-  visibleConsoleEntryCount,
-  selectedDiagnosticSourceFilter,
-  visibleDiagnosticReportCount,
-  transcriptEntries,
-  currentWorkspaceHistoryCount,
-  currentReplHistoryCount,
-  memoryEntries,
-  currentProject,
-  selectedProjectDetail,
-  selectedProjectSummary,
-  runtimeForm,
-  lispParenColors,
-  resolvedTheme,
-  sourcePreview,
-  workspaceDraft,
-  workspaceResult,
-  workspaceTitle,
-  selectedApproval,
-  selectedWorkItem,
-  selectedWorkItemPlan,
-  selectedWorkflowRecord,
-  selectedIncident,
-  selectedMemory,
-  selectedArtifact,
-  selectedConsoleEntry,
-  selectedConversationMessage,
-  selectedEvent,
-  selectedBrowserDomain,
-  selectedOperateSection,
-  selectedTelemetryProcess,
-  selectedDiagnosticReport,
-  selectedDiagnosticReportSummary,
-  currentEditorChangedFormCount,
-  currentEditorBufferDirty,
-  currentEditorBufferTitle,
-  currentEditorBuffers,
-  editorDraft,
-  editorResult,
-  editorPackage,
-  currentEditorCursorSymbol,
-  currentEditorCursorSymbolPackage,
-  currentEditorCursorSymbolHelp,
-  selectedDocumentationPage,
-  selectedEvidenceSection,
-  systemTheme,
-  themePreference,
-  providerSummary,
-  packageManagementSummary,
-  desktopTaskManifests,
-  desktopTaskRecords,
-  desktopTaskActorTrace,
-  desktopTaskDeadLetters,
-  mcpServerConfigs,
-  packageManagementStatusMessage,
-  packageManagementError,
-  packageManagementCommandResult,
-  quicklispSystemDraft,
-  qlotCommandDraft,
-  sourceRegistryDraftPath,
-  sourceRegistryEditOriginalPath,
-  localProjectPathDraft,
-  localProjectNameDraft,
-  providerProfileDraft,
-  selectedMcpServerId,
-  mcpServerDraft,
-  selectedProviderProfileName,
-  providerProfileStatusMessage,
-  providerProfileError,
-  mcpServerStatusMessage,
-  mcpServerError,
-  isSavingProviderProfile,
-  isUpdatingProviderRouting,
-  isSavingMcpServer,
-  isPackageManagementBusy,
-  tooltipScalePercent,
-  controlIconScalePercent,
-  dockIconScalePercent,
-  conversationTextScalePercent,
-  sourceCodeTextScalePercent,
-  openPublishedDocumentation,
-  setSelectedConversationMessageId,
-  updateLispParenColor,
-  updateThemePreference,
-  updateDesktopSurfaceScalePreference,
-  setProviderProfileDraft,
-  setSelectedProviderProfileName,
-  setQuicklispSystemDraft,
-  setQlotCommandDraft,
-  setSourceRegistryDraftPath,
-  setSourceRegistryEditOriginalPath,
-  setLocalProjectPathDraft,
-  setLocalProjectNameDraft,
-  setSelectedMcpServerId,
-  setMcpServerDraft,
-  applyProviderRoutingMode,
-  activateProviderProfile,
-  saveProviderProfile,
-  installQuicklispPackage,
-  executeQlotCommand,
-  saveSourceRegistryEntry,
-  removeSourceRegistryPath,
-  saveLocalProject,
-  removeLocalProjectByName,
-  saveMcpServer,
-  removeMcpServer,
-  artifacts,
-  environmentEvents,
-  workItems,
-  navigateToLinkedEntity,
-  renderChrome = true
-}: {
-  activeWorkspace: WorkspaceId;
-  binding: BindingDto | null;
-  onToggleInspector: () => void;
-  panelRef?: React.RefObject<HTMLElement | null>;
-  summary: EnvironmentSummaryDto | null;
-  status: EnvironmentStatusDto | null;
-  selectedThread: ThreadDetailDto | null;
-  selectedTurn: TurnDetailDto | null;
-  conversationDraft: string;
-  conversationRecoveryHandoff: {
-    source: "incident-restart";
-    incidentId: string;
-    restartLabel: string;
-  } | null;
-  runtimeRecoveryLaunch: {
-    source: "incident-restart";
-    incidentId: string;
-    restartLabel: string;
-  } | null;
-  selectedConversationSection: ConversationSection;
-  selectedConfigurationSection: ConfigurationSection;
-  runtimeEntityDetail: QueryResultDto<RuntimeEntityDetailDto> | null;
-  runtimeSummary: RuntimeSummaryDto | null;
-  runtimeInspection: QueryResultDto<RuntimeInspectionResultDto> | null;
-  runtimeTelemetry: RuntimeTelemetrySnapshotDto | null;
-  consoleLogStream: QueryResultDto<ConsoleLogStreamDto> | null;
-  diagnosticReports: DiagnosticReportSummaryDto[];
-  selectedConsolePlane: "environment" | "host";
-  selectedConsoleSourceFilter: string;
-  visibleConsoleEntryCount: number;
-  selectedDiagnosticSourceFilter: string;
-  visibleDiagnosticReportCount: number;
-  transcriptEntries: TranscriptSurfaceEntry[];
-  currentWorkspaceHistoryCount: number;
-  currentReplHistoryCount: number;
-  memoryEntries: MemoryEntryDto[];
-  currentProject: ProjectProfileDto | null;
-  selectedProjectDetail: ProjectDetailDto | null;
-  selectedProjectSummary: ProjectSummaryDto | null;
-  runtimeForm: string;
-  lispParenColors: string[];
-  resolvedTheme: ResolvedTheme;
-  sourcePreview: QueryResultDto<SourcePreviewDto> | null;
-  workspaceDraft: string;
-  workspaceResult: CommandResultDto<RuntimeEvalResultDto> | null;
-  workspaceTitle: string;
-  selectedApproval: ApprovalRequestDto | null;
-  selectedWorkItem: WorkItemDetailDto | null;
-  selectedWorkItemPlan: WorkItemPlanDto | null;
-  selectedWorkflowRecord: WorkflowRecordDto | null;
-  selectedIncident: IncidentDetailDto | null;
-  selectedMemory: MemoryEntryDto | null;
-  selectedArtifact: ArtifactDetailDto | null;
-  selectedConsoleEntry: ConsoleLogEntryDto | null;
-  selectedConversationMessage: MessageDto | null;
-  selectedEvent: EnvironmentEventDto | null;
-  selectedBrowserDomain: BrowserDomain;
-  selectedOperateSection: OperateSection;
-  selectedTelemetryProcess: RuntimeTelemetryProcessDto | null;
-  selectedDiagnosticReport: DiagnosticReportDetailDto | null;
-  selectedDiagnosticReportSummary: DiagnosticReportSummaryDto | null;
-  currentEditorChangedFormCount: number;
-  currentEditorBufferDirty: boolean;
-  currentEditorBufferTitle: string;
-  currentEditorBuffers: EditorBufferStateDto[];
-  editorDraft: string;
-  editorResult: CommandResultDto<RuntimeEvalResultDto> | null;
-  editorPackage: string;
-  currentEditorCursorSymbol: string | null;
-  currentEditorCursorSymbolPackage: string;
-  currentEditorCursorSymbolHelp: {
-    detail: string;
-    info: string;
-    type?: string;
-    packageName?: string;
-    signature?: string | null;
-  } | null;
-  selectedDocumentationPage: DocumentationPageDto | null;
-  selectedEvidenceSection: EvidenceSection;
-  systemTheme: ResolvedTheme;
-  themePreference: ThemePreference;
-  providerSummary: ProviderProfileSummaryDto | null;
-  packageManagementSummary: PackageManagementSummaryDto | null;
-  desktopTaskManifests: DesktopTaskManifestDto[];
-  desktopTaskRecords: DesktopTaskRecordDto[];
-  desktopTaskActorTrace: Record<string, unknown>[];
-  desktopTaskDeadLetters: Record<string, unknown>[];
-  mcpServerConfigs: McpServerConfigDto[];
-  packageManagementStatusMessage: string | null;
-  packageManagementError: string | null;
-  packageManagementCommandResult: PackageManagementCommandResultDto | null;
-  quicklispSystemDraft: string;
-  qlotCommandDraft: string;
-  sourceRegistryDraftPath: string;
-  sourceRegistryEditOriginalPath: string | null;
-  localProjectPathDraft: string;
-  localProjectNameDraft: string;
-  providerProfileDraft: ConfigureProviderProfileInput;
-  selectedMcpServerId: string | null;
-  mcpServerDraft: McpServerDraft;
-  selectedProviderProfileName: string;
-  providerProfileStatusMessage: string | null;
-  providerProfileError: string | null;
-  mcpServerStatusMessage: string | null;
-  mcpServerError: string | null;
-  isSavingProviderProfile: boolean;
-  isUpdatingProviderRouting: boolean;
-  isSavingMcpServer: boolean;
-  isPackageManagementBusy: boolean;
-  tooltipScalePercent: number;
-  controlIconScalePercent: number;
-  dockIconScalePercent: number;
-  conversationTextScalePercent: number;
-  sourceCodeTextScalePercent: number;
-  openPublishedDocumentation: () => Promise<void>;
-  setSelectedConversationMessageId: (messageId: string | null) => void;
-  updateLispParenColor: (index: number, color: string) => Promise<void>;
-  updateThemePreference: (value: ThemePreference) => Promise<void>;
-  updateDesktopSurfaceScalePreference: (
-    key: "tooltipScalePercent" | "controlIconScalePercent" | "dockIconScalePercent" | "conversationTextScalePercent" | "sourceCodeTextScalePercent",
-    value: number
-  ) => Promise<void>;
-  setProviderProfileDraft: React.Dispatch<React.SetStateAction<ConfigureProviderProfileInput>>;
-  setSelectedProviderProfileName: React.Dispatch<React.SetStateAction<string>>;
-  setQuicklispSystemDraft: React.Dispatch<React.SetStateAction<string>>;
-  setQlotCommandDraft: React.Dispatch<React.SetStateAction<string>>;
-  setSourceRegistryDraftPath: React.Dispatch<React.SetStateAction<string>>;
-  setSourceRegistryEditOriginalPath: React.Dispatch<React.SetStateAction<string | null>>;
-  setLocalProjectPathDraft: React.Dispatch<React.SetStateAction<string>>;
-  setLocalProjectNameDraft: React.Dispatch<React.SetStateAction<string>>;
-  setSelectedMcpServerId: React.Dispatch<React.SetStateAction<string | null>>;
-  setMcpServerDraft: React.Dispatch<React.SetStateAction<McpServerDraft>>;
-  applyProviderRoutingMode: (mode: ProviderRoutingMode) => Promise<void>;
-  activateProviderProfile: (profileName: string) => Promise<void>;
-  saveProviderProfile: (clearApiKey?: boolean) => Promise<void>;
-  installQuicklispPackage: () => Promise<void>;
-  executeQlotCommand: () => Promise<void>;
-  saveSourceRegistryEntry: () => Promise<void>;
-  removeSourceRegistryPath: (path: string) => Promise<void>;
-  saveLocalProject: () => Promise<void>;
-  removeLocalProjectByName: (name: string) => Promise<void>;
-  saveMcpServer: () => Promise<void>;
-  removeMcpServer: (serverId: string) => Promise<void>;
-  artifacts: ArtifactSummaryDto[];
-  environmentEvents: EnvironmentEventDto[];
-  workItems: WorkItemSummaryDto[];
-  navigateToLinkedEntity: (entity: LinkedEntityRefDto) => Promise<void>;
-  renderChrome?: boolean;
-}) {
-  const selectedConfigurationDescriptor =
-    configurationSections.find((section) => section.id === selectedConfigurationSection) ?? configurationSections[0];
-  const selectedConfigurationCurrentValue =
-    selectedConfigurationSection === "theme"
-      ? themePreference === "system"
-        ? "System"
-        : themePreference
-      : selectedConfigurationSection === "lisp-code-view"
-        ? `${normalizeParenDepthColors(lispParenColors).length} depth colors`
-      : selectedConfigurationSection === "llm"
-          ? `${providerSummary?.routingMode ?? "auto"} / ${providerSummary?.activeProfileName ?? "default"} / ${providerSummary?.profileCount ?? 0} profiles`
-          : selectedConfigurationSection === "package-management"
-            ? `${packageManagementSummary?.packageManager ?? "asdf"} / ${packageManagementSummary?.managedSourceRegistryEntryCount ?? 0} source entries / ${packageManagementSummary?.localProjectCount ?? 0} local projects`
-            : selectedConfigurationSection === "capabilities"
-              ? `${desktopTaskManifests.length} manifests`
-              : selectedConfigurationSection === "mcp-servers"
-                ? `${mcpServerConfigs.length} servers`
-                : `Tooltip ${tooltipScalePercent}% / Controls ${controlIconScalePercent}% / Dock ${dockIconScalePercent}% / Conversation ${conversationTextScalePercent}% / Source ${sourceCodeTextScalePercent}%`;
-  const selectedConfigurationResolvedValue =
-    selectedConfigurationSection === "theme"
-      ? resolvedTheme
-      : selectedConfigurationSection === "lisp-code-view"
-        ? "Structured Lisp renderer"
-        : selectedConfigurationSection === "llm"
-          ? providerSummary?.activeProfile?.provider ?? "Provider profiles and routing"
-          : selectedConfigurationSection === "package-management"
-            ? packageManagementSummary?.qlotProjectRoot ??
-              packageManagementSummary?.workingDirectory ??
-              "Managed Quicklisp, Qlot, source-registry, and local-project state."
-            : selectedConfigurationSection === "capabilities"
-              ? "Governed desktop task manifest registry."
-              : selectedConfigurationSection === "mcp-servers"
-                ? "Persisted MCP server registry."
-                : "Independent shell surface scaling, including workspace conversation text.";
-  const renderedDocumentationHtml = useMemo(
-    () => renderDocumentationMarkdown(selectedDocumentationPage?.markdown ?? ""),
-    [selectedDocumentationPage?.markdown]
-  );
-
-  const currentFocusTitle =
-    activeWorkspace === "conversations"
-      ? selectedTurn?.title ?? selectedThread?.title ?? "No conversation focus"
-      : activeWorkspace === "projects"
-        ? selectedProjectDetail?.title ?? selectedProjectSummary?.title ?? currentProject?.title ?? "No project selected"
-      : activeWorkspace === "transcript"
-        ? transcriptEntries[0]?.title ?? "Transcript"
-      : activeWorkspace === "memory"
-        ? selectedMemory
-          ? `${selectedMemory.category} / ${selectedMemory.attribute}`
-          : "Retained Memory"
-      : activeWorkspace === "workspace"
-        ? `${workspaceTitle} Workspace`
-      : activeWorkspace === "editor"
-        ? `${currentEditorBufferTitle} Editor`
-      : activeWorkspace === "browser"
-        ? selectedBrowserDomain === "console"
-          ? `${selectedConsolePlane === "host" ? "Host" : "Environment"} Console${
-              selectedConsoleSourceFilter !== "All Sources" ? ` / ${selectedConsoleSourceFilter}` : ""
-            }`
-          : selectedBrowserDomain === "diagnostics"
-            ? selectedDiagnosticReport?.title ??
-              selectedDiagnosticReportSummary?.title ??
-              `Diagnostics${selectedDiagnosticSourceFilter !== "All Sources" ? ` / ${selectedDiagnosticSourceFilter}` : ""}`
-            : selectedBrowserDomain === "processes"
-              ? selectedTelemetryProcess?.label ?? "Runtime Processes"
-              : selectedBrowserDomain === "performance"
-                ? "Runtime Performance"
-                : selectedBrowserDomain === "host-io"
-                  ? "Host I/O"
-                  : runtimeInspection?.data.symbol ?? sourcePreview?.data.path ?? runtimeSummary?.currentPackage ?? "No browser focus"
-        : activeWorkspace === "runtime"
-          ? selectedWorkItem?.title ?? selectedApproval?.title ?? runtimeSummary?.currentPackage ?? "Listener"
-          : activeWorkspace === "documentation"
-            ? selectedDocumentationPage?.title ?? "User Documentation"
-            : activeWorkspace === "incidents"
-              ? selectedIncident?.title ?? "No incident selected"
-            : activeWorkspace === "artifacts"
-              ? selectedArtifact?.title ?? selectedEvent?.kind ?? "No evidence selected"
-              : activeWorkspace === "configuration"
-                ? selectedConfigurationDescriptor.label
-                : summary?.activeContext.currentThreadTitle ?? summary?.environmentLabel ?? "Environment";
-
-  const currentFocusSummary =
-    activeWorkspace === "conversations"
-      ? selectedTurn?.summary ?? selectedThread?.summary ?? "Select a thread or turn to inspect structured conversation state."
-      : activeWorkspace === "projects"
-        ? selectedProjectDetail?.summary ??
-          selectedProjectSummary?.summary ??
-          "Select a governed project to inspect its constitution, requirements, journeys, architecture, and linked evidence."
-      : activeWorkspace === "transcript"
-        ? transcriptEntries[0]?.summary ?? "Transcript keeps durable evaluation and environment feedback visible across the environment."
-      : activeWorkspace === "memory"
-        ? selectedMemory?.summary ??
-          `Inspect ${memoryEntries.length} retained memory entr${memoryEntries.length === 1 ? "y" : "ies"} and deliberately revise or delete them when they no longer reflect the operator.`
-      : activeWorkspace === "workspace"
-        ? workspaceResult?.data.summary ??
-          "Draft Lisp forms here, evaluate them deliberately, and keep the retained scratch history separate from both conversation turns and listener execution posture."
-      : activeWorkspace === "editor"
-        ? editorResult?.data.summary ??
-          `${currentEditorBuffers.length} retained editor buffer${currentEditorBuffers.length === 1 ? "" : "s"} support sustained source and form editing without collapsing the work into scratch posture or forcing it into the Browser. ${currentEditorChangedFormCount} changed form${currentEditorChangedFormCount === 1 ? "" : "s"} currently differ from the retained baseline.`
-      : activeWorkspace === "browser"
-        ? selectedBrowserDomain === "console"
-          ? selectedConsoleEntry?.message ??
-            `${consoleLogStream?.data.summary ?? "Inspect governed environment log entries with severity, source, and operational correlation."} ${
-              visibleConsoleEntryCount
-            } visible of ${consoleLogStream?.data.entries.length ?? 0} total.`
-          : selectedBrowserDomain === "diagnostics"
-            ? selectedDiagnosticReport?.summary ??
-              selectedDiagnosticReportSummary?.summary ??
-              `Inspect retained host diagnostic reports, crash artifacts, and analytics outputs. ${
-                visibleDiagnosticReportCount
-              } visible of ${diagnosticReports.length} total.`
-            : selectedBrowserDomain === "processes"
-              ? selectedTelemetryProcess?.summary ??
-                runtimeTelemetry?.activitySummary ??
-                "Inspect governed runtime-linked processes and their operational attachments."
-              : selectedBrowserDomain === "performance"
-                ? runtimeTelemetry?.cpu.summary ??
-                  runtimeTelemetry?.memory.summary ??
-                  "Inspect CPU and memory posture for the live runtime and its host."
-                : selectedBrowserDomain === "host-io"
-                  ? runtimeTelemetry?.network.summary ??
-                    runtimeTelemetry?.disk.summary ??
-                    "Inspect host network and disk posture attached to the running environment."
-                  : runtimeInspection?.data.summary ??
-                    sourcePreview?.data.summary ??
-                    "Inspect packages, symbols, source, and governed attachments from one live system view."
-        : activeWorkspace === "runtime"
-          ? selectedWorkItem?.waitingReason ??
-            selectedApproval?.consequenceSummary ??
-            runtimeSummary?.divergencePosture ??
-            "Listener, approval, and work context should stay attached to one execution surface."
-          : activeWorkspace === "documentation"
-            ? selectedDocumentationPage?.summary ??
-              "Use the documentation workspace when you want the conceptual model, workflow guidance, or workspace reference without crowding the operating surfaces."
-          : activeWorkspace === "incidents"
-            ? selectedIncident?.recoverySummary ?? "Recovery context appears here once an incident is selected."
-            : activeWorkspace === "artifacts"
-              ? selectedArtifact?.summary ?? selectedEvent?.summary ?? "Select evidence to inspect provenance and replayable event context."
-              : activeWorkspace === "configuration"
-                ? selectedConfigurationDescriptor.summary
-              : summary?.activeContext.focusSummary ?? "Environment posture is not yet available.";
-
-  const selectedApprovalLinkedWorkItemId =
-    selectedApproval?.linkedEntities.find((entity) => entity.entityType === "work-item")?.entityId ?? null;
-  const selectedApprovalInspectorWorkItem =
-    (selectedApprovalLinkedWorkItemId
-      ? workItems.find((item) => item.workItemId === selectedApprovalLinkedWorkItemId && item.correctiveContext) ?? null
-      : null)
-    ?? workItems.find((item) => item.approvalCount > 0 && item.correctiveContext) ?? null;
-  const selectedApprovalInspectorCorrectiveContext =
-    selectedApprovalInspectorWorkItem?.correctiveContext
-    ?? ((status?.reconciliationDecision ?? summary?.reconciliationDecision)
-      ? {
-          kind: "alignment-reconciliation",
-          decision: (status?.reconciliationDecision ?? summary?.reconciliationDecision)?.decision ?? null,
-          approvalPosture: (status?.reconciliationDecision ?? summary?.reconciliationDecision)?.approvalPosture ?? null,
-          alignmentStatus: (status?.reconciliationDecision ?? summary?.reconciliationDecision)?.alignmentStatus ?? null,
-          alignmentScore: null,
-          proposedActions: (status?.reconciliationDecision ?? summary?.reconciliationDecision)?.proposedActions ?? [],
-          triggerEvents: (status?.reconciliationDecision ?? summary?.reconciliationDecision)?.triggerEvents ?? []
-        }
-      : null);
-
-  const inspectorTabs: Array<{ id: string; label: string; content: React.ReactNode }> =
-    activeWorkspace === "environment"
-      ? [
-          {
-            id: "context",
-            label: "Context",
-            content: (
-              <div className="entity-list">
-                <div className="entity-row">
-                  <div>
-                    <strong>{summary?.activeContext.currentThreadTitle ?? "No active thread"}</strong>
-                    <p>{summary?.activeContext.focusSummary ?? "No current continuation summary."}</p>
-                  </div>
-                </div>
-                <div className="entity-row">
-                  <div>
-                    <strong>{summary?.activeWorkers[0]?.label ?? "No active worker"}</strong>
-                    <p>{summary?.activeWorkers[0]?.responsibility ?? "Actors appear here when the environment exposes them."}</p>
-                  </div>
-                </div>
-              </div>
-            )
-          },
-          {
-            id: "pressure",
-            label: "Pressure",
-            content: (
-              <dl className="detail-list">
-                <DetailRow label="Approvals" value={String(summary?.attention.approvalsAwaiting ?? 0)} />
-                <DetailRow label="Incidents" value={String(summary?.attention.openIncidents ?? 0)} />
-                <DetailRow label="Blocked Work" value={String(summary?.attention.blockedWork ?? 0)} />
-                <DetailRow label="Artifacts" value={String(summary?.recentArtifacts.length ?? 0)} />
-              </dl>
-            )
-          }
-        ]
-      : activeWorkspace === "projects"
-        ? [
-            {
-              id: "context",
-              label: "Context",
-              content: (
-                <dl className="detail-list">
-                  <DetailRow label="Project" value={selectedProjectDetail?.title ?? selectedProjectSummary?.title ?? "No project selected"} />
-                  <DetailRow label="Status" value={selectedProjectDetail?.status ?? selectedProjectSummary?.status ?? "empty"} />
-                  <DetailRow label="Requirements" value={String(selectedProjectDetail?.requirements.length ?? selectedProjectSummary?.requirementCount ?? 0)} />
-                  <DetailRow label="Features" value={String(selectedProjectDetail?.featureSpecifications.length ?? selectedProjectSummary?.featureSpecCount ?? 0)} />
-                  <DetailRow label="Journeys" value={String(selectedProjectDetail?.userJourneys.length ?? selectedProjectSummary?.journeyCount ?? 0)} />
-                  <DetailRow
-                    label="Decisions"
-                    value={String(
-                      selectedProjectDetail?.architectureDecisions.length ??
-                        selectedProjectSummary?.architectureDecisionCount ??
-                        0
-                    )}
-                  />
-                </dl>
-              )
-            },
-            {
-              id: "governance",
-              label: "Governance",
-              content: selectedProjectDetail ? (
-                <div className="configuration-inspector-stack">
-                  <p className="inspector-copy">{selectedProjectDetail.summary}</p>
-                  <pre className="runtime-preview">
-                    {JSON.stringify(
-                      {
-                        constitution: selectedProjectDetail.constitution,
-                        designSystem: selectedProjectDetail.designSystem,
-                        styleGuide: selectedProjectDetail.styleGuide,
-                        metadata: selectedProjectDetail.metadata
-                      },
-                      null,
-                      2
-                    )}
-                  </pre>
-                </div>
-              ) : (
-                <p className="inspector-copy">
-                  Select a governed project to inspect its constitutional and design-governance context.
-                </p>
-              )
-            },
-            {
-              id: "evidence",
-              label: "Evidence",
-              content: selectedProjectDetail ? (
-                <dl className="detail-list">
-                  <DetailRow label="Work Items" value={String(selectedProjectDetail.linkedWorkItems.length)} />
-                  <DetailRow label="Incidents" value={String(selectedProjectDetail.linkedIncidents.length)} />
-                  <DetailRow label="Testing" value={String(selectedProjectDetail.linkedTestingHarnesses.length)} />
-                  <DetailRow label="Source Roots" value={String(selectedProjectDetail.sourceRoots.length)} />
-                  <DetailRow
-                    label="Coverage"
-                    value={selectedProjectDetail.testingEvidence?.coverage.present ? "present" : "absent"}
-                  />
-                  <DetailRow
-                    label="Latest Report"
-                    value={selectedProjectDetail.testingEvidence?.latestReport?.generatedAt ?? "n/a"}
-                  />
-                </dl>
-              ) : (
-                <p className="inspector-copy">
-                  Select a governed project to inspect its linked work, testing, incident, and source evidence.
-                </p>
-              )
-            }
-          ]
-      : activeWorkspace === "conversations"
-        ? [
-            {
-              id: "context",
-              label: "Context",
-              content: (
-                <dl className="detail-list">
-                  {selectedConversationSection === "repl" ? (
-                    <>
-                      <DetailRow label="Mode" value="Direct Eval" />
-                      <DetailRow label="Package" value={runtimeSummary?.currentPackage ?? "listener"} />
-                      <DetailRow label="Runtime" value={runtimeSummary?.runtimeId ?? "unbound"} />
-                      <DetailRow label="Authority" value="Governed REPL" />
-                    </>
-                  ) : (
-                    <>
-                      <DetailRow label="Thread" value={selectedThread?.title ?? "No thread selected"} />
-                      <DetailRow label="State" value={selectedThread?.state ?? "idle"} />
-                      <DetailRow label="Turns" value={String(selectedThread?.turns.length ?? 0)} />
-                      <DetailRow label="Linked Entities" value={String(selectedThread?.linkedEntities.length ?? 0)} />
-                    </>
-                  )}
-                </dl>
-              )
-            },
-            {
-              id: "detail",
-              label: "Turn",
-              content:
-                selectedConversationSection === "draft" ? (
-                  <div className="configuration-inspector-stack">
-                    <pre className="runtime-preview">{conversationDraft || "No draft continuation prepared."}</pre>
-                    {conversationRecoveryHandoff ? (
-                      <dl className="detail-list">
-                        <DetailRow label="Recovery Source" value={conversationRecoveryHandoff.source} />
-                        <DetailRow label="Incident" value={conversationRecoveryHandoff.incidentId} />
-                        <DetailRow label="Restart" value={conversationRecoveryHandoff.restartLabel} />
-                      </dl>
-                    ) : null}
-                  </div>
-                ) : selectedConversationSection === "repl" ? (
-                  <div className="configuration-inspector-stack">
-                    <pre className="runtime-preview">{runtimeForm || "No direct evaluation form prepared."}</pre>
-                    <p className="inspector-copy">
-                      Direct evaluation is explicit here. This surface is using conversation as a governed REPL rather than as a supervised thread.
-                    </p>
-                  </div>
-                ) : (
-                  <dl className="detail-list">
-                    <DetailRow label="Turn" value={selectedTurn?.title ?? "No turn selected"} />
-                    <DetailRow label="Turn State" value={selectedTurn?.state ?? "idle"} />
-                    <DetailRow label="Operations" value={String(selectedTurn?.operationIds.length ?? 0)} />
-                    <DetailRow label="Artifacts" value={String(selectedTurn?.artifactIds.length ?? 0)} />
-                    <DetailRow label="Approvals" value={String(selectedTurn?.approvalIds.length ?? 0)} />
-                  </dl>
-                )
-            },
-            {
-              id: "entry",
-              label: "Entry",
-              content: selectedConversationMessage ? (
-                <dl className="detail-list">
-                  <DetailRow label="Source" value={selectedConversationMessage.role} />
-                  <DetailRow label="Timestamp" value={selectedConversationMessage.createdAt} />
-                </dl>
-              ) : (
-                <p className="inspector-copy">
-                  Select a transcript entry to inspect its source and timestamp without repeating that metadata on every bubble.
-                </p>
-              )
-            },
-            {
-              id: "linked",
-              label: "Linked",
-              content: selectedThread ? (
-                <LinkedEntityList entities={selectedThread.linkedEntities} navigateToLinkedEntity={navigateToLinkedEntity} />
-              ) : (
-                <p className="inspector-copy">
-                  Select a conversation session to inspect the artifacts, approvals, incidents, and work attached to it.
-                </p>
-              )
-            }
-          ]
-        : activeWorkspace === "editor"
-          ? [
-              {
-                id: "context",
-                label: "Context",
-                content: (
-                  <dl className="detail-list">
-                    <DetailRow label="Mode" value="Editor Surface" />
-                    <DetailRow label="Buffer" value={currentEditorBufferTitle} />
-                    <DetailRow label="State" value={currentEditorBufferDirty ? "Dirty" : "Clean"} />
-                    <DetailRow label="Buffers" value={`${currentEditorBuffers.length}`} />
-                    <DetailRow label="Changed Forms" value={`${currentEditorChangedFormCount}`} />
-                    <DetailRow label="Baseline" value={currentEditorBufferDirty ? "Diverged" : "Aligned"} />
-                    <DetailRow label="Package" value={editorPackage || (runtimeSummary?.currentPackage ?? "cl-user")} />
-                    <DetailRow label="Runtime" value={runtimeSummary?.runtimeId ?? "unbound"} />
-                    <DetailRow label="Authority" value="Governed Editing" />
-                  </dl>
-                )
-              },
-              {
-                id: "symbol",
-                label: "Symbol",
-                content: currentEditorCursorSymbol ? (
-                  <div className="configuration-inspector-stack">
-                    <dl className="detail-list">
-                      <DetailRow label="Symbol" value={currentEditorCursorSymbol} />
-                      <DetailRow
-                        label="Package"
-                        value={
-                          currentEditorCursorSymbolHelp?.packageName ??
-                          currentEditorCursorSymbolPackage ??
-                          editorPackage ??
-                          runtimeSummary?.currentPackage ??
-                          "cl-user"
-                        }
-                      />
-                      <DetailRow label="Kind" value={currentEditorCursorSymbolHelp?.type ?? "unknown"} />
-                      {currentEditorCursorSymbolHelp?.signature ? (
-                        <DetailRow label="Signature" value={currentEditorCursorSymbolHelp.signature} />
-                      ) : currentEditorCursorSymbolHelp?.detail ? (
-                        <DetailRow label="Detail" value={currentEditorCursorSymbolHelp.detail} />
-                      ) : null}
-                    </dl>
-                    {currentEditorCursorSymbolHelp?.info ? (
-                      <p className="inspector-copy">{currentEditorCursorSymbolHelp.info}</p>
-                    ) : (
-                      <p className="inspector-copy">
-                        Symbol detail will appear here when runtime-backed help is available for the current editor focus.
-                      </p>
-                    )}
-                  </div>
-                ) : (
-                  <p className="inspector-copy">
-                    Move the caret onto a symbol in the editor to inspect its current package and runtime-backed detail here.
-                  </p>
-                )
-              },
-              {
-                id: "buffer",
-                label: "Buffer",
-                content: <pre className="runtime-preview">{editorDraft || "No editor buffer drafted yet."}</pre>
-              },
-              {
-                id: "output",
-                label: "Output",
-                content: editorResult ? (
-                  <div className="configuration-inspector-stack">
-                    <dl className="detail-list">
-                      <DetailRow label="Status" value={editorResult.status} />
-                      <DetailRow label="Operation" value={editorResult.operation} />
-                    </dl>
-                    <p className="inspector-copy">{editorResult.data.summary}</p>
-                    {editorResult.data.valuePreview ? <pre className="runtime-preview">{editorResult.data.valuePreview}</pre> : null}
-                  </div>
-                ) : (
-                  <p className="inspector-copy">
-                    Evaluate the current editor buffer to inspect sustained editing output here.
-                  </p>
-                )
-              }
-            ]
-        : activeWorkspace === "workspace"
-          ? [
-              {
-                id: "context",
-                label: "Context",
-                content: (
-                  <dl className="detail-list">
-                    <DetailRow label="Mode" value="Scratch Workspace" />
-                    <DetailRow label="Package" value={runtimeSummary?.currentPackage ?? "cl-user"} />
-                    <DetailRow label="Runtime" value={runtimeSummary?.runtimeId ?? "unbound"} />
-                    <DetailRow label="Authority" value="Governed Evaluation" />
-                  </dl>
-                )
-              },
-              {
-                id: "buffer",
-                label: "Buffer",
-                content: <pre className="runtime-preview">{workspaceDraft || "No workspace forms drafted yet."}</pre>
-              },
-              {
-                id: "result",
-                label: "Result",
-                content: workspaceResult ? (
-                  <div className="configuration-inspector-stack">
-                    <dl className="detail-list">
-                      <DetailRow label="Status" value={workspaceResult.status} />
-                      <DetailRow label="Operation" value={workspaceResult.operation} />
-                    </dl>
-                    <p className="inspector-copy">{workspaceResult.data.summary}</p>
-                    {workspaceResult.data.valuePreview ? (
-                      <pre className="runtime-preview">{workspaceResult.data.valuePreview}</pre>
-                    ) : null}
-                  </div>
-                ) : (
-                  <p className="inspector-copy">
-                    Evaluate the current workspace buffer to inspect the governed result here.
-                  </p>
-                )
-              }
-            ]
-        : activeWorkspace === "transcript"
-          ? [
-              {
-                id: "context",
-                label: "Context",
-                content: (
-                    <dl className="detail-list">
-                      <DetailRow label="Entries" value={String(transcriptEntries.length)} />
-                      <DetailRow label="Workspace Results" value={String(currentWorkspaceHistoryCount)} />
-                      <DetailRow label="Listener Results" value={String(currentReplHistoryCount)} />
-                      <DetailRow label="Events" value={String(environmentEvents.length)} />
-                    </dl>
-                )
-              },
-              {
-                id: "latest",
-                label: "Latest",
-                content: transcriptEntries[0] ? (
-                  <div className="configuration-inspector-stack">
-                    <dl className="detail-list">
-                      <DetailRow label="Source" value={transcriptEntries[0].source} />
-                      <DetailRow label="Timestamp" value={transcriptEntries[0].timestamp} />
-                      <DetailRow label="Family" value={transcriptEntries[0].family ?? "transcript"} />
-                    </dl>
-                    <p className="inspector-copy">{transcriptEntries[0].summary}</p>
-                    {transcriptEntries[0].preview ? <pre className="runtime-preview">{transcriptEntries[0].preview}</pre> : null}
-                  </div>
-                ) : (
-                  <p className="inspector-copy">
-                    Transcript entries will appear here once workspace, listener, or environment activity is retained.
-                  </p>
-                )
-              }
-            ]
-        : activeWorkspace === "memory"
-          ? [
-              {
-                id: "context",
-                label: "Context",
-                content: (
-                  <dl className="detail-list">
-                    <DetailRow label="Entries" value={String(memoryEntries.length)} />
-                    <DetailRow label="Selected" value={selectedMemory?.memoryId ?? "No memory selected"} />
-                    <DetailRow label="Category" value={selectedMemory?.category ?? "n/a"} />
-                    <DetailRow label="Attribute" value={selectedMemory?.attribute ?? "n/a"} />
-                  </dl>
-                )
-              },
-              {
-                id: "detail",
-                label: "Detail",
-                content: selectedMemory ? (
-                  <div className="configuration-inspector-stack">
-                    <p className="inspector-copy">{selectedMemory.summary}</p>
-                    <dl className="detail-list">
-                      <DetailRow label="Value" value={selectedMemory.value} />
-                      <DetailRow
-                        label="Confidence"
-                        value={selectedMemory.confidence != null ? String(selectedMemory.confidence) : "n/a"}
-                      />
-                      <DetailRow label="Kind" value={selectedMemory.kind} />
-                      <DetailRow label="Recorded" value={selectedMemory.recordedAt ?? "n/a"} />
-                      <DetailRow label="Updated" value={selectedMemory.updatedAt ?? "n/a"} />
-                    </dl>
-                  </div>
-                ) : (
-                  <p className="inspector-copy">
-                    Select a retained memory to inspect and maintain its deliberate identity or preference record.
-                  </p>
-                )
-              }
-            ]
-        : activeWorkspace === "browser"
-          ? [
-              {
-                id: "context",
-                label: "Context",
-                content: (
-                  selectedBrowserDomain === "governance" ? (
-                    <dl className="detail-list">
-                      <DetailRow label="Domain" value="Governance" />
-                      <DetailRow
-                        label="Selected"
-                        value={
-                          selectedApproval?.title
-                          ?? selectedIncident?.title
-                          ?? selectedWorkItem?.title
-                          ?? "No governance object selected"
-                        }
-                      />
-                      <DetailRow
-                        label="State"
-                        value={
-                          selectedApproval?.state
-                          ?? selectedIncident?.state
-                          ?? selectedWorkItem?.state
-                          ?? "unknown"
-                        }
-                      />
-                      <DetailRow
-                        label="Corrective Kind"
-                        value={(selectedWorkItem?.correctiveContext ?? selectedApprovalInspectorCorrectiveContext)?.kind ?? "none"}
-                      />
-                      <DetailRow
-                        label="Approval Posture"
-                        value={
-                          (selectedWorkItem?.correctiveContext ?? selectedApprovalInspectorCorrectiveContext)?.approvalPosture
-                          ?? "unknown"
-                        }
-                      />
-                      <DetailRow
-                        label="Trigger Events"
-                        value={String((selectedWorkItem?.correctiveContext ?? selectedApprovalInspectorCorrectiveContext)?.triggerEvents.length ?? 0)}
-                      />
-                    </dl>
-                  ) : selectedBrowserDomain === "documentation" ? (
-                    <dl className="detail-list">
-                      <DetailRow label="Domain" value="Documentation" />
-                      <DetailRow label="Title" value={selectedDocumentationPage?.title ?? "No page selected"} />
-                      <DetailRow label="Category" value={selectedDocumentationPage?.category ?? "unknown"} />
-                      <DetailRow label="Slug" value={selectedDocumentationPage?.slug ?? "unknown"} />
-                    </dl>
-                  ) : selectedBrowserDomain === "console" ? (
-                    <dl className="detail-list">
-                      <DetailRow label="Domain" value="Console" />
-                      <DetailRow label="Plane" value={consoleLogStream?.data.plane ?? "environment"} />
-                      <DetailRow label="Source Filter" value={selectedConsoleSourceFilter} />
-                      <DetailRow label="Visible Entries" value={String(visibleConsoleEntryCount)} />
-                      <DetailRow label="Total Entries" value={String(consoleLogStream?.data.entries.length ?? 0)} />
-                      <DetailRow label="Summary" value={consoleLogStream?.data.summary ?? "No console stream loaded."} />
-                    </dl>
-                  ) : selectedBrowserDomain === "diagnostics" ? (
-                    <dl className="detail-list">
-                      <DetailRow label="Domain" value="Diagnostics" />
-                      <DetailRow label="Source Filter" value={selectedDiagnosticSourceFilter} />
-                      <DetailRow label="Visible Reports" value={String(visibleDiagnosticReportCount)} />
-                      <DetailRow label="Total Reports" value={String(diagnosticReports.length)} />
-                      <DetailRow label="Selected" value={selectedDiagnosticReport?.title ?? selectedDiagnosticReportSummary?.title ?? "No report selected"} />
-                      <DetailRow label="Kind" value={selectedDiagnosticReport?.kind ?? selectedDiagnosticReportSummary?.kind ?? "n/a"} />
-                    </dl>
-                  ) : selectedBrowserDomain === "processes" ? (
-                    <dl className="detail-list">
-                      <DetailRow label="Domain" value="Processes" />
-                      <DetailRow label="Visible Processes" value={String(runtimeTelemetry?.processes.length ?? 0)} />
-                      <DetailRow label="Runtime PID" value={String(runtimeTelemetry?.runtimePid ?? "n/a")} />
-                      <DetailRow label="Activity" value={runtimeTelemetry?.activitySummary ?? "Runtime telemetry is not yet available."} />
-                    </dl>
-                  ) : selectedBrowserDomain === "performance" ? (
-                    <dl className="detail-list">
-                      <DetailRow label="Domain" value="Performance" />
-                      <DetailRow label="Sampled At" value={runtimeTelemetry?.sampledAt ?? "n/a"} />
-                      <DetailRow label="CPU" value={runtimeTelemetry?.cpu.utilizationPercent != null ? `${runtimeTelemetry.cpu.utilizationPercent.toFixed(1)}%` : "n/a"} />
-                      <DetailRow label="Host Memory" value={runtimeTelemetry?.memory.systemUsedPercent != null ? `${runtimeTelemetry.memory.systemUsedPercent.toFixed(1)}%` : "n/a"} />
-                    </dl>
-                  ) : selectedBrowserDomain === "host-io" ? (
-                    <dl className="detail-list">
-                      <DetailRow label="Domain" value="Host I/O" />
-                      <DetailRow label="Connections" value={String(runtimeTelemetry?.network.openConnectionCount ?? "n/a")} />
-                      <DetailRow label="Interfaces" value={String(runtimeTelemetry?.network.interfaceCount ?? "n/a")} />
-                      <DetailRow label="Runtime PID" value={String(runtimeTelemetry?.runtimePid ?? "n/a")} />
-                    </dl>
-                  ) : (
-                    <dl className="detail-list">
-                      <DetailRow
-                        label="Domain"
-                        value={browserDomains.find((domain) => domain.id === selectedBrowserDomain)?.label ?? selectedBrowserDomain}
-                      />
-                      <DetailRow label="Package" value={runtimeInspection?.data.packageName ?? runtimeSummary?.currentPackage ?? "unknown"} />
-                      <DetailRow label="Mode" value={runtimeInspection?.data.mode ?? "browse"} />
-                      <DetailRow label="Systems" value={String(runtimeSummary?.loadedSystemCount ?? 0)} />
-                      <DetailRow label="Scopes" value={String(runtimeSummary?.scopes.length ?? 0)} />
-                      {runtimeEntityDetail?.data.facets.slice(0, 4).map((facet) => (
-                        <DetailRow
-                          key={`browser-context:${facet.label}:${facet.value}`}
-                          label={facet.label}
-                          value={facet.value}
-                        />
-                      ))}
-                    </dl>
-                  )
-                )
-              },
-              {
-                id: "detail",
-                label: "Detail",
-                content: selectedBrowserDomain === "documentation" ? (
-                  selectedDocumentationPage ? (
-                    <div className="configuration-inspector-stack">
-                      <p className="inspector-copy">{selectedDocumentationPage.summary}</p>
-                      <article
-                        className="documentation-markdown inspector-documentation-markdown"
-                        dangerouslySetInnerHTML={{ __html: renderedDocumentationHtml }}
-                      />
-                    </div>
-                  ) : (
-                    <p className="inspector-copy">
-                      Select a documentation reference from the browser table to read it in the inspector.
-                    </p>
-                  )
-                ) : selectedBrowserDomain === "governance" ? (
-                  selectedApproval || selectedIncident || selectedWorkItem ? (
-                    <div className="configuration-inspector-stack">
-                      <p className="inspector-copy">
-                        {(selectedWorkItem?.correctiveContext ?? selectedApprovalInspectorCorrectiveContext)?.proposedActions[0]?.reason
-                          ?? selectedApproval?.summary
-                          ?? "No explicit corrective rationale is attached to the selected governance object."}
-                      </p>
-                      {(selectedWorkItem?.correctiveContext ?? selectedApprovalInspectorCorrectiveContext)?.triggerEvents.length ? (
-                        <div className="ref-list">
-                          {((selectedWorkItem?.correctiveContext ?? selectedApprovalInspectorCorrectiveContext)?.triggerEvents ?? []).map((event, index) => (
-                            <span className="thread-flag" key={`inspector-governance-trigger:${index}`}>
-                              {event.kind ?? event.family ?? "event"}
-                              {event.eventId ? ` · ${event.eventId}` : ""}
-                            </span>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : (
-                    <p className="inspector-copy">
-                      Select a governance object from the browser table to inspect its corrective posture here.
-                    </p>
-                  )
-                ) : selectedBrowserDomain === "console" ? (
-                  selectedConsoleEntry ? (
-                    <div className="configuration-inspector-stack">
-	                    <dl className="detail-list">
-	                      <DetailRow label="Plane" value={selectedConsoleEntry.plane} />
-	                      <DetailRow label="Type" value={selectedConsoleEntry.type} />
-	                      <DetailRow label="Process" value={selectedConsoleEntry.processName ?? "n/a"} />
-	                      <DetailRow label="PID" value={selectedConsoleEntry.pid ? String(selectedConsoleEntry.pid) : "n/a"} />
-	                      <DetailRow label="Category" value={selectedConsoleEntry.category} />
-	                      <DetailRow label="Source" value={selectedConsoleEntry.source} />
-	                      <DetailRow label="Activity" value={selectedConsoleEntry.activityId ?? "n/a"} />
-	                      <DetailRow label="Timestamp" value={selectedConsoleEntry.timestamp} />
-	                    </dl>
-                      <p className="inspector-copy">{selectedConsoleEntry.message}</p>
-                      {selectedConsoleEntry.detail ? <pre className="runtime-preview">{selectedConsoleEntry.detail}</pre> : null}
-                    </div>
-                  ) : (
-                    <p className="inspector-copy">Select a console entry to inspect its full detail and operational correlation.</p>
-                  )
-                ) : selectedBrowserDomain === "diagnostics" ? (
-                  selectedDiagnosticReport ? (
-                    <div className="configuration-inspector-stack">
-	                    <dl className="detail-list">
-	                      <DetailRow label="Title" value={selectedDiagnosticReport.title} />
-	                      <DetailRow label="Kind" value={selectedDiagnosticReport.kind} />
-	                      <DetailRow label="Source" value={selectedDiagnosticReport.source} />
-	                      <DetailRow label="Path" value={selectedDiagnosticReport.path ?? "n/a"} />
-	                      <DetailRow label="Created" value={selectedDiagnosticReport.createdAt} />
-	                      <DetailRow
-	                        label="Bytes"
-	                        value={
-	                          typeof selectedDiagnosticReport.metadata?.byteSize === "number"
-	                            ? String(selectedDiagnosticReport.metadata.byteSize)
-	                            : "n/a"
-	                        }
-	                      />
-	                      <DetailRow label="Extension" value={String(selectedDiagnosticReport.metadata?.extension ?? "n/a")} />
-	                      <DetailRow label="Incident" value={String(selectedDiagnosticReport.metadata?.incidentId ?? "n/a")} />
-	                      <DetailRow label="Bug Type" value={String(selectedDiagnosticReport.metadata?.bugType ?? "n/a")} />
-	                      <DetailRow label="Parent" value={String(selectedDiagnosticReport.metadata?.parentProc ?? "n/a")} />
-	                      <DetailRow label="Responsible" value={String(selectedDiagnosticReport.metadata?.responsibleProc ?? "n/a")} />
-	                    </dl>
-                      <p className="inspector-copy">{selectedDiagnosticReport.summary}</p>
-                      {selectedDiagnosticReport.contentPreview ? (
-                        <pre className="runtime-preview">{selectedDiagnosticReport.contentPreview}</pre>
-                      ) : null}
-                    </div>
-                  ) : (
-                    <p className="inspector-copy">Select a retained diagnostic report to inspect its preview and source metadata.</p>
-                  )
-                ) : selectedBrowserDomain === "processes" ? (
-                  selectedTelemetryProcess ? (
-                    <>
-                      <dl className="detail-list">
-                        <DetailRow label="Process" value={selectedTelemetryProcess.label} />
-                        <DetailRow label="Kind" value={selectedTelemetryProcess.kind} />
-                        <DetailRow label="State" value={selectedTelemetryProcess.state} />
-                        <DetailRow label="PID" value={String(selectedTelemetryProcess.pid ?? "n/a")} />
-                        <DetailRow label="CPU" value={selectedTelemetryProcess.cpuPercent != null ? `${selectedTelemetryProcess.cpuPercent.toFixed(1)}%` : "n/a"} />
-                        <DetailRow label="Memory" value={selectedTelemetryProcess.memoryMb != null ? `${selectedTelemetryProcess.memoryMb.toFixed(1)} MB` : "n/a"} />
-                        <DetailRow label="Elapsed" value={selectedTelemetryProcess.elapsed ?? "n/a"} />
-                      </dl>
-                      <p className="inspector-copy">{selectedTelemetryProcess.summary}</p>
-                    </>
-                  ) : (
-                    <p className="inspector-copy">
-                      Select a runtime-linked process to inspect its governed execution posture here.
-                    </p>
-                  )
-                ) : selectedBrowserDomain === "performance" ? (
-                  <div className="configuration-inspector-stack">
-                    <dl className="detail-list">
-                      <DetailRow label="CPU Summary" value={runtimeTelemetry?.cpu.summary ?? "n/a"} />
-                      <DetailRow label="Memory Summary" value={runtimeTelemetry?.memory.summary ?? "n/a"} />
-                      <DetailRow label="Load 1m" value={runtimeTelemetry?.cpu.loadAverage1m != null ? runtimeTelemetry.cpu.loadAverage1m.toFixed(2) : "n/a"} />
-                      <DetailRow label="Heap Used" value={runtimeTelemetry?.memory.heapUsedMb != null ? `${runtimeTelemetry.memory.heapUsedMb.toFixed(1)} MB` : "n/a"} />
-                    </dl>
-                    <p className="inspector-copy">
-                      {runtimeTelemetry?.activitySummary ??
-                        "CPU and memory posture will appear here once the runtime telemetry snapshot is available."}
-                    </p>
-                  </div>
-                ) : selectedBrowserDomain === "host-io" ? (
-                  <div className="configuration-inspector-stack">
-                    <dl className="detail-list">
-                      <DetailRow label="Network Summary" value={runtimeTelemetry?.network.summary ?? "n/a"} />
-                      <DetailRow label="Disk Summary" value={runtimeTelemetry?.disk.summary ?? "n/a"} />
-                      <DetailRow label="Disk Read" value={runtimeTelemetry?.disk.readKbps != null ? `${runtimeTelemetry.disk.readKbps.toFixed(0)} KB/s` : "n/a"} />
-                      <DetailRow label="Disk Write" value={runtimeTelemetry?.disk.writeKbps != null ? `${runtimeTelemetry.disk.writeKbps.toFixed(0)} KB/s` : "n/a"} />
-                    </dl>
-                    <p className="inspector-copy">
-                      Host I/O posture is attached to the running environment here rather than split into a separate monitor.
-                    </p>
-                  </div>
-                ) : runtimeEntityDetail ? (
-                  <>
-                    <dl className="detail-list">
-                      <DetailRow label="Kind" value={runtimeEntityDetail.data.entityKind} />
-                      <DetailRow label="Package" value={runtimeEntityDetail.data.packageName} />
-                      <DetailRow label="Signature" value={runtimeEntityDetail.data.signature ?? "No signature"} />
-                      {runtimeEntityDetail.data.facets.slice(0, 12).map((facet) => (
-                        <DetailRow
-                          key={`${facet.label}:${facet.value}`}
-                          label={facet.label}
-                          value={facet.value}
-                        />
-                      ))}
-                      <DetailRow label="Related Items" value={String(runtimeEntityDetail.data.relatedItems.length)} />
-                    </dl>
-                    <p className="inspector-copy">{runtimeEntityDetail.data.summary}</p>
-                    {sourcePreview?.data.path ? (
-                      <p className="inspector-copy">
-                        Source focus: {sourcePreview.data.path}
-                        {sourcePreview.data.focusLine ? `:${sourcePreview.data.focusLine}` : ""}
-                      </p>
-                    ) : null}
-                  </>
-                ) : (
-                  <p className="inspector-copy">
-                    Select a package, symbol, method, class, or runtime object to inspect its semantic runtime detail here.
-                  </p>
-                )
-              },
-              {
-                id: "source",
-                label: "Source",
-                content:
-                  selectedBrowserDomain === "documentation" ? (
-                    <dl className="detail-list">
-                      <DetailRow label="Source" value={selectedDocumentationPage?.sourcePath ?? "No documentation source selected"} />
-                      <DetailRow label="Category" value={selectedDocumentationPage?.category ?? "unknown"} />
-                      <DetailRow label="Artifacts" value={String(artifacts.length)} />
-                      <DetailRow label="Work Items" value={String(workItems.length)} />
-                    </dl>
-                  ) : selectedBrowserDomain === "console" ? (
-                    <dl className="detail-list">
-                      <DetailRow label="Work Item" value={selectedConsoleEntry?.workItemId ?? "n/a"} />
-                      <DetailRow label="Workflow" value={selectedConsoleEntry?.workflowRecordId ?? "n/a"} />
-                      <DetailRow label="Incident" value={selectedConsoleEntry?.incidentId ?? "n/a"} />
-                      <DetailRow label="Conversation" value={selectedConsoleEntry?.threadRefId ?? selectedConsoleEntry?.turnRefId ?? "n/a"} />
-                    </dl>
-                  ) : selectedBrowserDomain === "diagnostics" ? (
-                    <dl className="detail-list">
-                      <DetailRow label="Process" value={selectedDiagnosticReport?.processName ?? "n/a"} />
-                      <DetailRow label="PID" value={String(selectedDiagnosticReport?.pid ?? "n/a")} />
-                      <DetailRow label="Source" value={selectedDiagnosticReport?.source ?? "n/a"} />
-                      <DetailRow label="Incident" value={String(selectedDiagnosticReport?.metadata?.incidentId ?? "n/a")} />
-                      <DetailRow label="Bug Type" value={String(selectedDiagnosticReport?.metadata?.bugType ?? "n/a")} />
-                      <DetailRow label="Parent" value={String(selectedDiagnosticReport?.metadata?.parentProc ?? "n/a")} />
-                      <DetailRow label="Responsible" value={String(selectedDiagnosticReport?.metadata?.responsibleProc ?? "n/a")} />
-                      <DetailRow label="Report Id" value={selectedDiagnosticReport?.reportId ?? selectedDiagnosticReportSummary?.reportId ?? "n/a"} />
-                    </dl>
-                  ) : (
-                    <dl className="detail-list">
-                      {selectedBrowserDomain === "processes" ? (
-                        <>
-                          <DetailRow label="Work Item" value={selectedTelemetryProcess?.workItemId ?? "n/a"} />
-                          <DetailRow label="Workflow" value={selectedTelemetryProcess?.workflowRecordId ?? "n/a"} />
-                          <DetailRow label="Incident" value={selectedTelemetryProcess?.incidentId ?? "n/a"} />
-                          <DetailRow label="Conversation" value={selectedTelemetryProcess?.threadId ?? selectedTelemetryProcess?.turnId ?? "n/a"} />
-                        </>
-                      ) : selectedBrowserDomain === "performance" ? (
-                        <>
-                          <DetailRow label="Runtime" value={runtimeSummary?.runtimeId ?? "n/a"} />
-                          <DetailRow label="Systems" value={String(runtimeSummary?.loadedSystemCount ?? 0)} />
-                          <DetailRow label="Scopes" value={String(runtimeSummary?.scopes.length ?? 0)} />
-                          <DetailRow label="Work Items" value={String(workItems.length)} />
-                        </>
-                      ) : selectedBrowserDomain === "host-io" ? (
-                        <>
-                          <DetailRow label="Runtime" value={runtimeSummary?.runtimeId ?? "n/a"} />
-                          <DetailRow label="Open Connections" value={String(runtimeTelemetry?.network.openConnectionCount ?? "n/a")} />
-                          <DetailRow label="Artifacts" value={String(artifacts.length)} />
-                          <DetailRow label="Work Items" value={String(workItems.length)} />
-                        </>
-                      ) : (
-                        <>
-                          <DetailRow label="Source" value={sourcePreview?.data.path ?? "No source artifact selected"} />
-                          <DetailRow label="Focus Line" value={String(sourcePreview?.data.focusLine ?? 0)} />
-                          <DetailRow label="Work Items" value={String(workItems.length)} />
-                          <DetailRow label="Artifacts" value={String(artifacts.length)} />
-                        </>
-                      )}
-                    </dl>
-                  )
-              },
-              {
-                id: "handoff",
-                label: "Handoff",
-                content: (
-                  <div className="inspector-tab-stack">
-                    {runtimeRecoveryLaunch || conversationRecoveryHandoff ? (
-                      <dl className="detail-list">
-                        {runtimeRecoveryLaunch ? (
-                          <>
-                            <DetailRow label="Listener Recovery Source" value={runtimeRecoveryLaunch.source} />
-                            <DetailRow label="Listener Incident" value={runtimeRecoveryLaunch.incidentId} />
-                            <DetailRow label="Listener Restart" value={runtimeRecoveryLaunch.restartLabel} />
-                          </>
-                        ) : null}
-                        {conversationRecoveryHandoff ? (
-                          <>
-                            <DetailRow label="Draft Recovery Source" value={conversationRecoveryHandoff.source} />
-                            <DetailRow label="Draft Incident" value={conversationRecoveryHandoff.incidentId} />
-                            <DetailRow label="Draft Restart" value={conversationRecoveryHandoff.restartLabel} />
-                          </>
-                        ) : null}
-                      </dl>
-                    ) : null}
-                    <div>
-                      <p className="context-label">Listener Input</p>
-                      <pre className="runtime-preview">{runtimeForm || "No listener handoff prepared."}</pre>
-                    </div>
-                    <div>
-                      <p className="context-label">Draft Continuation</p>
-                      <pre className="runtime-preview">{conversationDraft || "No conversation handoff prepared."}</pre>
-                    </div>
-                  </div>
-                )
-              }
-            ]
-          : activeWorkspace === "runtime"
-            ? [
-                {
-                  id: "context",
-                  label: "Context",
-                  content: (
-                    <dl className="detail-list">
-                      <DetailRow label="Loaded Systems" value={String(runtimeSummary?.loadedSystemCount ?? 0)} />
-                      <DetailRow label="Pending Approval" value={selectedApproval?.title ?? "None"} />
-                      <DetailRow label="Selected Work" value={selectedWorkItem?.title ?? "None"} />
-                      <DetailRow label="Closure" value={selectedWorkflowRecord?.closureReadiness ?? "unknown"} />
-                    </dl>
-                  )
-                },
-                {
-                  id: "input",
-                  label: "Input",
-                  content: <pre className="runtime-preview">{runtimeForm || "No listener form prepared."}</pre>
-                },
-                {
-                  id: "selection",
-                  label: "Selection",
-                  content: selectedApproval ? (
-                    <>
-                      <dl className="detail-list">
-                        <DetailRow label="Approval" value={selectedApproval.title} />
-                        <DetailRow label="State" value={selectedApproval.state} />
-                        <DetailRow label="Requested Action" value={selectedApproval.requestedAction} />
-                        <DetailRow label="Scope" value={selectedApproval.scopeSummary} />
-                        {selectedApprovalInspectorCorrectiveContext ? (
-                          <DetailRow label="Corrective Kind" value={selectedApprovalInspectorCorrectiveContext.kind} />
-                        ) : null}
-                        {selectedApprovalInspectorCorrectiveContext ? (
-                          <DetailRow
-                            label="Approval Posture"
-                            value={selectedApprovalInspectorCorrectiveContext.approvalPosture ?? "unknown"}
-                          />
-                        ) : null}
-                        {selectedApprovalInspectorCorrectiveContext ? (
-                          <DetailRow
-                            label="Alignment"
-                            value={
-                              selectedApprovalInspectorCorrectiveContext.alignmentStatus
-                                ? `${selectedApprovalInspectorCorrectiveContext.alignmentStatus}${
-                                    selectedApprovalInspectorCorrectiveContext.alignmentScore != null
-                                      ? ` (${selectedApprovalInspectorCorrectiveContext.alignmentScore.toFixed(2)})`
-                                      : ""
-                                  }`
-                                : "unknown"
-                            }
-                          />
-                        ) : null}
-                        {selectedApprovalInspectorCorrectiveContext ? (
-                          <DetailRow
-                            label="Trigger Events"
-                            value={String(selectedApprovalInspectorCorrectiveContext.triggerEvents.length)}
-                          />
-                        ) : null}
-                      </dl>
-                      <p className="inspector-copy">{selectedApproval.consequenceSummary}</p>
-                      {selectedApprovalInspectorCorrectiveContext?.proposedActions[0]?.reason ? (
-                        <p className="inspector-copy">
-                          {selectedApprovalInspectorCorrectiveContext.proposedActions[0].reason}
-                        </p>
-                      ) : null}
-                    </>
-                  ) : selectedWorkItem ? (
-                    <>
-                      <dl className="detail-list">
-                        <DetailRow label="Work Item" value={selectedWorkItem.title} />
-                        <DetailRow label="State" value={selectedWorkItem.state} />
-                        <DetailRow label="Workflow Record" value={selectedWorkItem.workflowRecordId} />
-                        <DetailRow label="Runtime" value={selectedWorkItem.runtimeSummary} />
-                      </dl>
-                      <p className="inspector-copy">
-                        {selectedWorkItem.waitingReason ?? "This work item currently has no explicit waiting reason."}
-                      </p>
-                    </>
-                  ) : selectedWorkflowRecord ? (
-                    <>
-                      <dl className="detail-list">
-                        <DetailRow label="Phase" value={selectedWorkflowRecord.phase} />
-                        <DetailRow label="Validation" value={selectedWorkflowRecord.validationState} />
-                        <DetailRow label="Reconciliation" value={selectedWorkflowRecord.reconciliationState} />
-                        <DetailRow label="Closure" value={selectedWorkflowRecord.closureReadiness} />
-                      </dl>
-                      <p className="inspector-copy">{selectedWorkflowRecord.closureSummary}</p>
-                    </>
-                  ) : (
-                    <p className="inspector-copy">
-                      Select a work item or approval to inspect the current runtime-governed object here.
-                    </p>
-                  )
-                }
-              ]
-            : activeWorkspace === "incidents"
-              ? [
-                  {
-                    id: "context",
-                    label: "Context",
-                    content: (
-                      <dl className="detail-list">
-                        <DetailRow label="Severity" value={selectedIncident?.severity ?? "clear"} />
-                        <DetailRow label="Recovery State" value={selectedIncident?.recoveryState ?? "idle"} />
-                        <DetailRow label="Artifacts" value={String(selectedIncident?.artifactIds.length ?? 0)} />
-                        <DetailRow label="Linked Entities" value={String(selectedIncident?.linkedEntities.length ?? 0)} />
-                      </dl>
-                    )
-                  },
-                  {
-                    id: "next",
-                    label: "Next",
-                    content: (
-                      <p className="inspector-copy">
-                        {selectedIncident?.nextAction ?? "Select an incident to see the current recovery move."}
-                      </p>
-                    )
-                  },
-                  {
-                    id: "runtime",
-                    label: "Runtime",
-                    content: selectedIncident?.conditionDetail ? (
-                      <div className="configuration-inspector-stack">
-                        <dl className="detail-list">
-                          <DetailRow label="Condition Type" value={selectedIncident.conditionDetail.type ?? "unknown"} />
-                          <DetailRow label="Condition Class" value={selectedIncident.conditionDetail.class ?? "unknown"} />
-                          <DetailRow label="Restarts" value={String(selectedIncident.conditionDetail.restartCount)} />
-                          <DetailRow
-                            label="Condition Slots"
-                            value={String(selectedIncident.conditionDetail.slotCount ?? selectedIncident.conditionDetail.slots.length)}
-                          />
-                        </dl>
-                        <p className="inspector-copy">{selectedIncident.conditionDetail.message}</p>
-                        {selectedIncident.conditionDetail.printed ? (
-                          <pre className="runtime-preview">{selectedIncident.conditionDetail.printed}</pre>
-                        ) : null}
-                        {selectedIncident.restartSuggestions.length ? (
-                          <div className="ref-list">
-                            {selectedIncident.restartSuggestions.map((restart) => (
-                              <span className="thread-flag" key={`${restart.name ?? ""}:${restart.label}`}>
-                                {restart.label}
-                                {restart.name ? ` · ${restart.name}` : ""}
-                              </span>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="inspector-copy">No restart suggestions were captured for this incident.</p>
-                        )}
-                      </div>
-                    ) : (
-                      <p className="inspector-copy">
-                        Select an incident with captured runtime failure detail to inspect its condition and restart posture.
-                      </p>
-                    )
-                  }
-                ]
-              : activeWorkspace === "artifacts"
-                ? [
-                    {
-                      id: "context",
-                      label: "Context",
-                      content: (
-                        <dl className="detail-list">
-                          {selectedArtifact ? (
-                            <>
-                              <DetailRow label="Kind" value={selectedArtifact?.kind ?? "unknown"} />
-                              <DetailRow label="State" value={selectedArtifact?.state ?? "unknown"} />
-                              <DetailRow label="Authority" value={selectedArtifact?.authority ?? "unknown"} />
-                              <DetailRow label="Artifacts" value={String(artifacts.length)} />
-                            </>
-                          ) : (
-                            <>
-                              <DetailRow label="Cursor" value={String(selectedEvent?.cursor ?? 0)} />
-                              <DetailRow label="Family" value={selectedEvent?.family ?? "unknown"} />
-                              <DetailRow label="Visibility" value={selectedEvent?.visibility ?? "unspecified"} />
-                              <DetailRow label="Events" value={String(environmentEvents.length)} />
-                            </>
-                          )}
-                        </dl>
-                      )
-                    },
-                    {
-                      id: "provenance",
-                      label: "Provenance",
-                      content: (
-                        <p className="inspector-copy">
-                          {selectedArtifact?.provenance ?? selectedEvent?.summary ?? "Select evidence to inspect provenance or event role."}
-                        </p>
-                      )
-                    }
-                  ]
-                : activeWorkspace === "configuration"
-                  ? [
-                      {
-                        id: "edit",
-                        label: "Edit",
-                        content:
-                          selectedConfigurationSection === "theme" ? (
-                            <div className="configuration-inspector-stack">
-                              <p className="inspector-copy">
-                                Control how the desktop resolves light and dark appearance for this project shell.
-                              </p>
-                              <div className="configuration-theme-actions" role="group" aria-label="Theme preference">
-                                <button
-                                  className={themePreference === "system" ? "starter-chip active" : "starter-chip"}
-                                  onClick={() => void updateThemePreference("system")}
-                                  type="button"
-                                >
-                                  System
-                                </button>
-                                <button
-                                  className={themePreference === "light" ? "starter-chip active" : "starter-chip"}
-                                  onClick={() => void updateThemePreference("light")}
-                                  type="button"
-                                >
-                                  Light
-                                </button>
-                                <button
-                                  className={themePreference === "dark" ? "starter-chip active" : "starter-chip"}
-                                  onClick={() => void updateThemePreference("dark")}
-                                  type="button"
-                                >
-                                  Dark
-                                </button>
-                              </div>
-                            </div>
-                          ) : selectedConfigurationSection === "lisp-code-view" ? (
-                            <div className="configuration-inspector-stack">
-                              <p className="inspector-copy">
-                                Adjust the delimiter palette used by the structured Lisp renderer across browser and execution surfaces.
-                              </p>
-                              <div className="configuration-code-colors" role="group" aria-label="Parenthesis depth colors">
-                                {normalizeParenDepthColors(lispParenColors).map((color, index) => (
-                                  <label className="configuration-color-control" key={`inspector-paren-depth:${index + 1}`}>
-                                    <span>{`Depth ${index + 1}`}</span>
-                                    <input
-                                      className="configuration-color-input"
-                                      onChange={(event) => void updateLispParenColor(index, event.target.value)}
-                                      type="color"
-                                      value={color}
-                                    />
-                                  </label>
-                                ))}
-                              </div>
-                            </div>
-                          ) : selectedConfigurationSection === "llm" ? (
-                            <div className="configuration-inspector-stack">
-                              <p className="inspector-copy">
-                                Configure the integrated language-model routing surface here. Profiles can target OpenAI, Anthropic, Gemini, xAI, Azure-hosted OpenAI-compatible endpoints, local LM Studio, or any other compatible endpoint you provide directly.
-                              </p>
-                              <dl className="detail-list">
-                                <DetailRow label="Active Profile" value={providerSummary?.activeProfileName ?? "default"} />
-                                <DetailRow label="Routing Mode" value={providerSummary?.routingMode ?? "auto"} />
-                                <DetailRow label="Profiles" value={String(providerSummary?.profileCount ?? 0)} />
-                              </dl>
-                              <div className="configuration-theme-actions" role="group" aria-label="Provider routing mode">
-                                <button
-                                  className={providerSummary?.routingMode === "auto" ? "starter-chip active" : "starter-chip"}
-                                  disabled={isUpdatingProviderRouting}
-                                  onClick={() => void applyProviderRoutingMode("auto")}
-                                  type="button"
-                                >
-                                  Auto Routing
-                                </button>
-                                <button
-                                  className={providerSummary?.routingMode === "manual" ? "starter-chip active" : "starter-chip"}
-                                  disabled={isUpdatingProviderRouting}
-                                  onClick={() => void applyProviderRoutingMode("manual")}
-                                  type="button"
-                                >
-                                  Manual Routing
-                                </button>
-                              </div>
-                              <div className="configuration-provider-profile-list" role="list" aria-label="Provider profiles">
-                                {(Array.isArray(providerSummary?.profiles) ? providerSummary.profiles : []).map((profile) => (
-                                  <div
-                                    className={
-                                      profile.name === selectedProviderProfileName
-                                        ? "configuration-provider-profile-card active"
-                                        : "configuration-provider-profile-card"
-                                    }
-                                    key={`provider-profile:${profile.name}`}
-                                    role="listitem"
-                                  >
-                                    <button
-                                      className="configuration-provider-profile-select"
-                                      onClick={() => setSelectedProviderProfileName(profile.name)}
-                                      type="button"
-                                    >
-                                      <strong>{profile.name}</strong>
-                                      <span>{profile.provider}</span>
-                                    </button>
-                                    <div className="configuration-provider-profile-meta">
-                                      <Badge tone={profile.name === providerSummary?.activeProfileName ? "active" : "steady"}>
-                                        {profile.name === providerSummary?.activeProfileName ? "Active" : "Stored"}
-                                      </Badge>
-                                      <span>{profile.apiKeyPresent ? "Token stored" : "No token stored"}</span>
-                                    </div>
-                                    <button
-                                      className="starter-chip"
-                                      disabled={profile.name === providerSummary?.activeProfileName}
-                                      onClick={() => void activateProviderProfile(profile.name)}
-                                      type="button"
-                                    >
-                                      Use Profile
-                                    </button>
-                                  </div>
-                                ))}
-                              </div>
-                              <div className="configuration-provider-form">
-                                <label className="configuration-text-control">
-                                  <span>Profile Name</span>
-                                  <input
-                                    className="configuration-text-input"
-                                    onChange={(event) =>
-                                      setProviderProfileDraft((current) => ({
-                                        ...current,
-                                        profileName: event.target.value
-                                      }))
-                                    }
-                                    type="text"
-                                    value={providerProfileDraft.profileName}
-                                  />
-                                </label>
-                                <label className="configuration-text-control">
-                                  <span>Vendor Preset</span>
-                                  <select
-                                    className="configuration-select-input"
-                                    onChange={(event) => {
-                                      const preset =
-                                        LLM_PROVIDER_PRESETS.find((entry) => entry.id === event.target.value) ??
-                                        LLM_PROVIDER_PRESETS[0]!;
-                                      setProviderProfileDraft((current) => ({
-                                        ...current,
-                                        provider: preset.provider,
-                                        model: current.model.trim().length > 0 ? current.model : preset.defaultModel,
-                                        fastModel:
-                                          (current.fastModel?.trim()?.length ?? 0) > 0
-                                            ? current.fastModel
-                                            : preset.defaultFastModel,
-                                        apiBase:
-                                          (current.apiBase?.trim()?.length ?? 0) > 0
-                                            ? current.apiBase
-                                            : (preset.defaultApiBase ?? ""),
-                                        locality:
-                                          (current.locality?.trim()?.length ?? 0) > 0
-                                            ? current.locality
-                                            : preset.id === "lm-studio"
-                                              ? "local"
-                                              : "network"
-                                      }));
-                                    }}
-                                    value={llmProviderPresetForProfile(providerProfileDraft).id}
-                                  >
-                                    {LLM_PROVIDER_PRESETS.map((preset) => (
-                                      <option key={`provider-preset:${preset.id}`} value={preset.id}>
-                                        {preset.label}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </label>
-                                <label className="configuration-text-control">
-                                  <span>Transport Provider</span>
-                                  <input
-                                    className="configuration-text-input"
-                                    onChange={(event) =>
-                                      setProviderProfileDraft((current) => ({
-                                        ...current,
-                                        provider: event.target.value
-                                      }))
-                                    }
-                                    type="text"
-                                    value={providerProfileDraft.provider}
-                                  />
-                                </label>
-                                <label className="configuration-text-control">
-                                  <span>Endpoint</span>
-                                  <input
-                                    className="configuration-text-input"
-                                    onChange={(event) =>
-                                      setProviderProfileDraft((current) => ({
-                                        ...current,
-                                        apiBase: event.target.value
-                                      }))
-                                    }
-                                    placeholder="https://api.example.com/v1"
-                                    type="text"
-                                    value={providerProfileDraft.apiBase ?? ""}
-                                  />
-                                </label>
-                                <label className="configuration-text-control">
-                                  <span>Primary Model</span>
-                                  <input
-                                    className="configuration-text-input"
-                                    onChange={(event) =>
-                                      setProviderProfileDraft((current) => ({
-                                        ...current,
-                                        model: event.target.value
-                                      }))
-                                    }
-                                    type="text"
-                                    value={providerProfileDraft.model}
-                                  />
-                                </label>
-                                <label className="configuration-text-control">
-                                  <span>Fast Model</span>
-                                  <input
-                                    className="configuration-text-input"
-                                    onChange={(event) =>
-                                      setProviderProfileDraft((current) => ({
-                                        ...current,
-                                        fastModel: event.target.value
-                                      }))
-                                    }
-                                    type="text"
-                                    value={providerProfileDraft.fastModel ?? ""}
-                                  />
-                                </label>
-                                <label className="configuration-text-control">
-                                  <span>Secure Token</span>
-                                  <input
-                                    className="configuration-text-input"
-                                    onChange={(event) =>
-                                      setProviderProfileDraft((current) => ({
-                                        ...current,
-                                        apiKey: event.target.value
-                                      }))
-                                    }
-                                    placeholder={
-                                      providerSummary?.profiles.find((profile) => profile.name === selectedProviderProfileName)?.apiKeyPresent
-                                        ? "Stored token present. Enter a new token to replace it."
-                                        : "Paste a provider token"
-                                    }
-                                    type="password"
-                                    value={providerProfileDraft.apiKey ?? ""}
-                                  />
-                                </label>
-                                <label className="configuration-text-control">
-                                  <span>Intents</span>
-                                  <input
-                                    className="configuration-text-input"
-                                    onChange={(event) =>
-                                      setProviderProfileDraft((current) => ({
-                                        ...current,
-                                        intents: event.target.value
-                                          .split(",")
-                                          .map((value) => value.trim())
-                                          .filter(Boolean)
-                                      }))
-                                    }
-                                    placeholder="quick-turn, deep-reasoning, code-execution"
-                                    type="text"
-                                    value={(providerProfileDraft.intents ?? []).join(", ")}
-                                  />
-                                </label>
-                                <div className="configuration-provider-form-grid">
-                                  <label className="configuration-text-control">
-                                    <span>Latency Tier</span>
-                                    <input
-                                      className="configuration-text-input"
-                                      onChange={(event) =>
-                                        setProviderProfileDraft((current) => ({
-                                          ...current,
-                                          latencyTier: event.target.value
-                                        }))
-                                      }
-                                      type="text"
-                                      value={providerProfileDraft.latencyTier ?? "balanced"}
-                                    />
-                                  </label>
-                                  <label className="configuration-text-control">
-                                    <span>Review Bias</span>
-                                    <input
-                                      className="configuration-text-input"
-                                      onChange={(event) =>
-                                        setProviderProfileDraft((current) => ({
-                                          ...current,
-                                          reviewBias: event.target.value
-                                        }))
-                                      }
-                                      type="text"
-                                      value={providerProfileDraft.reviewBias ?? "neutral"}
-                                    />
-                                  </label>
-                                  <label className="configuration-text-control">
-                                    <span>Execution Bias</span>
-                                    <input
-                                      className="configuration-text-input"
-                                      onChange={(event) =>
-                                        setProviderProfileDraft((current) => ({
-                                          ...current,
-                                          executionBias: event.target.value
-                                        }))
-                                      }
-                                      type="text"
-                                      value={providerProfileDraft.executionBias ?? "balanced"}
-                                    />
-                                  </label>
-                                  <label className="configuration-text-control">
-                                    <span>Locality</span>
-                                    <input
-                                      className="configuration-text-input"
-                                      onChange={(event) =>
-                                        setProviderProfileDraft((current) => ({
-                                          ...current,
-                                          locality: event.target.value
-                                        }))
-                                      }
-                                      type="text"
-                                      value={providerProfileDraft.locality ?? "network"}
-                                    />
-                                  </label>
-                                </div>
-                                <label className="configuration-checkbox-control">
-                                  <input
-                                    checked={Boolean(providerProfileDraft.activate)}
-                                    onChange={(event) =>
-                                      setProviderProfileDraft((current) => ({
-                                        ...current,
-                                        activate: event.target.checked
-                                      }))
-                                    }
-                                    type="checkbox"
-                                  />
-                                  <span>Activate this profile after saving</span>
-                                </label>
-                                {providerProfileStatusMessage ? (
-                                  <p className="configuration-status-note" role="status">
-                                    {providerProfileStatusMessage}
-                                  </p>
-                                ) : null}
-                                {providerProfileError ? (
-                                  <p className="configuration-error-note" role="alert">
-                                    {providerProfileError}
-                                  </p>
-                                ) : null}
-                                <div className="configuration-provider-actions">
-                                  <button
-                                    className="starter-chip active"
-                                    disabled={isSavingProviderProfile}
-                                    onClick={() => void saveProviderProfile(false)}
-                                    type="button"
-                                  >
-                                    Save Profile
-                                  </button>
-                                  <button
-                                    className="starter-chip"
-                                    disabled={
-                                      isSavingProviderProfile ||
-                                      !(
-                                        providerSummary?.profiles.find((profile) => profile.name === selectedProviderProfileName)?.apiKeyPresent
-                                      )
-                                    }
-                                    onClick={() => void saveProviderProfile(true)}
-                                    type="button"
-                                  >
-                                    Clear Stored Token
-                                  </button>
-                                  <button
-                                    className="starter-chip"
-                                    onClick={() =>
-                                      setProviderProfileDraft(
-                                        buildProviderProfileDraft({
-                                          profileName: "new-profile"
-                                        })
-                                      )
-                                    }
-                                    type="button"
-                                  >
-                                    New Profile
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-                          ) : selectedConfigurationSection === "package-management" ? (
-                            <div className="configuration-inspector-stack">
-                              <p className="inspector-copy">
-                                Manage runtime package tooling directly: Quicklisp installs, Qlot execution, source-registry entries, and local-project links all route through the live sbcl-agent host.
-                              </p>
-                              <dl className="detail-list">
-                                <DetailRow label="Manager" value={packageManagementSummary?.packageManager ?? "asdf"} />
-                                <DetailRow label="Quicklisp" value={packageManagementSummary?.quicklispAvailableP ? "available" : "unavailable"} />
-                                <DetailRow label="Qlot" value={packageManagementSummary?.qlotAvailableP ? "available" : "unavailable"} />
-                                <DetailRow label="Source Registry" value={String(packageManagementSummary?.managedSourceRegistryEntryCount ?? 0)} />
-                                <DetailRow label="Local Projects" value={String(packageManagementSummary?.localProjectCount ?? 0)} />
-                              </dl>
-                              <label className="configuration-text-control">
-                                <span>Quicklisp System</span>
-                                <input
-                                  className="configuration-text-input"
-                                  onChange={(event) => setQuicklispSystemDraft(event.target.value)}
-                                  placeholder="dexador"
-                                  type="text"
-                                  value={quicklispSystemDraft}
-                                />
-                              </label>
-                              <button
-                                className="starter-chip active"
-                                disabled={isPackageManagementBusy || quicklispSystemDraft.trim().length === 0}
-                                onClick={() => void installQuicklispPackage()}
-                                type="button"
-                              >
-                                Install Quicklisp Package
-                              </button>
-                              <label className="configuration-text-control">
-                                <span>Qlot Command</span>
-                                <input
-                                  className="configuration-text-input"
-                                  onChange={(event) => setQlotCommandDraft(event.target.value)}
-                                  placeholder="update"
-                                  type="text"
-                                  value={qlotCommandDraft}
-                                />
-                              </label>
-                              <button
-                                className="starter-chip"
-                                disabled={isPackageManagementBusy || qlotCommandDraft.trim().length === 0}
-                                onClick={() => void executeQlotCommand()}
-                                type="button"
-                              >
-                                Run Qlot Command
-                              </button>
-                              <label className="configuration-text-control">
-                                <span>{sourceRegistryEditOriginalPath ? "Edit Source Registry Entry" : "Add Source Registry Entry"}</span>
-                                <input
-                                  className="configuration-text-input"
-                                  onChange={(event) => setSourceRegistryDraftPath(event.target.value)}
-                                  placeholder="/path/to/system/root"
-                                  type="text"
-                                  value={sourceRegistryDraftPath}
-                                />
-                              </label>
-                              <div className="configuration-provider-actions">
-                                <button
-                                  className="starter-chip"
-                                  disabled={isPackageManagementBusy || sourceRegistryDraftPath.trim().length === 0}
-                                  onClick={() => void saveSourceRegistryEntry()}
-                                  type="button"
-                                >
-                                  {sourceRegistryEditOriginalPath ? "Save Entry" : "Add Entry"}
-                                </button>
-                                {sourceRegistryEditOriginalPath ? (
-                                  <button
-                                    className="starter-chip"
-                                    onClick={() => {
-                                      setSourceRegistryDraftPath("");
-                                      setSourceRegistryEditOriginalPath(null);
-                                    }}
-                                    type="button"
-                                  >
-                                    Cancel Edit
-                                  </button>
-                                ) : null}
-                              </div>
-                              <div className="configuration-inspector-stack">
-                                {(Array.isArray(packageManagementSummary?.managedSourceRegistryEntries)
-                                  ? packageManagementSummary.managedSourceRegistryEntries
-                                  : []).map((entry) => (
-                                  <div className="browser-focus-card" key={`source-registry:${entry.entryId}`}>
-                                    <div>
-                                      <p className="context-label">Source Registry</p>
-                                      <strong>{entry.path}</strong>
-                                      <p>{entry.existsP ? "Directory reachable" : "Directory not found"}</p>
-                                    </div>
-                                    <div className="browser-action-strip">
-                                      <button
-                                        className="starter-chip"
-                                        onClick={() => {
-                                          setSourceRegistryEditOriginalPath(entry.path);
-                                          setSourceRegistryDraftPath(entry.path);
-                                        }}
-                                        type="button"
-                                      >
-                                        Edit
-                                      </button>
-                                      <button
-                                        className="starter-chip"
-                                        disabled={isPackageManagementBusy}
-                                        onClick={() => void removeSourceRegistryPath(entry.path)}
-                                        type="button"
-                                      >
-                                        Remove
-                                      </button>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                              <label className="configuration-text-control">
-                                <span>Local Project Path</span>
-                                <input
-                                  className="configuration-text-input"
-                                  onChange={(event) => setLocalProjectPathDraft(event.target.value)}
-                                  placeholder="/path/to/local/project"
-                                  type="text"
-                                  value={localProjectPathDraft}
-                                />
-                              </label>
-                              <label className="configuration-text-control">
-                                <span>Local Project Alias</span>
-                                <input
-                                  className="configuration-text-input"
-                                  onChange={(event) => setLocalProjectNameDraft(event.target.value)}
-                                  placeholder="optional-link-name"
-                                  type="text"
-                                  value={localProjectNameDraft}
-                                />
-                              </label>
-                              <button
-                                className="starter-chip"
-                                disabled={isPackageManagementBusy || localProjectPathDraft.trim().length === 0}
-                                onClick={() => void saveLocalProject()}
-                                type="button"
-                              >
-                                Add Local Project
-                              </button>
-                              <div className="configuration-inspector-stack">
-                                {(Array.isArray(packageManagementSummary?.localProjects)
-                                  ? packageManagementSummary.localProjects
-                                  : []).map((project) => (
-                                  <div className="browser-focus-card" key={`local-project:${project.projectId}`}>
-                                    <div>
-                                      <p className="context-label">Local Project</p>
-                                      <strong>{project.name}</strong>
-                                      <p>{project.path}</p>
-                                    </div>
-                                    <div className="browser-action-strip">
-                                      <button
-                                        className="starter-chip"
-                                        disabled={isPackageManagementBusy}
-                                        onClick={() => void removeLocalProjectByName(project.name)}
-                                        type="button"
-                                      >
-                                        Remove
-                                      </button>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                              {packageManagementStatusMessage ? (
-                                <p className="configuration-status-note" role="status">
-                                  {packageManagementStatusMessage}
-                                </p>
-                              ) : null}
-                              {packageManagementError ? (
-                                <p className="configuration-error-note" role="alert">
-                                  {packageManagementError}
-                                </p>
-                              ) : null}
-                              {packageManagementCommandResult?.stdout ? (
-                                <pre className="runtime-preview">{packageManagementCommandResult.stdout}</pre>
-                              ) : null}
-                              {packageManagementCommandResult?.stderr ? (
-                                <pre className="runtime-preview">{packageManagementCommandResult.stderr}</pre>
-                              ) : null}
-                            </div>
-                          ) : selectedConfigurationSection === "capabilities" ? (
-                            <div className="configuration-inspector-stack">
-                              <p className="inspector-copy">
-                                The governed capability registry is the common manifest layer for internal receivers and future MCP-backed receivers. Every operation here is discoverable through the same desktop-task protocol.
-                              </p>
-                              <dl className="detail-list">
-                                <DetailRow label="Manifests" value={String(desktopTaskManifests.length)} />
-                                <DetailRow
-                                  label="MCP-backed"
-                                  value={String(desktopTaskManifests.filter((manifest) => manifest.backendKind === "mcp").length)}
-                                />
-                                <DetailRow
-                                  label="Internal"
-                                  value={String(desktopTaskManifests.filter((manifest) => manifest.backendKind !== "mcp").length)}
-                                />
-                              </dl>
-                              <div className="configuration-inspector-stack">
-                                {desktopTaskManifests.length > 0 ? (
-                                  desktopTaskManifests.map((manifest) => {
-                                    const invocationRecords = desktopTaskRecords
-                                      .filter(
-                                        (record) =>
-                                          canonicalDesktopTaskCoordinate(record.target) ===
-                                            canonicalDesktopTaskCoordinate(manifest.target) &&
-                                          canonicalDesktopTaskCoordinate(record.operation) ===
-                                            canonicalDesktopTaskCoordinate(manifest.operation)
-                                      )
-                                      .sort((left, right) =>
-                                        String(right.createdAt ?? "").localeCompare(String(left.createdAt ?? ""))
-                                      );
-                                    const recentInvocationRecords = invocationRecords.slice(0, 6);
-                                    return (
-                                      <div className="browser-focus-card" key={`desktop-task-manifest:${manifest.id}`}>
-                                        <div>
-                                          <p className="context-label">{manifest.target}</p>
-                                          <strong>{manifest.operation}</strong>
-                                          <p>{manifest.description ?? "No manifest description provided."}</p>
-                                        </div>
-                                        <dl className="detail-list">
-                                          <DetailRow label="Capability" value={manifest.capability ?? "unspecified"} />
-                                          <DetailRow label="Backend" value={manifest.backendKind ?? "internal"} />
-                                          <DetailRow label="Backend Ref" value={manifest.backendRef ?? "n/a"} />
-                                          <DetailRow label="Approval" value={manifest.approvalPolicy ?? "implicit"} />
-                                          <DetailRow label="Mode" value={manifest.executionMode ?? "sync"} />
-                                          <DetailRow label="Version" value={String(manifest.version ?? 1)} />
-                                          <DetailRow label="Invocations" value={String(invocationRecords.length)} />
-                                        </dl>
-                                        <div className="browser-action-strip">
-                                          <Badge tone={manifest.discoverableP ? "active" : "steady"}>
-                                            {manifest.discoverableP ? "Discoverable" : "Hidden"}
-                                          </Badge>
-                                          {manifest.tags.map((tag) => (
-                                            <Badge key={`desktop-task-manifest-tag:${manifest.id}:${tag}`} tone="steady">
-                                              {tag}
-                                            </Badge>
-                                          ))}
-                                        </div>
-                                        {recentInvocationRecords.length > 0 ? (
-                                          <details open>
-                                            <summary>Received Invocations</summary>
-                                            <div className="configuration-inspector-stack">
-                                              {recentInvocationRecords.map((record) => (
-                                                <div
-                                                  className="browser-focus-card"
-                                                  key={`desktop-task-invocation:${manifest.id}:${record.id}`}
-                                                >
-                                                  <div>
-                                                    <p className="context-label">
-                                                      {record.createdAt
-                                                        ? new Date(record.createdAt).toLocaleString()
-                                                        : "Invocation received"}
-                                                    </p>
-                                                    <strong>{record.status}</strong>
-                                                    <p>
-                                                      {String(
-                                                        record.result?.summary ??
-                                                          record.lastError?.summary ??
-                                                          record.requestId ??
-                                                          "Governed invocation recorded."
-                                                      )}
-                                                    </p>
-                                                  </div>
-                                                  <dl className="detail-list">
-                                                    <DetailRow label="Request" value={record.requestId ?? "n/a"} />
-                                                    <DetailRow label="Approval" value={record.approvalStatus ?? "n/a"} />
-                                                    <DetailRow label="Governance" value={record.governanceStatus ?? "n/a"} />
-                                                    <DetailRow label="Thread" value={record.threadId ?? "n/a"} />
-                                                    <DetailRow label="Turn" value={record.turnId ?? "n/a"} />
-                                                  </dl>
-                                                </div>
-                                              ))}
-                                            </div>
-                                          </details>
-                                        ) : (
-                                          <p className="inspector-copy">
-                                            No invocations have been recorded for this capability server yet.
-                                          </p>
-                                        )}
-                                        {manifest.requestSchema ? (
-                                          <details>
-                                            <summary>Request Schema</summary>
-                                            <pre className="runtime-preview">{JSON.stringify(manifest.requestSchema, null, 2)}</pre>
-                                          </details>
-                                        ) : null}
-                                        {manifest.resultSchema ? (
-                                          <details>
-                                            <summary>Result Schema</summary>
-                                            <pre className="runtime-preview">{JSON.stringify(manifest.resultSchema, null, 2)}</pre>
-                                          </details>
-                                        ) : null}
-                                        {manifest.retryPolicy ? (
-                                          <details>
-                                            <summary>Retry Policy</summary>
-                                            <pre className="runtime-preview">{JSON.stringify(manifest.retryPolicy, null, 2)}</pre>
-                                          </details>
-                                        ) : null}
-                                      </div>
-                                    );
-                                  })
-                                ) : (
-                                  <p className="inspector-copy">
-                                    No desktop-task manifests are registered in the current environment.
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                          ) : selectedConfigurationSection === "mcp-servers" ? (
-                            <div className="configuration-inspector-stack">
-                              <p className="inspector-copy">
-                                Manage MCP server registrations as first-class governed capability providers. These records feed the same manifest and governance protocol as internal desktop task receivers.
-                              </p>
-                              <dl className="detail-list">
-                                <DetailRow label="Servers" value={String(mcpServerConfigs.length)} />
-                                <DetailRow
-                                  label="Enabled"
-                                  value={String(mcpServerConfigs.filter((config) => config.enabledP).length)}
-                                />
-                                <DetailRow
-                                  label="Discoverable"
-                                  value={String(mcpServerConfigs.filter((config) => config.discoverableP).length)}
-                                />
-                              </dl>
-                              <div className="configuration-provider-profile-list" role="list" aria-label="MCP servers">
-                                {mcpServerConfigs.map((server) => (
-                                  <div
-                                    className={
-                                      server.id === selectedMcpServerId
-                                        ? "configuration-provider-profile-card active"
-                                        : "configuration-provider-profile-card"
-                                    }
-                                    key={`mcp-server:${server.id}`}
-                                    role="listitem"
-                                  >
-                                    <button
-                                      className="configuration-provider-profile-select"
-                                      onClick={() => setSelectedMcpServerId(server.id)}
-                                      type="button"
-                                    >
-                                      <strong>{server.name}</strong>
-                                      <span>{server.transport}</span>
-                                    </button>
-                                    <div className="configuration-provider-profile-meta">
-                                      <Badge tone={server.enabledP ? "active" : "warning"}>
-                                        {server.enabledP ? "Enabled" : "Disabled"}
-                                      </Badge>
-                                      <span>{`${server.operationCount} operations`}</span>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                              <div className="configuration-provider-form">
-                                <label className="configuration-text-control">
-                                  <span>Server Name</span>
-                                  <input
-                                    className="configuration-text-input"
-                                    onChange={(event) =>
-                                      setMcpServerDraft((current) => ({
-                                        ...current,
-                                        name: event.target.value
-                                      }))
-                                    }
-                                    type="text"
-                                    value={mcpServerDraft.name}
-                                  />
-                                </label>
-                                <label className="configuration-text-control">
-                                  <span>Transport</span>
-                                  <select
-                                    className="configuration-select-input"
-                                    onChange={(event) =>
-                                      setMcpServerDraft((current) => ({
-                                        ...current,
-                                        transport: event.target.value === "http" ? "http" : "stdio"
-                                      }))
-                                    }
-                                    value={mcpServerDraft.transport}
-                                  >
-                                    <option value="stdio">stdio</option>
-                                    <option value="http">http</option>
-                                  </select>
-                                </label>
-                                {mcpServerDraft.transport === "stdio" ? (
-                                  <>
-                                    <label className="configuration-text-control">
-                                      <span>Command</span>
-                                      <input
-                                        className="configuration-text-input"
-                                        onChange={(event) =>
-                                          setMcpServerDraft((current) => ({
-                                            ...current,
-                                            command: event.target.value
-                                          }))
-                                        }
-                                        placeholder="npx"
-                                        type="text"
-                                        value={mcpServerDraft.command ?? ""}
-                                      />
-                                    </label>
-                                    <label className="configuration-text-control">
-                                      <span>Arguments</span>
-                                      <input
-                                        className="configuration-text-input"
-                                        onChange={(event) =>
-                                          setMcpServerDraft((current) => ({
-                                            ...current,
-                                            arguments: event.target.value
-                                              .split(",")
-                                              .map((value) => value.trim())
-                                              .filter(Boolean)
-                                          }))
-                                        }
-                                        placeholder="-y, @modelcontextprotocol/server-filesystem, /workspace"
-                                        type="text"
-                                        value={(mcpServerDraft.arguments ?? []).join(", ")}
-                                      />
-                                    </label>
-                                    <label className="configuration-text-control">
-                                      <span>Working Directory</span>
-                                      <input
-                                        className="configuration-text-input"
-                                        onChange={(event) =>
-                                          setMcpServerDraft((current) => ({
-                                            ...current,
-                                            workingDirectory: event.target.value
-                                          }))
-                                        }
-                                        placeholder="/path/to/server/root"
-                                        type="text"
-                                        value={mcpServerDraft.workingDirectory ?? ""}
-                                      />
-                                    </label>
-                                  </>
-                                ) : (
-                                  <label className="configuration-text-control">
-                                    <span>Endpoint</span>
-                                    <input
-                                      className="configuration-text-input"
-                                      onChange={(event) =>
-                                        setMcpServerDraft((current) => ({
-                                          ...current,
-                                          endpoint: event.target.value
-                                        }))
-                                      }
-                                      placeholder="https://mcp.example.com"
-                                      type="text"
-                                      value={mcpServerDraft.endpoint ?? ""}
-                                    />
-                                  </label>
-                                )}
-                                <label className="configuration-text-control">
-                                  <span>Capabilities</span>
-                                  <input
-                                    className="configuration-text-input"
-                                    onChange={(event) =>
-                                      setMcpServerDraft((current) => ({
-                                        ...current,
-                                        capabilities: event.target.value
-                                          .split(",")
-                                          .map((value) => value.trim())
-                                          .filter(Boolean)
-                                      }))
-                                    }
-                                    placeholder="filesystem, search, github"
-                                    type="text"
-                                    value={(mcpServerDraft.capabilities ?? []).join(", ")}
-                                  />
-                                </label>
-                                <label className="configuration-text-control">
-                                  <span>Environment Variables</span>
-                                  <textarea
-                                    className="configuration-text-input"
-                                    onChange={(event) =>
-                                      setMcpServerDraft((current) => ({
-                                        ...current,
-                                        environmentVariables: Object.fromEntries(
-                                          event.target.value
-                                            .split("\n")
-                                            .map((line) => line.trim())
-                                            .filter(Boolean)
-                                            .map((line) => {
-                                              const separator = line.indexOf("=");
-                                              if (separator < 0) {
-                                                return [line, ""];
-                                              }
-                                              return [
-                                                line.slice(0, separator).trim(),
-                                                line.slice(separator + 1).trim()
-                                              ];
-                                            })
-                                        )
-                                      }))
-                                    }
-                                    placeholder={"API_KEY=...\nPROJECT_ROOT=/workspace"}
-                                    rows={4}
-                                    value={Object.entries(mcpServerDraft.environmentVariables ?? {})
-                                      .map(([key, value]) => `${key}=${value}`)
-                                      .join("\n")}
-                                  />
-                                </label>
-                                <label className="configuration-text-control">
-                                  <span>Retry Policy (JSON)</span>
-                                  <textarea
-                                    className="configuration-text-input"
-                                    onChange={(event) => {
-                                      const nextValue = event.target.value.trim();
-                                      if (nextValue.length === 0) {
-                                        setMcpServerDraft((current) => ({
-                                          ...current,
-                                          retryPolicy: {}
-                                        }));
-                                        return;
-                                      }
-                                      try {
-                                        const parsed = JSON.parse(nextValue) as Record<string, unknown>;
-                                        setMcpServerDraft((current) => ({
-                                          ...current,
-                                          retryPolicy: parsed
-                                        }));
-                                      } catch {
-                                        // Keep the previous parsed value until the JSON becomes valid again.
-                                      }
-                                    }}
-                                    rows={4}
-                                    value={JSON.stringify(mcpServerDraft.retryPolicy ?? {}, null, 2)}
-                                  />
-                                </label>
-                                <label className="configuration-text-control">
-                                  <span>Health Status</span>
-                                  <input
-                                    className="configuration-text-input"
-                                    onChange={(event) =>
-                                      setMcpServerDraft((current) => ({
-                                        ...current,
-                                        healthStatus: event.target.value
-                                      }))
-                                    }
-                                    placeholder="unknown"
-                                    type="text"
-                                    value={mcpServerDraft.healthStatus ?? ""}
-                                  />
-                                </label>
-                                <label className="configuration-checkbox-control">
-                                  <input
-                                    checked={Boolean(mcpServerDraft.enabledP)}
-                                    onChange={(event) =>
-                                      setMcpServerDraft((current) => ({
-                                        ...current,
-                                        enabledP: event.target.checked
-                                      }))
-                                    }
-                                    type="checkbox"
-                                  />
-                                  <span>Enabled</span>
-                                </label>
-                                <label className="configuration-checkbox-control">
-                                  <input
-                                    checked={Boolean(mcpServerDraft.discoverableP)}
-                                    onChange={(event) =>
-                                      setMcpServerDraft((current) => ({
-                                        ...current,
-                                        discoverableP: event.target.checked
-                                      }))
-                                    }
-                                    type="checkbox"
-                                  />
-                                  <span>Discoverable</span>
-                                </label>
-                                {mcpServerStatusMessage ? (
-                                  <p className="configuration-status-note" role="status">
-                                    {mcpServerStatusMessage}
-                                  </p>
-                                ) : null}
-                                {mcpServerError ? (
-                                  <p className="configuration-error-note" role="alert">
-                                    {mcpServerError}
-                                  </p>
-                                ) : null}
-                                <div className="configuration-provider-actions">
-                                  <button
-                                    className="starter-chip active"
-                                    disabled={isSavingMcpServer}
-                                    onClick={() => void saveMcpServer()}
-                                    type="button"
-                                  >
-                                    Save MCP Server
-                                  </button>
-                                  <button
-                                    className="starter-chip"
-                                    onClick={() => {
-                                      setSelectedMcpServerId(null);
-                                      setMcpServerDraft(buildMcpServerDraft());
-                                    }}
-                                    type="button"
-                                  >
-                                    New Server
-                                  </button>
-                                  <button
-                                    className="starter-chip"
-                                    disabled={isSavingMcpServer || !selectedMcpServerId}
-                                    onClick={() => {
-                                      if (selectedMcpServerId) {
-                                        void removeMcpServer(selectedMcpServerId);
-                                      }
-                                    }}
-                                    type="button"
-                                  >
-                                    Remove Server
-                                  </button>
-                                </div>
-                              </div>
-                              {selectedMcpServerId ? (
-                                <div className="configuration-inspector-stack">
-                                  {(mcpServerConfigs.find((server) => server.id === selectedMcpServerId)?.operations ?? []).map(
-                                    (manifest) => (
-                                      <div className="browser-focus-card" key={`mcp-server-operation:${manifest.id}`}>
-                                        <div>
-                                          <p className="context-label">Registered Operation</p>
-                                          <strong>{`${manifest.target} / ${manifest.operation}`}</strong>
-                                          <p>{manifest.description ?? "No manifest description provided."}</p>
-                                        </div>
-                                        <div className="browser-action-strip">
-                                          <Badge tone="active">{manifest.backendKind ?? "mcp"}</Badge>
-                                          <Badge tone="steady">{manifest.approvalPolicy ?? "implicit"}</Badge>
-                                          <Badge tone="steady">{manifest.executionMode ?? "sync"}</Badge>
-                                        </div>
-                                      </div>
-                                    )
-                                  )}
-                                </div>
-                              ) : null}
-                            </div>
-                          ) : (
-                            <div className="configuration-inspector-stack">
-                              <p className="inspector-copy">
-                                Tune the shell surface density directly. Each percentage slider changes only its own target and persists with desktop preferences.
-                              </p>
-                              <div className="configuration-slider-stack" role="group" aria-label="Desktop surface scale controls">
-                                <label className="configuration-slider-control">
-                                  <span>Mouseover Text</span>
-                                  <div className="configuration-slider-row">
-                                    <input
-                                      className="configuration-range-input"
-                                      max={160}
-                                      min={70}
-                                      onChange={(event) =>
-                                        void updateDesktopSurfaceScalePreference(
-                                          "tooltipScalePercent",
-                                          Number(event.target.value)
-                                        )
-                                      }
-                                      step={1}
-                                      type="range"
-                                      value={tooltipScalePercent}
-                                    />
-                                    <strong>{`${tooltipScalePercent}%`}</strong>
-                                  </div>
-                                </label>
-                                <label className="configuration-slider-control">
-                                  <span>Control Iconography</span>
-                                  <div className="configuration-slider-row">
-                                    <input
-                                      className="configuration-range-input"
-                                      max={160}
-                                      min={70}
-                                      onChange={(event) =>
-                                        void updateDesktopSurfaceScalePreference(
-                                          "controlIconScalePercent",
-                                          Number(event.target.value)
-                                        )
-                                      }
-                                      step={1}
-                                      type="range"
-                                      value={controlIconScalePercent}
-                                    />
-                                    <strong>{`${controlIconScalePercent}%`}</strong>
-                                  </div>
-                                </label>
-                                <label className="configuration-slider-control">
-                                  <span>Iconified Applications</span>
-                                  <div className="configuration-slider-row">
-                                    <input
-                                      className="configuration-range-input"
-                                      max={160}
-                                      min={70}
-                                      onChange={(event) =>
-                                        void updateDesktopSurfaceScalePreference(
-                                          "dockIconScalePercent",
-                                          Number(event.target.value)
-                                        )
-                                      }
-                                      step={1}
-                                      type="range"
-                                      value={dockIconScalePercent}
-                                    />
-                                    <strong>{`${dockIconScalePercent}%`}</strong>
-                                  </div>
-                                </label>
-                                <label className="configuration-slider-control">
-                                  <span>Conversation Text</span>
-                                  <div className="configuration-slider-row">
-                                    <input
-                                      className="configuration-range-input"
-                                      max={160}
-                                      min={70}
-                                      onChange={(event) =>
-                                        void updateDesktopSurfaceScalePreference(
-                                          "conversationTextScalePercent",
-                                          Number(event.target.value)
-                                        )
-                                      }
-                                      step={1}
-                                      type="range"
-                                      value={conversationTextScalePercent}
-                                    />
-                                    <strong>{`${conversationTextScalePercent}%`}</strong>
-                                  </div>
-                                </label>
-                                <label className="configuration-slider-control">
-                                  <span>Source Code Text</span>
-                                  <div className="configuration-slider-row">
-                                    <input
-                                      className="configuration-range-input"
-                                      max={160}
-                                      min={70}
-                                      onChange={(event) =>
-                                        void updateDesktopSurfaceScalePreference(
-                                          "sourceCodeTextScalePercent",
-                                          Number(event.target.value)
-                                        )
-                                      }
-                                      step={1}
-                                      type="range"
-                                      value={sourceCodeTextScalePercent}
-                                    />
-                                    <strong>{`${sourceCodeTextScalePercent}%`}</strong>
-                                  </div>
-                                </label>
-                              </div>
-                            </div>
-                          )
-                      }
-                    ]
-                    : activeWorkspace === "documentation"
-                      ? [
-                          {
-                            id: "context",
-                            label: "Context",
-                            content: (
-                              <div className="configuration-inspector-stack">
-                                <dl className="detail-list">
-                                  <DetailRow label="Title" value={selectedDocumentationPage?.title ?? "No page selected"} />
-                                  <DetailRow label="Category" value={selectedDocumentationPage?.category ?? "unknown"} />
-                                  <DetailRow label="Slug" value={selectedDocumentationPage?.slug ?? selectedDocumentationPage?.title ?? "unknown"} />
-                                </dl>
-                                <p className="inspector-copy">
-                                  {selectedDocumentationPage?.summary ??
-                                    "Select a documentation page from the workspace table to read it in the inspector."}
-                                </p>
-                                <button
-                                  className="starter-chip"
-                                  onClick={() => void openPublishedDocumentation()}
-                                  type="button"
-                                >
-                                  Open Published Site
-                                </button>
-                              </div>
-                            )
-                          },
-                          {
-                            id: "content",
-                            label: "Content",
-                            content: selectedDocumentationPage ? (
-                              <article
-                                className="documentation-markdown inspector-documentation-markdown"
-                                dangerouslySetInnerHTML={{ __html: renderedDocumentationHtml }}
-                              />
-                            ) : (
-                              <p className="inspector-copy">
-                                Select a documentation page from the workspace table to read it here.
-                              </p>
-                            )
-                          }
-                        ]
-                    : [];
-  const [activeInspectorTab, setActiveInspectorTab] = useState<string>(inspectorTabs[0]?.id ?? "context");
-
-  useEffect(() => {
-    const nextInspectorTab = inspectorTabs[0]?.id ?? "context";
-    if (!inspectorTabs.some((tab) => tab.id === activeInspectorTab) && activeInspectorTab !== nextInspectorTab) {
-      setActiveInspectorTab(nextInspectorTab);
-    }
-  }, [activeInspectorTab, inspectorTabs]);
-
-  useEffect(() => {
-    if (
-      !renderChrome &&
-      activeWorkspace === "browser" &&
-      runtimeEntityDetail?.data.facets.length &&
-      inspectorTabs.some((tab) => tab.id === "detail") &&
-      activeInspectorTab !== "detail"
-    ) {
-      setActiveInspectorTab("detail");
-    }
-  }, [
-    activeInspectorTab,
-    activeWorkspace,
-    inspectorTabs,
-    renderChrome,
-    runtimeEntityDetail?.data.entityId,
-    runtimeEntityDetail?.data.facets.length
-  ]);
-
-  const selectedInspectorTab = inspectorTabs.find((tab) => tab.id === activeInspectorTab) ?? inspectorTabs[0] ?? null;
-  const inspectorClassName = renderChrome ? "inspector" : "inspector inspector-embedded";
-  const renderInspectorChrome = (title: string) =>
-    renderChrome ? (
-      <div className="panel-titlebar">
-        <button
-          aria-label={title === "Workspace" ? "Collapse Inspector" : "Collapse workspace panel"}
-          className="panel-titlebar-toggle"
-          onClick={onToggleInspector}
-          title={title === "Workspace" ? "Collapse Inspector" : "Collapse workspace panel"}
-          type="button"
-        >
-          <span aria-hidden="true">−</span>
-        </button>
-        <span className="panel-titlebar-label">{title}</span>
-      </div>
-    ) : null;
-
-  return (
-    <aside className={inspectorClassName} ref={panelRef}>
-      {renderInspectorChrome("Inspector")}
-      <div className="inspector-body">
-        {activeWorkspace === "configuration" ? null : (
-          <section className="inspector-card">
-            <p className="eyebrow">Current Focus</p>
-            <h3>{currentFocusTitle}</h3>
-            <p className="inspector-copy">{currentFocusSummary}</p>
-            <dl className="detail-list">
-              <DetailRow label="Surface" value={labelForWorkspace(activeWorkspace)} />
-              <DetailRow label="Binding" value={binding?.environmentId ?? "unbound"} />
-              <DetailRow label="Runtime" value={summary?.activeContext.runtimePackage ?? status?.runtimeState ?? "unknown"} />
-              <DetailRow label="Workflow" value={status?.workflowState ?? "unknown"} />
-            </dl>
-          </section>
-        )}
-        {selectedInspectorTab ? (
-          <section className="inspector-card inspector-tabs-card">
-            {inspectorTabs.length > 1 ? (
-              <div className="inspector-tabs" role="tablist" aria-label="Inspector panels">
-                {inspectorTabs.map((tab) => (
-                  <button
-                    aria-selected={tab.id === selectedInspectorTab.id}
-                    className={tab.id === selectedInspectorTab.id ? "inspector-tab active" : "inspector-tab"}
-                    key={tab.id}
-                    onClick={() => setActiveInspectorTab(tab.id)}
-                    role="tab"
-                    type="button"
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-            <div className="inspector-tab-panel" role="tabpanel">
-              {selectedInspectorTab.content}
-            </div>
-          </section>
-        ) : null}
-      </div>
-    </aside>
-  );
-}
-
-function DesktopWindowStage({
-  className,
-  activeDesktopId,
-  approvalRequests,
-  windows,
-  focusedWindowId,
-  attentionItems,
-  createReplSession,
-  actionQueue,
-  currentProjectReplFocus,
-  currentFocusSummary,
-  currentFocusTitle,
-  desktopDescriptors,
-  desktopZoom,
-  displayCount,
-  displayPanel,
-  inspectorPanel,
-  topDisplaySurface,
-  activeHostedAppId,
-  activeHostedAppLabel,
-  activeHostedAppSummary,
-  browserWorkspaceProps,
-  projectsWorkspaceProps,
-  operateWorkspaceProps,
-  executionWorkspaceProps,
-  incidentsWorkspaceProps,
-  workWorkspaceProps,
-  evidenceWorkspaceProps,
-  conversationsWorkspaceProps,
-  configurationWorkspaceProps,
-  editorSurfaceProps,
-  transcriptSurfaceProps,
-  memoryWorkspaceProps,
-  activeWorkspace,
-  selectedExecutionSection,
-  browserSurfaceTitle,
-  browserSurfaceSummary,
-  browserSurfaceEntries,
-  currentProjectTitle,
-  environmentId,
-  bindingId,
-  centerAttentionSignals,
-  hostState,
-  runtimeState,
-  workflowState,
-  shellCurrentSurfaceSummary,
-  leadAttention,
-  governedAttentionSignalCount,
-  replSessions,
-  currentReplSessionId,
-  switchReplSession,
-  runtimeSummary,
-  runtimeForm,
-  runtimeRecoveryLaunch,
-  setRuntimeForm,
-  evaluateRuntimeForm,
-  incidents,
-  isEvaluating,
-  isInspectingRuntime,
-  isDecidingApproval,
-  runtimeInspectionMode,
-  setRuntimeInspectionMode,
-  runtimeInspectorSymbol,
-  setRuntimeInspectorSymbol,
-  inspectRuntimeSymbol,
-  runtimeInspection,
-  runtimeEntityDetail,
-  runtimeResult,
-  onResetLayout,
-  onCascadeLayout,
-  onTileLayout,
-  onCreateDesktop,
-  onFocusWindow,
-  onMinimizeWindow,
-  onMoveWindowToPreviousDesktop,
-  onMoveWindowToNextDesktop,
-  onRestoreWindow,
-  onMoveWindow,
-  onPositionWindow,
-  onResizeWindow,
-  onResizeWindowToDimensions,
-  onSetWindowFrame,
-  onCloseWindow,
-  onOpenAttentionItem,
-  onOpenActionQueueItem,
-  onOpenDisplaySurface,
-  onOpenInspectorSurface,
-  onOpenBrowserSurfaceWindow,
-  onOpenShellContextWindow,
-  onOpenProactivityWindow,
-  onOpenDetailedSurfaceWindow,
-  onOpenRuntimeWindow,
-  onOpenWorkflowWindow,
-  onOpenIncident,
-  onSubmitApprovalDecision,
-  onSwitchDesktop,
-  onZoomIn,
-  onZoomOut,
-  onZoomReset,
-  onOpenDetailedWorkspace,
-  undockedPanelContentById,
-  undockDropTargetActive,
-  undockDropTargetRef,
-  onDropUndockedPanel,
-  onDockUndockedPanelLeft,
-  onDockUndockedPanelRight,
-  replSessionTitleDraft,
-  setReplSessionTitleDraft,
-  runtimeInspectorPackage,
-  setRuntimeInspectorPackage,
-  calculatorDraftExpression,
-  calculatorRefreshToken,
-  pendingCalculatorExpressionRequest,
-  clearPendingCalculatorExpressionRequest,
-  insertCalculatorResultIntoConversationDraft,
-  openConversationDraft,
-  recordCalculatorEvaluation
-}: {
-  className?: string;
-  activeDesktopId: string;
-  approvalRequests: ApprovalRequestSummaryDto[];
-  windows: DesktopWindowRecord[];
-  focusedWindowId: string;
-  attentionItems: GlobalAttentionItem[];
-  createReplSession: () => Promise<void>;
-  actionQueue: ActionQueueItem[];
-  currentProjectReplFocus: ReplSessionProfileDto | null;
-  currentFocusSummary: string;
-  currentFocusTitle: string;
-  desktopDescriptors: Array<{ id: string; label: string; active: boolean }>;
-  desktopZoom: number;
-  displayCount: number;
-  displayPanel: DesktopPanelStateDto | null;
-  inspectorPanel: DesktopPanelStateDto | null;
-  topDisplaySurface: Record<string, unknown> | null;
-  activeHostedAppId: HostedAppId;
-  activeHostedAppLabel: string;
-  activeHostedAppSummary: string;
-  browserWorkspaceProps: React.ComponentProps<typeof BrowserWorkspace>;
-  projectsWorkspaceProps: React.ComponentProps<typeof ProjectsWorkspace>;
-  operateWorkspaceProps: React.ComponentProps<typeof OperateWorkspace>;
-  executionWorkspaceProps: React.ComponentProps<typeof ExecutionWorkspace>;
-  incidentsWorkspaceProps: React.ComponentProps<typeof IncidentsWorkspace>;
-  workWorkspaceProps: React.ComponentProps<typeof WorkWorkspace>;
-  evidenceWorkspaceProps: React.ComponentProps<typeof EvidenceWorkspace>;
-  conversationsWorkspaceProps: React.ComponentProps<typeof ConversationsWorkspace>;
-  configurationWorkspaceProps: React.ComponentProps<typeof ConfigurationWorkspace>;
-  editorSurfaceProps: React.ComponentProps<typeof EditorSurface>;
-  transcriptSurfaceProps: React.ComponentProps<typeof TranscriptSurface>;
-  memoryWorkspaceProps: React.ComponentProps<typeof MemoryWorkspace>;
-  activeWorkspace: WorkspaceId;
-  selectedExecutionSection: ExecutionSection;
-  browserSurfaceTitle: string;
-  browserSurfaceSummary: string;
-  browserSurfaceEntries: BrowserSurfaceEntry[];
-  currentProjectTitle: string;
-  environmentId: string | null;
-  bindingId: string;
-  centerAttentionSignals: DesktopAttentionSignal[];
-  hostState: string;
-  runtimeState: string;
-  workflowState: string;
-  shellCurrentSurfaceSummary: {
-    panelLabel: string;
-    summary: string;
-  };
-  leadAttention: GlobalAttentionItem | null;
-  governedAttentionSignalCount: number;
-  replSessions: ReplSessionProfileDto[];
-  currentReplSessionId: string | null;
-  switchReplSession: (sessionId: string) => Promise<void>;
-  runtimeSummary: RuntimeSummaryDto | null;
-  runtimeForm: string;
-  runtimeRecoveryLaunch: {
-    source: "incident-restart";
-    incidentId: string;
-    restartLabel: string;
-  } | null;
-  setRuntimeForm: (value: string) => void;
-  evaluateRuntimeForm: () => Promise<void>;
-  incidents: IncidentSummaryDto[];
-  isEvaluating: boolean;
-  isInspectingRuntime: boolean;
-  isDecidingApproval: boolean;
-  runtimeInspectionMode: RuntimeInspectionMode;
-  setRuntimeInspectionMode: (mode: RuntimeInspectionMode) => void;
-  runtimeInspectorSymbol: string;
-  setRuntimeInspectorSymbol: (value: string) => void;
-  inspectRuntimeSymbol: () => Promise<void>;
-  runtimeInspection: QueryResultDto<RuntimeInspectionResultDto> | null;
-  runtimeEntityDetail: QueryResultDto<RuntimeEntityDetailDto> | null;
-  runtimeResult: CommandResultDto<RuntimeEvalResultDto> | null;
-  onResetLayout: () => void;
-  onCascadeLayout: () => void;
-  onTileLayout: () => void;
-  onCreateDesktop: () => void;
-  onFocusWindow: (window: DesktopWindowRecord) => void;
-  onMinimizeWindow: (windowId: string) => void;
-  onMoveWindowToPreviousDesktop: (windowId: string) => void;
-  onMoveWindowToNextDesktop: (windowId: string) => void;
-  onRestoreWindow: (windowId: string) => void;
-  onMoveWindow: (windowId: string, direction: DesktopWindowMoveDirection) => void;
-  onPositionWindow: (windowId: string, x: number, y: number) => void;
-  onResizeWindow: (windowId: string, preset: DesktopWindowSizePreset) => void;
-  onResizeWindowToDimensions: (windowId: string, width: number, height: number) => void;
-  onSetWindowFrame: (windowId: string, x: number, y: number, width: number, height: number) => void;
-  onCloseWindow: (windowId: string) => void;
-  onOpenAttentionItem: (item: GlobalAttentionItem) => void;
-  onOpenActionQueueItem: (item: ActionQueueItem) => void;
-  onOpenDisplaySurface: () => void;
-  onOpenInspectorSurface: () => void;
-  onOpenBrowserSurfaceWindow: () => void;
-  onOpenShellContextWindow: () => void;
-  onOpenProactivityWindow: () => void;
-  onOpenDetailedSurfaceWindow: () => void;
-  onOpenRuntimeWindow: () => void;
-  onOpenWorkflowWindow: () => void;
-  onOpenIncident: (incidentId: string) => void;
-  onSubmitApprovalDecision: (requestId: string, decision: "approve" | "deny") => void;
-  onSwitchDesktop: (desktopId: string) => void;
-  onZoomIn: () => void;
-  onZoomOut: () => void;
-  onZoomReset: () => void;
-  onOpenDetailedWorkspace: () => void;
-  undockedPanelContentById: Partial<Record<ShellDockPanelId, ReactNode>>;
-  undockDropTargetActive: boolean;
-  undockDropTargetRef: Ref<HTMLDivElement>;
-  onDropUndockedPanel: (panelId: ShellDockPanelId) => void;
-  onDockUndockedPanelLeft: (panelId: ShellDockPanelId) => void;
-  onDockUndockedPanelRight: (panelId: ShellDockPanelId) => void;
-  replSessionTitleDraft: string;
-  setReplSessionTitleDraft: (value: string) => void;
-  runtimeInspectorPackage: string;
-  setRuntimeInspectorPackage: (value: string) => void;
-  calculatorDraftExpression: string;
-  calculatorRefreshToken: string;
-  pendingCalculatorExpressionRequest: {
-    expression: string;
-    shouldEvaluate: boolean;
-    token: number;
-  } | null;
-  clearPendingCalculatorExpressionRequest: () => void;
-  insertCalculatorResultIntoConversationDraft: (input: {
-    expression: string;
-    result: CalculatorResultDto;
-  }) => Promise<void>;
-  openConversationDraft: () => Promise<void>;
-  recordCalculatorEvaluation: (input: { expression: string; result: CalculatorResultDto }) => void;
-}) {
-  const canvasRef = useRef<HTMLDivElement | null>(null);
-  const windowCardRefs = useRef(new Map<string, HTMLDivElement>());
-  const windowBodyRefs = useRef(new Map<string, HTMLDivElement>());
-  const windowFitAttemptsRef = useRef<Record<string, number>>({});
-  const dragSessionRef = useRef<{
-    pointerId: number;
-    windowId: string;
-    startClientX: number;
-    startClientY: number;
-    startX: number;
-    startY: number;
-    canvasWidth: number;
-    canvasHeight: number;
-  } | null>(null);
-  const resizeSessionRef = useRef<{
-    pointerId: number;
-    windowId: string;
-    edge: DesktopWindowResizeEdge;
-    startClientX: number;
-    startClientY: number;
-    startX: number;
-    startY: number;
-    startWidth: number;
-    startHeight: number;
-    canvasWidth: number;
-    canvasHeight: number;
-  } | null>(null);
-  const visibleWindows = windows
-    .filter((window) => window.state === "open")
-    .sort((left, right) => left.zIndex - right.zIndex);
-  const minimizedWindows = windows.filter((window) => window.state === "minimized");
-  const desktopUnitScale = 10 * desktopZoom;
-  const extentWindows = visibleWindows.length > 0 ? visibleWindows : windows;
-  const desktopExtentWidth = Math.max(104, ...extentWindows.map((window) => window.x + window.width + 8));
-  const desktopExtentHeight = Math.max(84, ...extentWindows.map((window) => window.y + window.height + 8));
-  const desktopSurfaceWidth = desktopExtentWidth * desktopUnitScale;
-  const desktopSurfaceHeight = desktopExtentHeight * desktopUnitScale;
-  const dominantAttentionItems = attentionItems.filter((item) => item.value > 0).slice(0, 3);
-  const stagedControlActions = actionQueue.slice(0, 2);
-  const residentQueueItems = actionQueue.slice(0, 4);
-  const residentApprovals = approvalRequests.filter((item) => item.state === "awaiting").slice(0, 2);
-  const residentIncidents = incidents.filter((item) => item.state !== "resolved").slice(0, 2);
-  const hostNeedsAttention = hostState !== "ready";
-  const runtimeNeedsAttention = runtimeState === "recovering";
-  const workflowNeedsAttention = workflowState === "attention_required";
-  const activeReplSession = replSessions.find((session) => session.sessionId === currentReplSessionId) ?? replSessions[0] ?? null;
-  const currentRuntimeSummary = runtimeResult?.data.summary ?? runtimeSummary?.divergencePosture ?? "The live image is ready for governed runtime work.";
-  const recentHistory = currentProjectReplFocus?.history?.slice(0, 2) ?? [];
-  const topDisplaySurfaceTitle =
-    typeof topDisplaySurface?.title === "string"
-      ? topDisplaySurface.title
-      : typeof topDisplaySurface?.label === "string"
-        ? topDisplaySurface.label
-        : typeof topDisplaySurface?.name === "string"
-          ? topDisplaySurface.name
-          : "No display surface summary is currently available.";
-  const runtimePreview =
-    runtimeResult?.data.valuePreview ??
-    runtimeEntityDetail?.data.signature ??
-    runtimeInspection?.data.summary ??
-    "Evaluate a form or inspect a symbol to keep live runtime output visible in the resident window.";
-  const handleUndockStageDragOver = (event: ReactDragEvent<HTMLDivElement>): void => {
-    if (!readDraggedShellPanelId(event.dataTransfer)) {
-      return;
-    }
-    event.preventDefault();
-  };
-  const handleUndockStageDrop = (event: ReactDragEvent<HTMLDivElement>): void => {
-    const panelId = readDraggedShellPanelId(event.dataTransfer);
-    if (!panelId) {
-      return;
-    }
-    event.preventDefault();
-    onDropUndockedPanel(panelId);
-  };
-
-  function desktopChipGlyph(index: number): string {
-    return String(index + 1);
-  }
-
-  function dockGlyphClassForWindow(window: DesktopWindowRecord): string {
-    const undockedPanelId = shellDockPanelIdFromUndockedWindowId(window.id);
-    if (undockedPanelId === "shell-navigation" || undockedPanelId === "shell-utilities") {
-      return "desktop-window-dock-glyph-shell";
-    }
-    if (undockedPanelId === "conversation-context") {
-      return "desktop-window-dock-glyph-conversations";
-    }
-    if (undockedPanelId === "workspace-inspector") {
-      return "desktop-window-dock-glyph-inspector";
-    }
-    if (undockedPanelId === "editor-symbol") {
-      return "desktop-window-dock-glyph-editor";
-    }
-    if (window.id === "window:control-panel") {
-      return "desktop-window-dock-glyph-control-panel";
-    }
-    if (window.id === "window:listener-workbench") {
-      return "desktop-window-dock-glyph-listener";
-    }
-    if (window.id === "window:inspector") {
-      return "desktop-window-dock-glyph-inspector";
-    }
-    if (window.id === "window:display") {
-      return "desktop-window-dock-glyph-display";
-    }
-    if (window.id === "window:shell-context") {
-      return "desktop-window-dock-glyph-shell";
-    }
-    if (window.id === "window:detailed-surface") {
-      return "desktop-window-dock-glyph-detail";
-    }
-    if (window.id === "window:browser-surface") {
-      return "desktop-window-dock-glyph-browser";
-    }
-    if (window.id === "window:actor-system-surface") {
-      return "desktop-window-dock-glyph-operate";
-    }
-    if (window.id === "window:projects-surface") {
-      return "desktop-window-dock-glyph-workspace";
-    }
-    if (window.id === "window:editor-surface") {
-      return "desktop-window-dock-glyph-editor";
-    }
-    if (window.id === "window:workspace-surface") {
-      return "desktop-window-dock-glyph-workspace";
-    }
-    if (window.id === "window:transcript-surface") {
-      return "desktop-window-dock-glyph-transcript";
-    }
-    if (window.id === "window:memory-surface") {
-      return "desktop-window-dock-glyph-workspace";
-    }
-    if (window.id === "window:operate-surface") {
-      return "desktop-window-dock-glyph-operate";
-    }
-    if (window.id === "window:conversations-surface") {
-      return "desktop-window-dock-glyph-conversations";
-    }
-    if (window.id === "window:configuration-surface") {
-      return "desktop-window-dock-glyph-configuration";
-    }
-    return "desktop-window-dock-glyph-generic";
-  }
-
-  function shouldShowWindowSummary(window: DesktopWindowRecord): boolean {
-    if (shellDockPanelIdFromUndockedWindowId(window.id)) {
-      return false;
-    }
-    if (
-      window.id === "window:conversations-surface" ||
-      window.id === "window:editor-surface" ||
-      window.id === "window:transcript-surface" ||
-      window.id === "window:memory-surface" ||
-      window.id === "window:calculator"
-    ) {
-      return false;
-    }
-    return window.summary.trim().length > 0;
-  }
-
-  function renderOperateSurfaceContent(): React.ReactNode {
-    if (activeWorkspace === "runtime") {
-      if (selectedExecutionSection === "work") {
-        return <WorkWorkspace {...workWorkspaceProps} />;
-      }
-      return <ExecutionWorkspace {...executionWorkspaceProps} />;
-    }
-
-    if (activeWorkspace === "incidents") {
-      return <IncidentsWorkspace {...incidentsWorkspaceProps} />;
-    }
-
-    if (activeWorkspace === "artifacts") {
-      return <EvidenceWorkspace {...evidenceWorkspaceProps} />;
-    }
-
-    return <OperateWorkspace {...operateWorkspaceProps} />;
-  }
-
-  useEffect(() => {
-    function handlePointerMove(event: PointerEvent): void {
-      const session = dragSessionRef.current;
-      if (session && event.pointerId === session.pointerId) {
-        const deltaX = (event.clientX - session.startClientX) / desktopUnitScale;
-        const deltaY = (event.clientY - session.startClientY) / desktopUnitScale;
-        onPositionWindow(session.windowId, session.startX + deltaX, session.startY + deltaY);
-      }
-      const resizeSession = resizeSessionRef.current;
-      if (resizeSession && event.pointerId === resizeSession.pointerId) {
-        const deltaX = (event.clientX - resizeSession.startClientX) / desktopUnitScale;
-        const deltaY = (event.clientY - resizeSession.startClientY) / desktopUnitScale;
-        const nextX =
-          resizeSession.edge.includes("w")
-            ? resizeSession.startX + deltaX
-            : resizeSession.startX;
-        const nextY =
-          resizeSession.edge.includes("n")
-            ? resizeSession.startY + deltaY
-            : resizeSession.startY;
-        const nextWidth =
-          resizeSession.edge.includes("w")
-            ? resizeSession.startWidth - deltaX
-            : resizeSession.edge.includes("e")
-              ? resizeSession.startWidth + deltaX
-              : resizeSession.startWidth;
-        const nextHeight =
-          resizeSession.edge.includes("n")
-            ? resizeSession.startHeight - deltaY
-            : resizeSession.edge.includes("s")
-              ? resizeSession.startHeight + deltaY
-              : resizeSession.startHeight;
-        onSetWindowFrame(resizeSession.windowId, nextX, nextY, nextWidth, nextHeight);
-      }
-    }
-
-    function handlePointerUp(event: PointerEvent): void {
-      if (dragSessionRef.current?.pointerId === event.pointerId) {
-        dragSessionRef.current = null;
-      }
-      if (resizeSessionRef.current?.pointerId === event.pointerId) {
-        resizeSessionRef.current = null;
-      }
-      if (!dragSessionRef.current && !resizeSessionRef.current) {
-        document.body.classList.remove("desktop-window-dragging");
-      }
-    }
-
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp);
-
-    return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
-    };
-  }, [desktopUnitScale, onPositionWindow, onSetWindowFrame]);
-
-  useEffect(() => {
-    const rafHandle = window.requestAnimationFrame(() => {
-      visibleWindows.forEach((desktopWindow) => {
-        const attempts = windowFitAttemptsRef.current[desktopWindow.id] ?? 0;
-        if (attempts >= 3) {
-          return;
-        }
-
-        const card = windowCardRefs.current.get(desktopWindow.id);
-        const body = windowBodyRefs.current.get(desktopWindow.id);
-        if (!card || !body) {
-          return;
-        }
-
-        const verticalOverflow = Math.max(0, body.scrollHeight - body.clientHeight);
-        const horizontalOverflow = Math.max(0, body.scrollWidth - body.clientWidth);
-
-        if (verticalOverflow <= 2 && horizontalOverflow <= 2) {
-          windowFitAttemptsRef.current[desktopWindow.id] = 3;
-          return;
-        }
-
-        const widthGrowth = horizontalOverflow > 2 ? Math.ceil(horizontalOverflow / desktopUnitScale) + 4 : 0;
-        const heightGrowth = verticalOverflow > 2 ? Math.ceil(verticalOverflow / desktopUnitScale) + 4 : 0;
-
-        if (widthGrowth <= 0 && heightGrowth <= 0) {
-          windowFitAttemptsRef.current[desktopWindow.id] = 3;
-          return;
-        }
-
-        windowFitAttemptsRef.current[desktopWindow.id] = attempts + 1;
-        onSetWindowFrame(
-          desktopWindow.id,
-          desktopWindow.x,
-          desktopWindow.y,
-          desktopWindow.width + widthGrowth,
-          desktopWindow.height + heightGrowth
-        );
-      });
-    });
-
-    return () => {
-      window.cancelAnimationFrame(rafHandle);
-    };
-  }, [desktopUnitScale, onSetWindowFrame, visibleWindows]);
-
-  function startWindowDrag(event: React.PointerEvent<HTMLDivElement>, window: DesktopWindowRecord): void {
-    const canvasRect = canvasRef.current?.getBoundingClientRect();
-    if (!canvasRect) {
-      return;
-    }
-
-    dragSessionRef.current = {
-      pointerId: event.pointerId,
-      windowId: window.id,
-      startClientX: event.clientX,
-      startClientY: event.clientY,
-      startX: window.x,
-      startY: window.y,
-      canvasWidth: canvasRect.width,
-      canvasHeight: canvasRect.height
-    };
-    event.currentTarget.setPointerCapture(event.pointerId);
-    document.body.classList.add("desktop-window-dragging");
-    onFocusWindow(window);
-    event.preventDefault();
-    event.stopPropagation();
-  }
-
-  function startWindowResize(
-    event: React.PointerEvent<HTMLButtonElement>,
-    window: DesktopWindowRecord,
-    edge: DesktopWindowResizeEdge
-  ): void {
-    const canvasRect = canvasRef.current?.getBoundingClientRect();
-    if (!canvasRect) {
-      return;
-    }
-
-    resizeSessionRef.current = {
-      pointerId: event.pointerId,
-      windowId: window.id,
-      edge,
-      startClientX: event.clientX,
-      startClientY: event.clientY,
-      startX: window.x,
-      startY: window.y,
-      startWidth: window.width,
-      startHeight: window.height,
-      canvasWidth: canvasRect.width,
-      canvasHeight: canvasRect.height
-    };
-    event.currentTarget.setPointerCapture(event.pointerId);
-    document.body.classList.add("desktop-window-dragging");
-    onFocusWindow(window);
-    event.preventDefault();
-    event.stopPropagation();
-  }
-
-  return (
-    <section className={className ?? "panel desktop-window-stage"}>
-      <div className="desktop-window-toolbar">
-        <div className="desktop-window-desktops">
-          {desktopDescriptors.map((desktop, index) => (
-            <button
-              className={desktop.active ? "desktop-window-desktop-chip active" : "desktop-window-desktop-chip"}
-              key={desktop.id}
-              onClick={() => onSwitchDesktop(desktop.id)}
-              title={desktop.label}
-              aria-label={`Switch to ${desktop.label}`}
-              type="button"
-            >
-              {desktopChipGlyph(index)}
-            </button>
-          ))}
-          <button
-            className="desktop-window-desktop-chip desktop-window-desktop-chip-icon"
-            onClick={onCreateDesktop}
-            title="Create Desktop"
-            aria-label="Create desktop"
-            type="button"
-          >
-            +
-          </button>
-        </div>
-        <div className="desktop-window-notifications">
-          {centerAttentionSignals.map((signal) => (
-            <button
-              className={`desktop-window-notification desktop-window-notification-signal desktop-window-notification-signal-${signal.priority}`}
-              data-tooltip={signal.tooltip}
-              key={signal.id}
-              onClick={signal.onOpen}
-              title={signal.tooltip}
-              type="button"
-            >
-              <span aria-hidden="true" className={`desktop-window-notification-glyph ${signal.glyphClassName}`} />
-            </button>
-          ))}
-          <button
-            className="desktop-window-notification"
-            data-tooltip={`Open shell context for ${shellCurrentSurfaceSummary.panelLabel}. Project ${currentProjectTitle}. Binding ${bindingId}.`}
-            onClick={onOpenShellContextWindow}
-            title={`Open shell context for ${shellCurrentSurfaceSummary.panelLabel}. Project ${currentProjectTitle}. Binding ${bindingId}.`}
-            type="button"
-          >
-            <span aria-hidden="true" className="desktop-window-notification-glyph desktop-window-notification-glyph-shell" />
-          </button>
-          <button
-            className={governedAttentionSignalCount > 0 || leadAttention ? "desktop-window-notification active" : "desktop-window-notification"}
-            data-tooltip={
-              leadAttention
-                ? `Open governed attention: ${leadAttention.label}${governedAttentionSignalCount > 0 ? ` (${governedAttentionSignalCount} active)` : ""}`
-                : governedAttentionSignalCount > 0
-                  ? `Open governed attention (${governedAttentionSignalCount} active)`
-                  : "Open governed attention in Actions"
-            }
-            onClick={onOpenProactivityWindow}
-            title={
-              leadAttention
-                ? `Open governed attention: ${leadAttention.label}${governedAttentionSignalCount > 0 ? ` (${governedAttentionSignalCount} active)` : ""}`
-                : governedAttentionSignalCount > 0
-                  ? `Open governed attention (${governedAttentionSignalCount} active)`
-                  : "Open governed attention in Actions"
-            }
-            type="button"
-          >
-            <span aria-hidden="true" className="desktop-window-notification-glyph desktop-window-notification-glyph-proactivity" />
-            {governedAttentionSignalCount > 0 ? (
-              <span className="desktop-window-notification-dot" aria-hidden="true" />
-            ) : null}
-          </button>
-          <button
-            className="desktop-window-notification"
-            data-tooltip={`Open detailed surface for ${activeHostedAppLabel}`}
-            onClick={onOpenDetailedSurfaceWindow}
-            title={`Open detailed surface for ${activeHostedAppLabel}`}
-            type="button"
-          >
-            <span aria-hidden="true" className="desktop-window-notification-glyph desktop-window-notification-glyph-detail" />
-          </button>
-          <button
-            className={hostNeedsAttention ? "desktop-window-notification active" : "desktop-window-notification"}
-            data-tooltip={`Host state: ${hostState}`}
-            onClick={onOpenShellContextWindow}
-            title={`Host state: ${hostState}`}
-            type="button"
-          >
-            <span aria-hidden="true" className="desktop-window-notification-glyph desktop-window-notification-glyph-host" />
-          </button>
-          <button
-            className={runtimeNeedsAttention ? "desktop-window-notification active" : "desktop-window-notification"}
-            data-tooltip={`Runtime state: ${runtimeState}`}
-            onClick={onOpenRuntimeWindow}
-            title={`Runtime state: ${runtimeState}`}
-            type="button"
-          >
-            <span aria-hidden="true" className="desktop-window-notification-glyph desktop-window-notification-glyph-runtime" />
-          </button>
-          <button
-            className={workflowNeedsAttention ? "desktop-window-notification active" : "desktop-window-notification"}
-            data-tooltip={`Workflow state: ${workflowState}`}
-            onClick={onOpenWorkflowWindow}
-            title={`Workflow state: ${workflowState}`}
-            type="button"
-          >
-            <span aria-hidden="true" className="desktop-window-notification-glyph desktop-window-notification-glyph-workflow" />
-          </button>
-        </div>
-        <div className="desktop-window-layout-actions">
-          <button
-            className="desktop-window-layout-action desktop-window-layout-action-icon"
-            onClick={onResetLayout}
-            title="Reset Layout"
-            aria-label="Reset desktop layout"
-            type="button"
-          >
-            <span aria-hidden="true" className="desktop-window-layout-glyph desktop-window-layout-glyph-reset" />
-          </button>
-          <button
-            className="desktop-window-layout-action desktop-window-layout-action-icon"
-            onClick={onCascadeLayout}
-            title="Cascade"
-            aria-label="Cascade resident windows"
-            type="button"
-          >
-            <span aria-hidden="true" className="desktop-window-layout-glyph desktop-window-layout-glyph-cascade" />
-          </button>
-          <button
-            className="desktop-window-layout-action desktop-window-layout-action-icon"
-            onClick={onTileLayout}
-            title="Tile"
-            aria-label="Tile resident windows"
-            type="button"
-          >
-            <span aria-hidden="true" className="desktop-window-layout-glyph desktop-window-layout-glyph-tile" />
-          </button>
-          <button
-            className="desktop-window-layout-action desktop-window-layout-action-icon"
-            onClick={onZoomOut}
-            title="Zoom Out"
-            aria-label="Zoom out desktop surface"
-            type="button"
-          >
-            <span aria-hidden="true" className="desktop-window-layout-glyph desktop-window-layout-glyph-zoom-out" />
-          </button>
-          <button
-            className="desktop-window-layout-action desktop-window-layout-action-icon"
-            onClick={onZoomReset}
-            title="Reset Zoom"
-            aria-label="Reset desktop zoom to 100 percent"
-            type="button"
-          >
-            <span aria-hidden="true" className="desktop-window-layout-glyph desktop-window-layout-glyph-zoom-reset" />
-          </button>
-          <button
-            className="desktop-window-layout-action desktop-window-layout-action-icon"
-            onClick={onZoomIn}
-            title="Zoom In"
-            aria-label="Zoom in desktop surface"
-            type="button"
-          >
-            <span aria-hidden="true" className="desktop-window-layout-glyph desktop-window-layout-glyph-zoom-in" />
-          </button>
-        </div>
-      </div>
-      <div
-        aria-label="Desktop window registry"
-        className={`desktop-window-canvas-scroll${undockDropTargetActive ? " desktop-window-canvas-scroll-drop-target" : ""}`}
-        onDragOver={handleUndockStageDragOver}
-        onDrop={handleUndockStageDrop}
-        ref={undockDropTargetRef}
-      >
-      <div
-        className="desktop-window-canvas"
-        ref={canvasRef}
-        style={{ width: `${desktopSurfaceWidth}px`, minHeight: `${desktopSurfaceHeight}px`, height: `${desktopSurfaceHeight}px` }}
-      >
-        {visibleWindows.map((window) => (
-          <div
-            className={window.id === focusedWindowId ? "desktop-window-card focused" : "desktop-window-card"}
-            key={window.id}
-            onClick={() => onFocusWindow(window)}
-            ref={(node) => {
-              if (node) {
-                windowCardRefs.current.set(window.id, node);
-              } else {
-                windowCardRefs.current.delete(window.id);
-              }
-            }}
-            style={{
-              left: `${window.x * desktopUnitScale}px`,
-              top: `${window.y * desktopUnitScale}px`,
-              width: `${window.width * desktopUnitScale}px`,
-              height: `${window.height * desktopUnitScale}px`,
-              zIndex: window.zIndex
-            }}
-          >
-            <div className="desktop-window-titlebar" onPointerDown={(event) => startWindowDrag(event, window)}>
-              <div className="desktop-window-drag-handle">
-                <strong>{window.title}</strong>
-              </div>
-              <div className="desktop-window-actions" onPointerDown={(event) => event.stopPropagation()}>
-                {shellDockPanelIdFromUndockedWindowId(window.id) ? (
-                  <>
-                    <button
-                      className="desktop-window-action desktop-window-action-icon"
-                      aria-label={`Dock ${window.title} to left rail`}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        const panelId = shellDockPanelIdFromUndockedWindowId(window.id);
-                        if (!panelId) {
-                          return;
-                        }
-                        onDockUndockedPanelLeft(panelId);
-                      }}
-                      title="Dock Left"
-                      type="button"
-                    >
-                      ⇤
-                    </button>
-                    <button
-                      className="desktop-window-action desktop-window-action-icon"
-                      aria-label={`Dock ${window.title} to right rail`}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        const panelId = shellDockPanelIdFromUndockedWindowId(window.id);
-                        if (!panelId) {
-                          return;
-                        }
-                        onDockUndockedPanelRight(panelId);
-                      }}
-                      title="Dock Right"
-                      type="button"
-                    >
-                      ⇥
-                    </button>
-                  </>
-                ) : null}
-                <button
-                  className="desktop-window-action desktop-window-action-icon"
-                  aria-label={`Move ${window.title} left`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onMoveWindow(window.id, "left");
-                  }}
-                  title="Move Left"
-                  type="button"
-                >
-                  ←
-                </button>
-                <button
-                  className="desktop-window-action desktop-window-action-icon"
-                  aria-label={`Move ${window.title} up`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onMoveWindow(window.id, "up");
-                  }}
-                  title="Move Up"
-                  type="button"
-                >
-                  ↑
-                </button>
-                <button
-                  className="desktop-window-action desktop-window-action-icon"
-                  aria-label={`Move ${window.title} down`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onMoveWindow(window.id, "down");
-                  }}
-                  title="Move Down"
-                  type="button"
-                >
-                  ↓
-                </button>
-                <button
-                  className="desktop-window-action desktop-window-action-icon"
-                  aria-label={`Move ${window.title} right`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onMoveWindow(window.id, "right");
-                  }}
-                  title="Move Right"
-                  type="button"
-                >
-                  →
-                </button>
-                <button
-                  aria-label={`Move ${window.title} to the previous desktop`}
-                  className="desktop-window-action desktop-window-action-icon"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onMoveWindowToPreviousDesktop(window.id);
-                  }}
-                  title="Move To Previous Desktop"
-                  type="button"
-                >
-                  <span aria-hidden="true" className="desktop-window-action-glyph desktop-window-action-glyph-send-reverse" />
-                </button>
-                <button
-                  aria-label={`Move ${window.title} to the next desktop`}
-                  className="desktop-window-action desktop-window-action-icon"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onMoveWindowToNextDesktop(window.id);
-                  }}
-                  title="Move To Next Desktop"
-                  type="button"
-                >
-                  <span aria-hidden="true" className="desktop-window-action-glyph desktop-window-action-glyph-send" />
-                </button>
-                <button
-                  aria-label={`Set ${window.title} to compact size`}
-                  className="desktop-window-action desktop-window-action-icon"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onResizeWindow(window.id, "compact");
-                  }}
-                  title="Compact"
-                  type="button"
-                >
-                  <span aria-hidden="true" className="desktop-window-action-glyph desktop-window-action-glyph-compact" />
-                </button>
-                <button
-                  aria-label={`Set ${window.title} to standard size`}
-                  className="desktop-window-action desktop-window-action-icon"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onResizeWindow(window.id, "standard");
-                  }}
-                  title="Standard"
-                  type="button"
-                >
-                  <span aria-hidden="true" className="desktop-window-action-glyph desktop-window-action-glyph-standard" />
-                </button>
-                <button
-                  aria-label={`Set ${window.title} to expanded size`}
-                  className="desktop-window-action desktop-window-action-icon"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onResizeWindow(window.id, "expanded");
-                  }}
-                  title="Expand"
-                  type="button"
-                >
-                  <span aria-hidden="true" className="desktop-window-action-glyph desktop-window-action-glyph-expanded" />
-                </button>
-                <button
-                  aria-label={`Minimize ${window.title}`}
-                  className="desktop-window-action desktop-window-action-icon"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onMinimizeWindow(window.id);
-                  }}
-                  title="Minimize"
-                  type="button"
-                >
-                  <span aria-hidden="true" className="desktop-window-action-glyph desktop-window-action-glyph-minimize" />
-                </button>
-                {window.closable ? (
-                  <button
-                    className="desktop-window-action desktop-window-action-icon"
-                    aria-label={`Close ${window.title}`}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onCloseWindow(window.id);
-                    }}
-                    title="Close"
-                    type="button"
-                  >
-                    ×
-                  </button>
-                ) : null}
-              </div>
-            </div>
-            <div
-              className={
-                window.id === "window:editor-surface" || window.id === "window:actor-system-surface"
-                  ? "desktop-window-body desktop-window-body-editor"
-                  : "desktop-window-body"
-              }
-              ref={(node) => {
-                if (node) {
-                  windowBodyRefs.current.set(window.id, node);
-                } else {
-                  windowBodyRefs.current.delete(window.id);
-                }
-              }}
-            >
-              {shouldShowWindowSummary(window) ? <p>{window.summary}</p> : null}
-              {(() => {
-                const undockedPanelId = shellDockPanelIdFromUndockedWindowId(window.id);
-                if (!undockedPanelId) {
-                  return null;
-                }
-                return (
-                  <div className="desktop-window-browser-surface" onClick={(event) => event.stopPropagation()}>
-                    {undockedPanelContentById[undockedPanelId] ?? null}
-                  </div>
-                );
-              })()}
-              {window.id === "window:control-panel" ? (
-                <div className="desktop-window-control-panel" onClick={(event) => event.stopPropagation()}>
-                  <div className="desktop-window-control-grid">
-                    <div className="desktop-window-control-column">
-                      <p className="context-label">Dominant Attention</p>
-                      {dominantAttentionItems.length > 0 ? (
-                        dominantAttentionItems.map((item) => (
-                          <button
-                            className="desktop-window-control-item"
-                            key={item.id}
-                            onClick={() => onOpenAttentionItem(item)}
-                            type="button"
-                          >
-                            <strong>{item.label}</strong>
-                            <span>{item.summary}</span>
-                            <em>{item.value} active</em>
-                          </button>
-                        ))
-                      ) : (
-                        <p className="desktop-window-workbench-summary">The environment is calm and no dominant governed attention object is active.</p>
-                      )}
-                    </div>
-                    <div className="desktop-window-control-column">
-                      <p className="context-label">Staged Continuations</p>
-                      {stagedControlActions.length > 0 ? (
-                        stagedControlActions.map((item) => (
-                          <button
-                            className="desktop-window-control-item"
-                            key={item.key}
-                            onClick={() => onOpenActionQueueItem(item)}
-                            type="button"
-                          >
-                            <strong>{item.title}</strong>
-                            <span>{item.effectSummary}</span>
-                            <em>{item.actionLabel}</em>
-                          </button>
-                        ))
-                      ) : (
-                        <p className="desktop-window-workbench-summary">No staged continuations currently outrank the rest of the desktop field.</p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="desktop-window-control-queue">
-                    <p className="context-label">Governed Queue</p>
-                    {residentQueueItems.length > 0 ? (
-                      residentQueueItems.map((item) => (
-                        <button
-                          className="desktop-window-control-queue-item"
-                          key={item.key}
-                          onClick={() => onOpenActionQueueItem(item)}
-                          type="button"
-                        >
-                          <div className="desktop-window-control-queue-top">
-                            <strong>{item.title}</strong>
-                            <span>{item.objectType}</span>
-                          </div>
-                          <p>{item.whyNow}</p>
-                          <em>{item.actionLabel}</em>
-                        </button>
-                      ))
-                    ) : (
-                      <p className="desktop-window-workbench-summary">No governed queue items currently outrank the resident windows already in view.</p>
-                    )}
-                  </div>
-                  <div className="desktop-window-control-grid">
-                    <div className="desktop-window-control-column">
-                      <p className="context-label">Direct Approvals</p>
-                      {residentApprovals.length > 0 ? (
-                        residentApprovals.map((approval) => (
-                          <div className="desktop-window-control-decision" key={approval.requestId}>
-                            <div className="desktop-window-control-queue-top">
-                              <strong>{approval.title}</strong>
-                              <span>{approval.state}</span>
-                            </div>
-                            <p>{approval.summary}</p>
-                            <div className="desktop-window-control-decision-actions">
-                              <button
-                                className="desktop-window-action"
-                                disabled={isDecidingApproval}
-                                onClick={() => onSubmitApprovalDecision(approval.requestId, "approve")}
-                                type="button"
-                              >
-                                Approve
-                              </button>
-                              <button
-                                className="desktop-window-action"
-                                disabled={isDecidingApproval}
-                                onClick={() => onSubmitApprovalDecision(approval.requestId, "deny")}
-                                type="button"
-                              >
-                                Deny
-                              </button>
-                            </div>
-                          </div>
-                        ))
-                      ) : (
-                        <p className="desktop-window-workbench-summary">No awaiting approval is currently blocking the top resident flow.</p>
-                      )}
-                    </div>
-                    <div className="desktop-window-control-column">
-                      <p className="context-label">Direct Recovery</p>
-                      {residentIncidents.length > 0 ? (
-                        residentIncidents.map((incident) => (
-                          <button
-                            className="desktop-window-control-item"
-                            key={incident.incidentId}
-                            onClick={() => onOpenIncident(incident.incidentId)}
-                            type="button"
-                          >
-                            <strong>{incident.title}</strong>
-                            <span>{`Severity ${incident.severity}`}</span>
-                            <em>{incident.state === "open" ? "Open Recovery" : "Continue Recovery"}</em>
-                          </button>
-                        ))
-                      ) : (
-                        <p className="desktop-window-workbench-summary">No open incident currently outranks the rest of the desktop field.</p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-              {window.id === "window:display" ? (
-                <div className="desktop-window-control-panel" onClick={(event) => event.stopPropagation()}>
-                  <div className="desktop-window-control-grid">
-                    <div className="desktop-window-control-column">
-                      <p className="context-label">Display Focus</p>
-                      <div className="desktop-window-control-queue-item">
-                        <div className="desktop-window-control-queue-top">
-                          <strong>{displayPanel?.selectedTitle ?? "No display surface selected"}</strong>
-                          <span>{displayPanel?.selectedKind ?? "display"}</span>
-                        </div>
-                        <p>
-                          {displayPanel?.selectedExecutionId
-                            ? `Execution ${displayPanel.selectedExecutionId} is currently attached to the focused display lane.`
-                            : "No display-backed governed execution is currently focused."}
-                        </p>
-                        <em>
-                          {displayPanel?.focusObjectId
-                            ? `Focus ${displayPanel.focusObjectId}`
-                            : "No explicit display focus object is currently selected."}
-                        </em>
-                      </div>
-                    </div>
-                    <div className="desktop-window-control-column">
-                      <p className="context-label">Display Estate</p>
-                      <div className="desktop-window-control-queue-item">
-                        <div className="desktop-window-control-queue-top">
-                          <strong>{displayCount}</strong>
-                          <span>{displayCount === 1 ? "resident" : "residents"}</span>
-                        </div>
-                        <p>{topDisplaySurfaceTitle}</p>
-                        <em>{displayPanel?.resolvedVia ? `Resolved via ${displayPanel.resolvedVia}` : displayPanel?.objectKind ?? "display"}</em>
-                      </div>
-                    </div>
-                    <div className="desktop-window-control-column">
-                      <p className="context-label">Display Route</p>
-                      <button className="desktop-window-control-item" onClick={onOpenDisplaySurface} type="button">
-                        <strong>Open Display Surface</strong>
-                        <span>Route this utility resident into the shell display lane for deeper governed interaction.</span>
-                        <em>Open Display Surface</em>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-              {window.id === "window:shell-context" ? (
-                <div className="desktop-window-control-panel" onClick={(event) => event.stopPropagation()}>
-                  <div className="desktop-window-control-grid">
-                    <div className="desktop-window-control-column">
-                      <p className="context-label">Current Surface</p>
-                      <div className="desktop-window-control-queue-item">
-                        <div className="desktop-window-control-queue-top">
-                          <strong>{shellCurrentSurfaceSummary.panelLabel}</strong>
-                          <span>{activeHostedAppLabel}</span>
-                        </div>
-                        <p>{shellCurrentSurfaceSummary.summary}</p>
-                          <em>Governed attention routes through the desktop shell.</em>
-                      </div>
-                    </div>
-                    <div className="desktop-window-control-column">
-                      <p className="context-label">Hosted Application</p>
-                      <div className="desktop-window-control-queue-item">
-                        <div className="desktop-window-control-queue-top">
-                          <strong>{activeHostedAppLabel}</strong>
-                          <span>resident</span>
-                        </div>
-                        <p>{activeHostedAppSummary}</p>
-                        <em>Shell resident</em>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-              {window.id === "window:inspector" ? (
-                <div className="desktop-window-control-panel" onClick={(event) => event.stopPropagation()}>
-                  <div className="desktop-window-control-grid">
-                    <div className="desktop-window-control-column">
-                      <p className="context-label">Focused Object</p>
-                      <div className="desktop-window-control-queue-item">
-                        <div className="desktop-window-control-queue-top">
-                          <strong>{currentFocusTitle}</strong>
-                          <span>{inspectorPanel?.objectKind ?? "object"}</span>
-                        </div>
-                        <p>{currentFocusSummary}</p>
-                        <em>
-                          {inspectorPanel?.focusObjectId
-                            ? `Focus ${inspectorPanel.focusObjectId}`
-                            : "No explicit inspector object is currently selected."}
-                        </em>
-                      </div>
-                    </div>
-                    <div className="desktop-window-control-column">
-                      <p className="context-label">Resident Inspection</p>
-                      <div className="desktop-window-workbench-inspector">
-                        <label className="desktop-window-workbench-input">
-                          <span className="context-label">Package</span>
-                          <input
-                            className="desktop-window-workbench-symbol"
-                            onChange={(event) => setRuntimeInspectorPackage(event.target.value)}
-                            value={runtimeInspectorPackage}
-                          />
-                        </label>
-                        <label className="desktop-window-workbench-input">
-                          <span className="context-label">Symbol</span>
-                          <input
-                            className="desktop-window-workbench-symbol"
-                            onChange={(event) => setRuntimeInspectorSymbol(event.target.value)}
-                            value={runtimeInspectorSymbol}
-                          />
-                        </label>
-                        <label className="desktop-window-workbench-input">
-                          <span className="context-label">Mode</span>
-                          <select
-                            className="desktop-window-workbench-select"
-                            onChange={(event) => setRuntimeInspectionMode(event.target.value as RuntimeInspectionMode)}
-                            value={runtimeInspectionMode}
-                          >
-                            <option value="describe">describe</option>
-                            <option value="documentation">documentation</option>
-                            <option value="source">source</option>
-                          </select>
-                        </label>
-                        <button
-                          className="action-button action-button-secondary"
-                          disabled={isInspectingRuntime || runtimeInspectorSymbol.trim().length === 0}
-                          onClick={() => void inspectRuntimeSymbol()}
-                          type="button"
-                        >
-                          {isInspectingRuntime ? "Inspecting..." : "Inspect Symbol"}
-                        </button>
-                      </div>
-                      <div className="desktop-window-control-queue-item">
-                        <div className="desktop-window-control-queue-top">
-                          <strong>{runtimeInspection?.data.symbol ?? (runtimeInspectorSymbol || "No inspection symbol")}</strong>
-                          <span>{runtimeInspectionMode}</span>
-                        </div>
-                        <p>{runtimeInspection?.data.summary ?? "Runtime inspection results stay visible here so the inspector can operate as a concurrent desktop resident."}</p>
-                      </div>
-                    </div>
-                    <div className="desktop-window-control-column">
-                      <p className="context-label">Inspector Route</p>
-                      <button className="desktop-window-control-item" onClick={onOpenInspectorSurface} type="button">
-                        <strong>Open Inspector Surface</strong>
-                        <span>
-                          {inspectorPanel?.resolvedVia
-                            ? `Resolved via ${inspectorPanel.resolvedVia}.`
-                            : "Route this utility resident into the shell inspector lane for deeper object and execution inspection."}
-                        </span>
-                        <em>{inspectorPanel?.selectedExecutionId ? `Execution ${inspectorPanel.selectedExecutionId}` : "Open Inspector"}</em>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-              {window.id === "window:detailed-surface" ? (
-                <div className="desktop-window-control-panel" onClick={(event) => event.stopPropagation()}>
-                  <div className="desktop-window-control-grid">
-                    <div className="desktop-window-control-column">
-                      <p className="context-label">Deep Work Route</p>
-                      <div className="desktop-window-control-queue-item">
-                        <div className="desktop-window-control-queue-top">
-                          <strong>{activeHostedAppLabel}</strong>
-                          <span>{shellCurrentSurfaceSummary.panelLabel}</span>
-                        </div>
-                        <p>{`Use this resident when the current desktop surface needs a deeper, single-surface pass without reopening a bottom-of-page strip.`}</p>
-                        <em>{activeHostedAppSummary}</em>
-                      </div>
-                    </div>
-                    <div className="desktop-window-control-column">
-                      <p className="context-label">Open Detail</p>
-                      <button className="desktop-window-control-item" onClick={onOpenDetailedWorkspace} type="button">
-                        <strong>{activeHostedAppId === "listener-workbench" ? "Open Listener Workbench" : "Open Current Workspace"}</strong>
-                        <span>{activeHostedAppId === "listener-workbench" ? "Route into the live listener resident and its governed runtime work." : "Route into the current control-panel workspace for deeper single-surface work."}</span>
-                        <em>{shellCurrentSurfaceSummary.panelLabel}</em>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-              {window.id === "window:browser-surface" ? (
-                <div className="desktop-window-browser-surface" onClick={(event) => event.stopPropagation()}>
-                  <BrowserWorkspace {...browserWorkspaceProps} />
-                </div>
-              ) : null}
-              {window.id === "window:actor-system-surface" ? (
-                <div className="desktop-window-browser-surface" onClick={(event) => event.stopPropagation()}>
-                  <ActorSystemPanel actorSystemPanel={executionWorkspaceProps.actorSystemPanel} />
-                </div>
-              ) : null}
-              {window.id === "window:projects-surface" ? (
-                <div className="desktop-window-browser-surface" onClick={(event) => event.stopPropagation()}>
-                  <ProjectsWorkspace {...projectsWorkspaceProps} />
-                </div>
-              ) : null}
-              {window.id === "window:editor-surface" ? (
-                <div className="desktop-window-browser-surface" onClick={(event) => event.stopPropagation()}>
-                  <EditorSurface {...editorSurfaceProps} />
-                </div>
-              ) : null}
-              {window.id === "window:transcript-surface" ? (
-                <div className="desktop-window-browser-surface" onClick={(event) => event.stopPropagation()}>
-                  <TranscriptSurface {...transcriptSurfaceProps} />
-                </div>
-              ) : null}
-              {window.id === "window:memory-surface" ? (
-                <div className="desktop-window-browser-surface" onClick={(event) => event.stopPropagation()}>
-                  <MemoryWorkspace {...memoryWorkspaceProps} />
-                </div>
-              ) : null}
-              {window.id === "window:operate-surface" ? (
-                <div className="desktop-window-browser-surface" onClick={(event) => event.stopPropagation()}>
-                  {renderOperateSurfaceContent()}
-                </div>
-              ) : null}
-              {window.id === "window:conversations-surface" ? (
-                <div className="desktop-window-browser-surface" onClick={(event) => event.stopPropagation()}>
-                  <ConversationsWorkspace {...conversationsWorkspaceProps} />
-                </div>
-              ) : null}
-              {window.id === "window:configuration-surface" ? (
-                <div className="desktop-window-browser-surface" onClick={(event) => event.stopPropagation()}>
-                  <ConfigurationWorkspace {...configurationWorkspaceProps} />
-                </div>
-              ) : null}
-              {window.id === "window:calculator" ? (
-                <div className="desktop-window-browser-surface" onClick={(event) => event.stopPropagation()}>
-                  <CalculatorSurface
-                    clearPendingExpressionRequest={clearPendingCalculatorExpressionRequest}
-                    draftExpression={calculatorDraftExpression}
-                    environmentId={environmentId}
-                    insertResultIntoDraft={insertCalculatorResultIntoConversationDraft}
-                    openConversationDraft={openConversationDraft}
-                    pendingExpressionRequest={pendingCalculatorExpressionRequest}
-                    refreshToken={calculatorRefreshToken}
-                    recordEvaluation={recordCalculatorEvaluation}
-                  />
-                </div>
-              ) : null}
-              {window.id === "window:listener-workbench" ? (
-                <div className="desktop-window-workbench" onClick={(event) => event.stopPropagation()}>
-                  <div className="desktop-window-workbench-header">
-                    <ContextBlock label="Session" value={activeReplSession?.title ?? "No Session"} />
-                    <ContextBlock label="Package" value={runtimeSummary?.currentPackage ?? "No Package"} />
-                    <ContextBlock label="Runtime" value={runtimeSummary?.runtimeId ?? "No Runtime"} />
-                  </div>
-                  <div className="desktop-window-workbench-inspector">
-                    <label className="desktop-window-workbench-input">
-                      <span className="context-label">New Session</span>
-                      <input
-                        className="desktop-window-workbench-symbol"
-                        onChange={(event) => setReplSessionTitleDraft(event.target.value)}
-                        value={replSessionTitleDraft}
-                      />
-                    </label>
-                    <label className="desktop-window-workbench-input">
-                      <span className="context-label">Inspect Package</span>
-                      <input
-                        className="desktop-window-workbench-symbol"
-                        onChange={(event) => setRuntimeInspectorPackage(event.target.value)}
-                        value={runtimeInspectorPackage}
-                      />
-                    </label>
-                    <button className="action-button action-button-secondary" onClick={() => void createReplSession()} type="button">
-                      New Session
-                    </button>
-                  </div>
-                  {runtimeRecoveryLaunch ? (
-                    <div className="signal-detail-list">
-                      <div className="signal-detail-row">
-                        <span>Recovery Source</span>
-                        <strong>{runtimeRecoveryLaunch.source}</strong>
-                      </div>
-                      <div className="signal-detail-row">
-                        <span>Incident</span>
-                        <strong>{runtimeRecoveryLaunch.incidentId}</strong>
-                      </div>
-                      <div className="signal-detail-row">
-                        <span>Restart</span>
-                        <strong>{runtimeRecoveryLaunch.restartLabel}</strong>
-                      </div>
-                    </div>
-                  ) : null}
-                  <div className="desktop-window-workbench-sessions">
-                    {replSessions.slice(0, 3).map((session) => (
-                      <button
-                        className={session.sessionId === currentReplSessionId ? "desktop-window-session active" : "desktop-window-session"}
-                        key={session.sessionId}
-                        onClick={() => void switchReplSession(session.sessionId)}
-                        type="button"
-                      >
-                        <strong>{session.title}</strong>
-                        <span>{session.lastSummary}</span>
-                      </button>
-                    ))}
-                  </div>
-                  <label className="desktop-window-workbench-input">
-                    <span className="context-label">Listener Form</span>
-                    <textarea
-                      className="desktop-window-workbench-textarea"
-                      onChange={(event) => setRuntimeForm(event.target.value)}
-                      rows={4}
-                      value={runtimeForm}
-                    />
-                  </label>
-                  <div className="desktop-window-workbench-actions">
-                    <button className="action-button" disabled={isEvaluating} onClick={() => void evaluateRuntimeForm()} type="button">
-                      {isEvaluating ? "Running..." : "Run Form"}
-                    </button>
-                    <button className="action-button action-button-secondary" onClick={onOpenInspectorSurface} type="button">
-                      Open Inspector Resident
-                    </button>
-                    <p className="desktop-window-workbench-summary">{currentRuntimeSummary}</p>
-                  </div>
-                  <div className="desktop-window-workbench-inspector">
-                    <label className="desktop-window-workbench-input">
-                      <span className="context-label">Inspect Symbol</span>
-                      <input
-                        className="desktop-window-workbench-symbol"
-                        onChange={(event) => setRuntimeInspectorSymbol(event.target.value)}
-                        value={runtimeInspectorSymbol}
-                      />
-                    </label>
-                    <label className="desktop-window-workbench-input">
-                      <span className="context-label">Inspection Mode</span>
-                      <select
-                        className="desktop-window-workbench-select"
-                        onChange={(event) => setRuntimeInspectionMode(event.target.value as RuntimeInspectionMode)}
-                        value={runtimeInspectionMode}
-                      >
-                        <option value="describe">describe</option>
-                        <option value="documentation">documentation</option>
-                        <option value="source">source</option>
-                      </select>
-                    </label>
-                    <button
-                      className="action-button action-button-secondary"
-                      disabled={isInspectingRuntime || runtimeInspectorSymbol.trim().length === 0}
-                      onClick={() => void inspectRuntimeSymbol()}
-                      type="button"
-                    >
-                      {isInspectingRuntime ? "Inspecting..." : "Inspect Symbol"}
-                    </button>
-                  </div>
-                  <div className="desktop-window-workbench-grid">
-                    <div className="desktop-window-workbench-panel">
-                      <p className="context-label">Live Inspection</p>
-                      <strong>{runtimeInspection?.data.symbol ?? runtimeSummary?.currentPackage ?? "No inspection focus"}</strong>
-                      <p>{runtimeInspection?.data.summary ?? "Inspection results appear here as the listener workbench explores the live image."}</p>
-                    </div>
-                    <div className="desktop-window-workbench-panel">
-                      <p className="context-label">Image Posture</p>
-                      <strong>{`${runtimeSummary?.loadedSystems.length ?? 0} loaded systems`}</strong>
-                      <p>
-                        {runtimeSummary
-                          ? `${runtimeSummary.activeMutations} active mutations, ${runtimeSummary.linkedIncidentIds.length} linked incidents.`
-                          : "Runtime posture becomes available when the environment binding is active."}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="desktop-window-workbench-panel">
-                    <p className="context-label">Result Preview</p>
-                    <pre className="desktop-window-history-entry desktop-window-runtime-preview">{runtimePreview}</pre>
-                  </div>
-                  <div className="desktop-window-workbench-history">
-                    <p className="context-label">Session History</p>
-                    {recentHistory.length > 0 ? (
-                      recentHistory.map((entry) => (
-                        <div className="desktop-window-history-entry" key={entry.entryId}>
-                          <strong>{entry.summary}</strong>
-                          <pre>{entry.form}</pre>
-                        </div>
-                      ))
-                    ) : (
-                      <p className="desktop-window-workbench-summary">Run forms in this resident to retain recent history here.</p>
-                    )}
-                  </div>
-                </div>
-              ) : null}
-              <button
-                aria-label={`Resize ${window.title}`}
-                className="desktop-window-resize-handle desktop-window-resize-handle-se"
-                onPointerDown={(event) => startWindowResize(event, window, "se")}
-                type="button"
-              />
-              <button
-                aria-label={`Resize ${window.title} from right edge`}
-                className="desktop-window-resize-handle desktop-window-resize-handle-e"
-                onPointerDown={(event) => startWindowResize(event, window, "e")}
-                type="button"
-              />
-              <button
-                aria-label={`Resize ${window.title} from bottom edge`}
-                className="desktop-window-resize-handle desktop-window-resize-handle-s"
-                onPointerDown={(event) => startWindowResize(event, window, "s")}
-                type="button"
-              />
-              <button
-                aria-label={`Resize ${window.title} from left edge`}
-                className="desktop-window-resize-handle desktop-window-resize-handle-w"
-                onPointerDown={(event) => startWindowResize(event, window, "w")}
-                type="button"
-              />
-              <button
-                aria-label={`Resize ${window.title} from top edge`}
-                className="desktop-window-resize-handle desktop-window-resize-handle-n"
-                onPointerDown={(event) => startWindowResize(event, window, "n")}
-                type="button"
-              />
-              <button
-                aria-label={`Resize ${window.title} from top right corner`}
-                className="desktop-window-resize-handle desktop-window-resize-handle-ne"
-                onPointerDown={(event) => startWindowResize(event, window, "ne")}
-                type="button"
-              />
-              <button
-                aria-label={`Resize ${window.title} from top left corner`}
-                className="desktop-window-resize-handle desktop-window-resize-handle-nw"
-                onPointerDown={(event) => startWindowResize(event, window, "nw")}
-                type="button"
-              />
-              <button
-                aria-label={`Resize ${window.title} from bottom left corner`}
-                className="desktop-window-resize-handle desktop-window-resize-handle-sw"
-                onPointerDown={(event) => startWindowResize(event, window, "sw")}
-                type="button"
-              />
-            </div>
-          </div>
-        ))}
-      </div>
-      </div>
-      {minimizedWindows.length > 0 ? (
-        <div className="desktop-window-dock" role="toolbar" aria-label="Iconified windows">
-          <div className="desktop-window-dock-rail">
-            {minimizedWindows.map((window) => (
-              <button
-                className="desktop-window-dock-item"
-                key={window.id}
-                onClick={() => onRestoreWindow(window.id)}
-                data-tooltip={`Restore ${window.title}`}
-                title={`Restore ${window.title}`}
-                type="button"
-              >
-                <span className="desktop-window-dock-icon" aria-hidden="true">
-                  <span className={`desktop-window-dock-glyph ${dockGlyphClassForWindow(window)}`} />
-                </span>
-                <span className="desktop-window-dock-indicator" aria-hidden="true" />
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-function BrowserWorkspace({
-  approvalRequests,
-  isDecidingApproval,
-  consoleLogStream,
-  desktopTaskRecords,
-  diagnosticReports,
-  runtimeSummary,
-  runtimeTelemetry,
-  environmentId,
-  selectedDomain,
-  selectedConsolePlane,
-  selectedConsoleSourceFilter,
-  selectedConsoleEntryId,
-  selectedDiagnosticSourceFilter,
-  selectedDiagnosticReport,
-  selectedDiagnosticReportId,
-  selectedTelemetryProcessId,
-  parenDepthColors,
-  packageBrowser,
-  environmentFocus,
-  navigateToWorkspace,
-  conversationDraft,
-  runtimeForm,
-  setConversationDraft,
-  setRuntimeForm,
-  selectedThread,
-  selectedThreadId,
-  selectedPackageName,
-  setSelectedPackageName,
-  setSelectedThreadId,
-  runtimeInspection,
-  runtimeEntityDetail,
-  runtimeInspectionMode,
-  runtimeInspectorSymbol,
-  runtimeInspectorPackage,
-  setRuntimeInspectionMode,
-  setRuntimeInspectorSymbol,
-  setRuntimeInspectorPackage,
-  setSelectedConsolePlane,
-  setSelectedConsoleSourceFilter,
-  setSelectedConsoleEntryId,
-  setSelectedDiagnosticSourceFilter,
-  setSelectedDiagnosticReportId,
-  setSelectedTelemetryProcessId,
-  browseRuntimeEntity,
-  inspectRuntimeSymbol,
-  isInspectingRuntime,
-  sourcePreview,
-  sourceDraft,
-  setSourceDraft,
-  isEditingSource,
-  setIsEditingSource,
-  isStagingSource,
-  isReloadingSource,
-  sourceMutationResult,
-  sourceReloadResult,
-  stageSourceChange,
-  reloadSourceFile,
-  loadSourcePreview,
-  incidents,
-  artifacts,
-  threads,
-  documentationPages,
-  selectedDocumentationSlug,
-  loadDocumentationPage,
-  workItems,
-  onOpenApprovalRequest,
-  onSubmitApprovalDecision,
-  openInspectorSurface
-}: {
-  approvalRequests: ApprovalRequestSummaryDto[];
-  isDecidingApproval: boolean;
-  consoleLogStream: QueryResultDto<ConsoleLogStreamDto> | null;
-  desktopTaskRecords: DesktopTaskRecordDto[];
-  diagnosticReports: DiagnosticReportSummaryDto[];
-  runtimeSummary: RuntimeSummaryDto | null;
-  runtimeTelemetry: RuntimeTelemetrySnapshotDto | null;
-  environmentId: string | null;
-  selectedDomain: BrowserDomain;
-  selectedConsolePlane: "environment" | "host";
-  selectedConsoleSourceFilter: string;
-  selectedConsoleEntryId: string | null;
-  selectedDiagnosticSourceFilter: string;
-  selectedDiagnosticReport: DiagnosticReportDetailDto | null;
-  selectedDiagnosticReportId: string | null;
-  selectedTelemetryProcessId: string | null;
-  parenDepthColors: string[];
-  packageBrowser: QueryResultDto<PackageBrowserDto> | null;
-  environmentFocus: EnvironmentFocusState;
-  navigateToWorkspace: (workspaceId: WorkspaceId) => void;
-  conversationDraft: string;
-  runtimeForm: string;
-  setConversationDraft: (value: string) => void;
-  setRuntimeForm: (value: string) => void;
-  selectedThread: ThreadDetailDto | null;
-  selectedThreadId: string | null;
-  selectedPackageName: string;
-  setSelectedPackageName: (value: string) => void;
-  setSelectedThreadId: (threadId: string) => void;
-  runtimeInspection: QueryResultDto<RuntimeInspectionResultDto> | null;
-  runtimeEntityDetail: QueryResultDto<RuntimeEntityDetailDto> | null;
-  runtimeInspectionMode: RuntimeInspectionMode;
-  runtimeInspectorSymbol: string;
-  runtimeInspectorPackage: string;
-  setRuntimeInspectionMode: (value: RuntimeInspectionMode) => void;
-  setRuntimeInspectorSymbol: (value: string) => void;
-  setRuntimeInspectorPackage: (value: string) => void;
-  setSelectedConsolePlane: (value: "environment" | "host") => void;
-  setSelectedConsoleSourceFilter: (value: string) => void;
-  setSelectedConsoleEntryId: (value: string | null) => void;
-  setSelectedDiagnosticSourceFilter: (value: string) => void;
-  setSelectedDiagnosticReportId: (value: string | null) => void;
-  setSelectedTelemetryProcessId: (value: string | null) => void;
-  browseRuntimeEntity: (
-    symbol: string,
-    packageName: string | undefined,
-    mode: RuntimeInspectionMode
-  ) => Promise<void>;
-  inspectRuntimeSymbol: () => Promise<void>;
-  isInspectingRuntime: boolean;
-  sourcePreview: QueryResultDto<SourcePreviewDto> | null;
-  sourceDraft: string;
-  setSourceDraft: (value: string) => void;
-  isEditingSource: boolean;
-  setIsEditingSource: (value: boolean) => void;
-  isStagingSource: boolean;
-  isReloadingSource: boolean;
-  sourceMutationResult: CommandResultDto<SourceMutationResultDto> | null;
-  sourceReloadResult: CommandResultDto<SourceReloadResultDto> | null;
-  stageSourceChange: () => Promise<void>;
-  reloadSourceFile: () => Promise<void>;
-  loadSourcePreview: (path: string, line?: number) => Promise<void>;
-  incidents: IncidentSummaryDto[];
-  artifacts: ArtifactSummaryDto[];
-  threads: ThreadSummaryDto[];
-  documentationPages: DocumentationPageSummaryDto[];
-  selectedDocumentationSlug: string;
-  loadDocumentationPage: (slug: string) => Promise<void>;
-  workItems: WorkItemSummaryDto[];
-  onOpenApprovalRequest: (requestId: string) => Promise<void>;
-  onSubmitApprovalDecision: (requestId: string, decision: "approve" | "deny") => void;
-  openInspectorSurface: () => Promise<void>;
-}) {
-  const [packageWorkspaceMode, setPackageWorkspaceMode] = useState<"packages" | "exports" | "internals">("packages");
-  const [symbolWorkspaceMode, setSymbolWorkspaceMode] = useState<
-    "generic-function" | "class" | "macro" | "function" | "variable"
-  >("function");
-  const [symbolPackageScope, setSymbolPackageScope] = useState<string>("All Packages");
-  const [symbolVisibilityFilter, setSymbolVisibilityFilter] = useState<string>("all");
-  const [symbolSearchTerm, setSymbolSearchTerm] = useState("");
-  const [symbolPage, setSymbolPage] = useState(1);
-  const [symbolPageSize, setSymbolPageSize] = useState(16);
-  const [symbolPageResult, setSymbolPageResult] = useState<QueryResultDto<RuntimeSymbolBrowserPageDto> | null>(null);
-  const [classMethodMode, setClassMethodMode] = useState<"classes" | "generic-functions">("classes");
-  const [classMethodPackageScope, setClassMethodPackageScope] = useState<string>("All Packages");
-  const [classMethodSearchTerm, setClassMethodSearchTerm] = useState("");
-  const [classMethodPage, setClassMethodPage] = useState(1);
-  const [classMethodPageSize, setClassMethodPageSize] = useState(16);
-  const [classMethodPageResult, setClassMethodPageResult] = useState<QueryResultDto<RuntimeSymbolBrowserPageDto> | null>(null);
-  const [xrefMode, setXrefMode] = useState<"incoming" | "outgoing">("incoming");
-  const [symbolInspectorExpanded, setSymbolInspectorExpanded] = useState(false);
-  const [selectedSystemName, setSelectedSystemName] = useState<string | null>(null);
-  const [selectedGovernanceKey, setSelectedGovernanceKey] = useState<string | null>(null);
-  const [selectedScopeId, setSelectedScopeId] = useState<string | null>(null);
-  const [selectedSourceEntryKey, setSelectedSourceEntryKey] = useState<string | null>(null);
-  const [selectedDocumentationKey, setSelectedDocumentationKey] = useState<string | null>(null);
-  const [selectedLinkedConversationId, setSelectedLinkedConversationId] = useState<string | null>(null);
-  const [listenerActionMode, setListenerActionMode] = useState<"default" | "inspect" | "reload" | "evaluate" | "custom">("default");
-  const [customListenerForm, setCustomListenerForm] = useState<string | null>(null);
-  const previousConversationHandoffPromptRef = useRef("");
-  const packageBrowserLoadRef = useRef(new Map<string, Promise<void>>());
-  const packageBrowserPrefetchTimerRef = useRef<number | null>(null);
-  const [packageBrowserCache, setPackageBrowserCache] = useState<Record<string, PackageBrowserDto>>({});
-
-  const packageNames = useMemo(
-    () =>
-      Array.from(
-        new Set([
-          ...(packageBrowser?.data.availablePackages ?? []),
-          runtimeSummary?.currentPackage,
-          packageBrowser?.data.packageName,
-          ...(runtimeSummary?.scopes.map((scope) => scope.packageName) ?? [])
-        ].filter((value): value is string => Boolean(value)))
-      ),
-    [packageBrowser, runtimeSummary]
-  );
-  const resolvedBrowserEnvironmentId =
-    packageBrowser?.metadata.binding?.environmentId ??
-    runtimeInspection?.metadata.binding?.environmentId ??
-    runtimeEntityDetail?.metadata.binding?.environmentId ??
-    environmentId;
-  const allPackagesOption = "All Packages";
-  const packageScopeOptions = [allPackagesOption, ...packageNames];
-
-  function scopedPackageNames(scope: string): string[] {
-    return scope === allPackagesOption ? packageNames : scope ? [scope] : [];
-  }
-
-  function commitPackageBrowserCacheEntries(entries: Record<string, PackageBrowserDto>): void {
-    const entryNames = Object.keys(entries);
-    if (entryNames.length === 0) {
-      return;
-    }
-    setPackageBrowserCache((current) => {
-      let changed = false;
-      const next = { ...current };
-      for (const packageName of entryNames) {
-        if (next[packageName] !== entries[packageName]) {
-          next[packageName] = entries[packageName];
-          changed = true;
-        }
-      }
-      return changed ? next : current;
-    });
-  }
-
-  async function fetchPackageBrowserData(packageName: string): Promise<PackageBrowserDto | null> {
-    if (!environmentId || !packageName) {
-      return null;
-    }
-    if (packageBrowserCache[packageName] || packageBrowser?.data.packageName === packageName) {
-      return packageBrowserCache[packageName] ?? packageBrowser?.data ?? null;
-    }
-    const result = await window.sbclAgentDesktop.query.packageBrowser({
-      environmentId,
-      packageName
-    });
-    return result.data;
-  }
-
-  async function ensurePackageBrowserData(packageName: string): Promise<void> {
-    if (!environmentId || !packageName) {
-      return;
-    }
-    if (packageBrowserCache[packageName] || packageBrowser?.data.packageName === packageName) {
-      return;
-    }
-    const existingLoad = packageBrowserLoadRef.current.get(packageName);
-    if (existingLoad) {
-      return existingLoad;
-    }
-    let loadPromise: Promise<void> | null = null;
-    loadPromise = (async () => {
-      try {
-        const result = await fetchPackageBrowserData(packageName);
-        if (!result) {
-          return;
-        }
-        commitPackageBrowserCacheEntries({ [packageName]: result });
-      } finally {
-        if (packageBrowserLoadRef.current.get(packageName) === loadPromise) {
-          packageBrowserLoadRef.current.delete(packageName);
-        }
-      }
-    })();
-    packageBrowserLoadRef.current.set(packageName, loadPromise);
-    return loadPromise;
-  }
-
-  function browserDataForPackage(packageName: string): PackageBrowserDto | null {
-    if (packageBrowser?.data.packageName === packageName) {
-      return packageBrowser.data;
-    }
-    return packageBrowserCache[packageName] ?? null;
-  }
-
-  function symbolKindsForMode(mode: typeof symbolWorkspaceMode): Array<PackageBrowserSymbolDto["kind"]> {
-    switch (mode) {
-      case "generic-function":
-        return ["generic-function"];
-      case "class":
-        return ["class"];
-      case "macro":
-        return ["macro"];
-      case "variable":
-        return ["variable"];
-      case "function":
-      default:
-        return ["function", "unknown"];
-    }
-  }
-
-  function classMethodKindsForMode(mode: typeof classMethodMode): Array<PackageBrowserSymbolDto["kind"]> {
-    return mode === "classes" ? ["class"] : ["generic-function"];
-  }
-
-  async function loadRuntimeSymbolPage(input: {
-    packageScope: string;
-    kinds: Array<PackageBrowserSymbolDto["kind"]>;
-    visibility?: string;
-    search?: string;
-    page: number;
-    pageSize: number;
-  }): Promise<QueryResultDto<RuntimeSymbolBrowserPageDto> | null> {
-    if (!resolvedBrowserEnvironmentId) {
-      return null;
-    }
-    return window.sbclAgentDesktop.query.runtimeSymbolPage({
-      environmentId: resolvedBrowserEnvironmentId,
-      packageScope: input.packageScope === allPackagesOption ? null : input.packageScope,
-      kinds: input.kinds,
-      visibility:
-        input.visibility === "external" || input.visibility === "internal" ? input.visibility : "all",
-      search: input.search?.trim() ? input.search.trim() : undefined,
-      offset: (input.page - 1) * input.pageSize,
-      limit: input.pageSize
-    });
-  }
-
-  function normalizeBrowserPackageData(raw: unknown, fallbackPackageName: string): {
-    packageName: string;
-    externalSymbols: PackageBrowserSymbolDto[];
-    internalSymbols: PackageBrowserSymbolDto[];
-  } {
-    if (!raw || typeof raw !== "object") {
-      return {
-        packageName: fallbackPackageName,
-        externalSymbols: [],
-        internalSymbols: []
-      };
-    }
-    const record = raw as Record<string, unknown>;
-    return {
-      packageName:
-        (typeof record.packageName === "string" && record.packageName) ||
-        (typeof record.package === "string" && record.package) ||
-        fallbackPackageName,
-      externalSymbols: Array.isArray(record.externalSymbols)
-        ? (record.externalSymbols as PackageBrowserSymbolDto[])
-        : Array.isArray(record.external_symbols)
-          ? (record.external_symbols as PackageBrowserSymbolDto[])
-          : [],
-      internalSymbols: Array.isArray(record.internalSymbols)
-        ? (record.internalSymbols as PackageBrowserSymbolDto[])
-        : Array.isArray(record.internal_symbols)
-          ? (record.internal_symbols as PackageBrowserSymbolDto[])
-          : []
-    };
-  }
-
-  function collectScopedPackageSymbols(scope: string): Array<PackageBrowserSymbolDto & { packageName: string }> {
-    return scopedPackageNames(scope)
-      .flatMap((packageName) => {
-        const browserData = browserDataForPackage(packageName);
-        if (!browserData) {
-          return [];
-        }
-        const normalized = normalizeBrowserPackageData(browserData, packageName);
-        return [
-          ...normalized.externalSymbols.map((entry) => ({ ...entry, packageName: normalized.packageName })),
-          ...normalized.internalSymbols.map((entry) => ({ ...entry, packageName: normalized.packageName }))
-        ];
-      })
-      .filter(
-        (entry, index, entries) =>
-          entries.findIndex(
-            (candidate) =>
-              candidate.packageName === entry.packageName &&
-              candidate.symbol === entry.symbol &&
-              candidate.kind === entry.kind &&
-              candidate.visibility === entry.visibility
-          ) === index
-      );
-  }
-
-  const browserObjective =
-    runtimeInspection?.data.summary ??
-    sourcePreview?.data.summary ??
-    runtimeSummary?.divergencePosture ??
-    "Browse systems, packages, symbols, source, and governed artifacts as one live environment.";
-
-  const filteredExternalSymbols = packageBrowser?.data.externalSymbols ?? [];
-  const filteredInternalSymbols = packageBrowser?.data.internalSymbols ?? [];
-  const inspectedSymbolKind: PackageBrowserSymbolDto["kind"] =
-    runtimeEntityDetail?.data.entityKind === "generic-function" ||
-    runtimeEntityDetail?.data.entityKind === "class" ||
-    runtimeEntityDetail?.data.entityKind === "macro" ||
-    runtimeEntityDetail?.data.entityKind === "function" ||
-    runtimeEntityDetail?.data.entityKind === "variable"
-      ? runtimeEntityDetail.data.entityKind
-      : runtimeInspection?.data.mode === "methods"
-        ? "generic-function"
-        : runtimeInspection?.data.mode === "describe"
-          ? "variable"
-          : runtimeInspection?.data.mode === "definitions" || runtimeInspection?.data.mode === "callers"
-            ? "function"
-            : "unknown";
-  const supplementalBrowserSymbols: PackageBrowserSymbolDto[] = runtimeInspection?.data.symbol
-    ? [
-        {
-          symbol: runtimeInspection.data.symbol,
-          kind: inspectedSymbolKind,
-          visibility: "internal"
-        }
-      ]
-    : [];
-  const packageSymbols = [...filteredExternalSymbols, ...filteredInternalSymbols, ...supplementalBrowserSymbols].filter(
-    (entry, index, entries) =>
-      entries.findIndex(
-        (candidate) =>
-          candidate.symbol === entry.symbol &&
-          candidate.kind === entry.kind &&
-          candidate.visibility === entry.visibility
-      ) === index
-  );
-  const focusedPackageSymbol =
-    packageSymbols.find((entry) => entry.symbol === (runtimeInspection?.data.symbol ?? runtimeInspectorSymbol)) ??
-    null;
-  const focusedSymbol = runtimeInspection?.data.symbol ?? runtimeEntityDetail?.data.symbol ?? runtimeInspectorSymbol;
-  const focusedPackage =
-    runtimeInspection?.data.packageName ??
-    runtimeEntityDetail?.data.packageName ??
-    (runtimeInspectorPackage || undefined) ??
-    packageBrowser?.data.packageName;
-  const sourceBackedDetailItem =
-    runtimeEntityDetail?.data.relatedItems.find((item) => item.path) ??
-    runtimeInspection?.data.items.find((item) => item.path) ??
-    null;
-  const sourceDraftDirty =
-    Boolean(sourcePreview) && sourceDraft !== (sourcePreview?.data.editableContent ?? "");
-  const filteredPackageNames = packageNames;
-  const scopedSymbolEntries = useMemo(
-    () => collectScopedPackageSymbols(symbolPackageScope),
-    [packageBrowser, packageBrowserCache, packageNames, symbolPackageScope]
-  );
-  const scopedClassMethodEntries = useMemo(
-    () => collectScopedPackageSymbols(classMethodPackageScope),
-    [classMethodPackageScope, packageBrowser, packageBrowserCache, packageNames]
-  );
-
-  const kindBuckets = useMemo(
-    () => [
-      {
-        key: "generic-function",
-        title: "Generic Functions",
-        subtitle: "Method-oriented live dispatch surfaces.",
-        symbols: scopedSymbolEntries.filter((entry) => entry.kind === "generic-function"),
-        mode: "methods" as RuntimeInspectionMode
-      },
-      {
-        key: "class",
-        title: "Classes",
-        subtitle: "CLOS classes and related runtime structure.",
-        symbols: scopedSymbolEntries.filter((entry) => entry.kind === "class"),
-        mode: "definitions" as RuntimeInspectionMode
-      },
-      {
-        key: "macro",
-        title: "Macros",
-        subtitle: "Compile-time shaping forms in the selected package.",
-        symbols: scopedSymbolEntries.filter((entry) => entry.kind === "macro"),
-        mode: "definitions" as RuntimeInspectionMode
-      },
-      {
-        key: "function",
-        title: "Functions",
-        subtitle: "Callable definitions and unresolved runtime call surfaces.",
-        symbols: scopedSymbolEntries.filter((entry) => entry.kind === "function" || entry.kind === "unknown"),
-        mode: "definitions" as RuntimeInspectionMode
-      },
-      {
-        key: "variable",
-        title: "Variables",
-        subtitle: "Special variables, runtime bindings, and inspectable symbol values.",
-        symbols: scopedSymbolEntries.filter((entry) => entry.kind === "variable"),
-        mode: "describe" as RuntimeInspectionMode
-      }
-    ],
-    [scopedSymbolEntries]
-  );
-  const classBucket = {
-    key: "class",
-    symbols: scopedClassMethodEntries.filter((entry) => entry.kind === "class")
-  };
-  const genericFunctionBucket = {
-    key: "generic-function",
-    symbols: scopedClassMethodEntries.filter((entry) => entry.kind === "generic-function")
-  };
-  const activeSymbolBucket =
-    kindBuckets.find((bucket) => bucket.key === symbolWorkspaceMode) ?? kindBuckets[kindBuckets.length - 1];
-  useEffect(() => {
-    if (!packageBrowser?.data.packageName) {
-      return;
-    }
-    setPackageBrowserCache((current) =>
-      current[packageBrowser.data.packageName] === packageBrowser.data
-        ? current
-        : {
-            ...current,
-            [packageBrowser.data.packageName]: packageBrowser.data
-          }
-    );
-  }, [packageBrowser]);
-
-  useEffect(() => {
-    if (!environmentId) {
-      return;
-    }
-    const requiredPackages = selectedDomain === "packages" ? scopedPackageNames(selectedPackageName) : [];
-    if (requiredPackages.length === 0) {
-      return;
-    }
-    if (packageBrowserPrefetchTimerRef.current !== null) {
-      window.clearTimeout(packageBrowserPrefetchTimerRef.current);
-      packageBrowserPrefetchTimerRef.current = null;
-    }
-    if (requiredPackages.length === 1) {
-      void ensurePackageBrowserData(requiredPackages[0]);
-      return;
-    }
-    let cancelled = false;
-    const pendingPackages = requiredPackages.filter(
-      (packageName) => !packageBrowserCache[packageName] && packageBrowser?.data.packageName !== packageName
-    );
-    const loadNextBatch = async () => {
-      if (cancelled || pendingPackages.length === 0) {
-        return;
-      }
-      const nextBatch = pendingPackages.splice(0, 4);
-      const loadedEntries: Record<string, PackageBrowserDto> = {};
-      for (const packageName of nextBatch) {
-        if (cancelled) {
-          return;
-        }
-        const result = await fetchPackageBrowserData(packageName);
-        if (result) {
-          loadedEntries[packageName] = result;
-        }
-      }
-      commitPackageBrowserCacheEntries(loadedEntries);
-      if (cancelled || pendingPackages.length === 0) {
-        return;
-      }
-      packageBrowserPrefetchTimerRef.current = window.setTimeout(() => {
-        void loadNextBatch();
-      }, 80);
-    };
-    void loadNextBatch();
-    return () => {
-      cancelled = true;
-      if (packageBrowserPrefetchTimerRef.current !== null) {
-        window.clearTimeout(packageBrowserPrefetchTimerRef.current);
-        packageBrowserPrefetchTimerRef.current = null;
-      }
-    };
-  }, [
-    classMethodPackageScope,
-    environmentId,
-    packageBrowser,
-    packageBrowserCache,
-    packageNames,
-    selectedDomain,
-    symbolPackageScope
-  ]);
-
-  useEffect(() => {
-    if (selectedDomain !== "symbols") {
-      return;
-    }
-    console.info(
-      "[browser-symbols] scope=%s packageCount=%d cacheCount=%d rowCount=%d lane=%s",
-      symbolPackageScope,
-      packageNames.length,
-      Object.keys(packageBrowserCache).length,
-      symbolPageResult?.data.items.length ?? 0,
-      symbolWorkspaceMode
-    );
-  }, [
-    symbolPageResult,
-    packageBrowserCache,
-    packageNames.length,
-    selectedDomain,
-    symbolPackageScope,
-    symbolWorkspaceMode
-  ]);
-  useEffect(() => {
-    setSymbolPage(1);
-  }, [symbolPackageScope, symbolSearchTerm, symbolVisibilityFilter, symbolWorkspaceMode, symbolPageSize]);
-
-  useEffect(() => {
-    setClassMethodPage(1);
-  }, [classMethodMode, classMethodPackageScope, classMethodSearchTerm, classMethodPageSize]);
-
-  useEffect(() => {
-    let cancelled = false;
-    if (selectedDomain !== "symbols") {
-      return;
-    }
-    void (async () => {
-      const result = await loadRuntimeSymbolPage({
-        packageScope: symbolPackageScope,
-        kinds: symbolKindsForMode(symbolWorkspaceMode),
-        visibility: symbolVisibilityFilter,
-        search: symbolSearchTerm,
-        page: symbolPage,
-        pageSize: symbolPageSize
-      });
-      if (!cancelled) {
-        console.info(
-          "[browser-symbol-page] scope=%s lane=%s total=%d items=%d page=%d pageSize=%d",
-          symbolPackageScope,
-          symbolWorkspaceMode,
-          result?.data.totalCount ?? 0,
-          result?.data.items.length ?? 0,
-          symbolPage,
-          symbolPageSize
-        );
-        setSymbolPageResult(result);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    resolvedBrowserEnvironmentId,
-    environmentId,
-    selectedDomain,
-    symbolPackageScope,
-    symbolWorkspaceMode,
-    symbolVisibilityFilter,
-    symbolSearchTerm,
-    symbolPage,
-    symbolPageSize
-  ]);
-
-  useEffect(() => {
-    let cancelled = false;
-    if (selectedDomain !== "classes-methods") {
-      return;
-    }
-    void (async () => {
-      const result = await loadRuntimeSymbolPage({
-        packageScope: classMethodPackageScope,
-        kinds: classMethodKindsForMode(classMethodMode),
-        search: classMethodSearchTerm,
-        page: classMethodPage,
-        pageSize: classMethodPageSize
-      });
-      if (!cancelled) {
-        console.info(
-          "[browser-class-page] scope=%s mode=%s total=%d items=%d page=%d pageSize=%d",
-          classMethodPackageScope,
-          classMethodMode,
-          result?.data.totalCount ?? 0,
-          result?.data.items.length ?? 0,
-          classMethodPage,
-          classMethodPageSize
-        );
-        setClassMethodPageResult(result);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    classMethodMode,
-    classMethodPackageScope,
-    environmentId,
-    resolvedBrowserEnvironmentId,
-    classMethodPage,
-    classMethodPageSize,
-    classMethodSearchTerm,
-    selectedDomain
-  ]);
-  const sourceEntries = [
-    ...(runtimeEntityDetail?.data.relatedItems ?? []),
-    ...(runtimeInspection?.data.items ?? [])
-  ].filter((item, index, items) => Boolean(item.path) && items.findIndex((entry) => entry.path === item.path && entry.line === item.line) === index);
-  const selectedSystem =
-    runtimeSummary?.loadedSystemEntries.find((system) => system.name === selectedSystemName)?.name ??
-    runtimeSummary?.loadedSystemEntries[0]?.name ??
-    runtimeSummary?.loadedSystems[0] ??
-    null;
-  const selectedSystemEntry =
-    runtimeSummary?.loadedSystemEntries.find((system) => system.name === selectedSystem) ?? null;
-  const selectedScope =
-    runtimeSummary?.scopes.find((scope) => scope.scopeId === selectedScopeId) ?? runtimeSummary?.scopes[0] ?? null;
-  const selectedSourceEntry =
-    sourceEntries.find((item) => `${item.path}:${item.line ?? 0}` === selectedSourceEntryKey) ?? sourceEntries[0] ?? null;
-  const xrefEntries =
-    xrefMode === "incoming"
-      ? runtimeInspection?.data.mode === "callers"
-        ? runtimeInspection.data.items
-        : (runtimeEntityDetail?.data.relatedItems ?? []).filter((item) => item.label === "Caller")
-      : (runtimeEntityDetail?.data.relatedItems ?? []).filter((item) => item.label !== "Caller");
-  const governanceEntries: Array<{
-    id: string;
-    label: string;
-    detail: string;
-    badge: string;
-    correctiveContext?: WorkItemSummaryDto["correctiveContext"];
-    desktopTaskRecord?: DesktopTaskRecordDto | null;
-  }> = [
-    ...approvalRequests.map((request) => ({
-      id: request.requestId,
-      label: request.title,
-      detail: request.summary,
-      badge: request.state
-    })),
-    ...incidents.map((incident) => ({
-      id: incident.incidentId,
-      label: incident.title,
-      detail: `Severity ${incident.severity}`,
-      badge: incident.state
-    })),
-    ...workItems.map((item) => ({
-      id: item.workItemId,
-      label: item.title,
-      detail:
-        item.correctiveContext?.proposedActions[0]?.reason ??
-        item.waitingReason ??
-        "Governed work remains attached to this environment.",
-      badge: item.state,
-      correctiveContext: item.correctiveContext ?? null
-    })),
-    ...desktopTaskRecords.map((record) => ({
-      id: record.id,
-      label: `${record.target} / ${record.operation}`,
-      detail:
-        record.approvalStatus === "awaiting-approval"
-          ? "Governed task is staged and awaiting approval."
-          : record.lastError
-            ? String(record.lastError.message ?? record.lastError.error ?? "Governed task recorded an error.")
-            : String(record.result?.summary ?? record.metadata?.summary ?? "Governed desktop task record."),
-      badge: record.status,
-      desktopTaskRecord: record
-    }))
-  ];
-  const linkedConversationEntries = threads.map((thread) => ({
-    id: thread.threadId,
-    label: thread.title,
-    detail: thread.summary,
-    badge: thread.state,
-    flags: thread.attentionFlags,
-    latestTurnState: thread.latestTurnState,
-    latestActivityAt: thread.latestActivityAt
-  }));
-  const linkedConversationSearchTokens = [focusedSymbol, focusedPackage, selectedPackageName, sourcePreview?.data.path]
-    .filter((value): value is string => Boolean(value))
-    .map((value) => value.toLowerCase());
-  const prioritizedLinkedConversationEntries = linkedConversationEntries
-    .map((entry) => {
-      const haystack = `${entry.label} ${entry.detail} ${entry.flags.join(" ")}`.toLowerCase();
-      const matchScore = linkedConversationSearchTokens.reduce(
-        (score, token) => (haystack.includes(token) ? score + 1 : score),
-        0
-      );
-      return { ...entry, matchScore };
-    })
-    .sort((left, right) => right.matchScore - left.matchScore || left.label.localeCompare(right.label));
-  const selectedLinkedConversation =
-    prioritizedLinkedConversationEntries.find((entry) => entry.id === selectedLinkedConversationId) ??
-    prioritizedLinkedConversationEntries.find((entry) => entry.id === selectedThreadId) ??
-    prioritizedLinkedConversationEntries[0] ??
-    null;
-  const documentationEntries = [
-    {
-      key: "focus",
-      label: "Current Focus",
-      category: "entity",
-      summary: runtimeInspection?.data.summary ?? runtimeEntityDetail?.data.summary ?? "No focused entity summary is available yet.",
-      detail:
-        runtimeEntityDetail?.data.signature ??
-        runtimeInspection?.data.runtimePresence ??
-        "Select a live entity to project its environment-linked explanation."
-    },
-    {
-      key: "package",
-      label: "Package Context",
-      category: "package",
-      summary:
-        packageBrowser?.data.summary ??
-        `Package ${focusedPackage ?? runtimeSummary?.currentPackage ?? "CL-USER"} remains the active semantic namespace.`,
-      detail:
-        packageBrowser?.data.useList.length
-          ? `Uses ${packageBrowser.data.useList.join(", ")}`
-          : "No package dependency summary is loaded for the current focus."
-    },
-    {
-      key: "source",
-      label: "Source Relationship",
-      category: "source",
-      summary:
-        sourcePreview?.data.summary ??
-        runtimeSummary?.sourceRelationship ??
-        "The browser will project source relationship once a source-backed entity is selected.",
-      detail:
-        sourcePreview?.data.path
-          ? `${sourcePreview.data.path}${sourcePreview.data.focusLine ? ` line ${sourcePreview.data.focusLine}` : ""}`
-          : "No source file is currently open in the browser."
-    },
-    {
-      key: "runtime",
-      label: "Runtime Posture",
-      category: "runtime",
-      summary:
-        runtimeInspection?.data.divergence ??
-        runtimeSummary?.divergencePosture ??
-        "Runtime and source posture will be summarized once inspection data is loaded.",
-      detail:
-        runtimeInspection?.data.items[0]?.detail ??
-        runtimeEntityDetail?.data.facets[0]?.value ??
-        "No runtime facet has been surfaced yet."
-    },
-    {
-      key: "conversation",
-      label: "Conversation Attachment",
-      category: "conversation",
-      summary:
-        selectedThread?.summary ??
-        selectedLinkedConversation?.detail ??
-        "No conversation is currently attached to the browser focus.",
-      detail:
-        selectedThread
-          ? `${selectedThread.turns.length} turns, ${selectedThread.linkedEntities.length} linked entities`
-          : selectedLinkedConversation
-            ? `${selectedLinkedConversation.latestTurnState} · ${selectedLinkedConversation.latestActivityAt}`
-            : "Select a linked thread to establish conversational continuity."
-    }
-  ];
-  const selectedDocumentation =
-    documentationEntries.find((entry) => entry.key === selectedDocumentationKey) ?? documentationEntries[0];
-  const effectiveEntityKind =
-    runtimeEntityDetail?.data.entityKind ??
-    focusedPackageSymbol?.kind ??
-    (classBucket?.symbols.some((entry) => entry.symbol === focusedSymbol) ? "class" : null) ??
-    (genericFunctionBucket?.symbols.some((entry) => entry.symbol === focusedSymbol) ? "generic-function" : null) ??
-    (runtimeInspection?.data.mode === "methods" ? "generic-function" : null) ??
-    (runtimeInspection?.data.symbol ? "unknown" : focusedPackage ? "package" : null);
-  const listenerHandoffForm = buildListenerForm({
-    symbol: focusedSymbol,
-    packageName: focusedPackage,
-    mode: runtimeInspection?.data.mode ?? runtimeInspectionMode,
-    sourcePath: sourcePreview?.data.path,
-    line: sourcePreview?.data.focusLine ?? null
-  });
-  const sourceOperationForms = buildSourceOperationForms({
-    symbol: focusedSymbol,
-    packageName: focusedPackage,
-    path: sourcePreview?.data.path ?? selectedSourceEntry?.path ?? sourceBackedDetailItem?.path ?? null,
-    line: sourcePreview?.data.focusLine ?? selectedSourceEntry?.line ?? sourceBackedDetailItem?.line ?? null
-  });
-  const activeListenerForm =
-    listenerActionMode === "inspect"
-      ? sourceOperationForms.inspect
-      : listenerActionMode === "reload"
-        ? sourceOperationForms.reload
-        : listenerActionMode === "evaluate"
-          ? sourceOperationForms.evaluate
-          : listenerActionMode === "custom"
-            ? (customListenerForm ?? listenerHandoffForm)
-          : listenerHandoffForm;
-  const conversationHandoffPrompt = buildConversationPrompt({
-    focusKind: environmentFocus.kind,
-    symbol: environmentFocus.runtimeSymbol,
-    packageName: environmentFocus.runtimePackage,
-    mode: environmentFocus.runtimeInspectionMode,
-    sourcePath: environmentFocus.sourcePath,
-    line: environmentFocus.sourceLine,
-    approvalId: environmentFocus.approvalId,
-    workItemId: environmentFocus.workItemId,
-    incidentId: environmentFocus.incidentId,
-    artifactId: environmentFocus.artifactId,
-    eventCursor: environmentFocus.eventCursor,
-    threadTitle: selectedThread?.title ?? selectedLinkedConversation?.label,
-    threadState: selectedThread?.state ?? selectedLinkedConversation?.badge,
-    latestTurnState: selectedThread?.turns[0]?.state ?? selectedLinkedConversation?.latestTurnState
-  });
-  const entityQuickForms = buildEntityQuickForms({
-    symbol: runtimeInspection?.data.symbol ?? runtimeEntityDetail?.data.symbol ?? null,
-    packageName: focusedPackage ?? null,
-    entityKind: effectiveEntityKind
-  });
-  const domainDescriptor =
-    browserDomains.find((domain) => domain.id === selectedDomain) ?? browserDomains[0];
-  const packageRows = filteredPackageNames.map((packageName) => ({
-    key: packageName,
-    packageName,
-    nicknameSummary: packageName === runtimeSummary?.currentPackage ? "current" : "package",
-    usesSummary:
-      packageName === packageBrowser?.data.packageName
-        ? `${packageBrowser?.data.useList.length ?? 0} links`
-        : "browse"
-  }));
-  const packageSymbolRows = (
-    (packageWorkspaceMode === "exports" ? packageBrowser?.data.externalSymbols : packageBrowser?.data.internalSymbols) ?? []
-  ).map((entry) => ({
-    key: `${packageWorkspaceMode}:${entry.symbol}`,
-    symbol: entry.symbol,
-    kind: entry.kind,
-    visibility: packageWorkspaceMode === "exports" ? "external" : "internal"
-  }));
-  const activeSymbolRows = (symbolPageResult?.data.items ?? []).map((entry) => ({
-    key: `${activeSymbolBucket.key}:${entry.visibility}:${entry.symbol}`,
-    packageName: entry.packageName,
-    symbol: entry.symbol,
-    kind: entry.kind,
-    visibility: entry.visibility,
-    inspectionMode:
-      entry.kind === "generic-function"
-        ? ("methods" as RuntimeInspectionMode)
-        : entry.kind === "variable" || entry.kind === "unknown"
-          ? ("describe" as RuntimeInspectionMode)
-          : activeSymbolBucket.mode
-  }));
-  const classMethodRows =
-    (classMethodPageResult?.data.items ?? []).map((entry) => ({
-      key: `${classMethodMode}:${entry.packageName}:${entry.symbol}`,
-      packageName: entry.packageName,
-      symbol: entry.symbol,
-      kind: entry.kind,
-      action: classMethodMode === "classes" ? "browse class" : "browse methods"
-    })) ?? [];
-  const systemRows = runtimeSummary?.loadedSystemEntries.map((system) => ({
-    key: system.name,
-    name: system.name,
-    type: system.type === "asdf-system" ? "ASDF System" : "Unknown",
-    status: system.status,
-    browse: "definition"
-  })) ?? [];
-  const runtimeScopeRows = runtimeSummary?.scopes.map((scope) => ({
-    key: scope.scopeId,
-    scopeId: scope.scopeId,
-    scopeLabel: scope.symbolName ?? scope.packageName,
-    kind: scope.kind,
-    summary: scope.summary,
-    symbolName: scope.symbolName,
-    packageName: scope.packageName
-  })) ?? [];
-  const telemetryProcessRows =
-    runtimeTelemetry?.processes.map((process) => ({
-      key: process.processId,
-      processId: process.processId,
-      label: process.label,
-      kind: process.kind,
-      state: process.state,
-      cpu: process.cpuPercent != null ? `${process.cpuPercent.toFixed(1)}%` : "n/a",
-      memory: process.memoryMb != null ? `${process.memoryMb.toFixed(1)} MB` : "n/a",
-      summary: process.summary
-    })) ?? [];
-  const selectedTelemetryProcess =
-    runtimeTelemetry?.processes.find((process) => process.processId === selectedTelemetryProcessId) ??
-    runtimeTelemetry?.processes[0] ??
-    null;
-  const consoleEntries = consoleLogStream?.data.entries ?? [];
-  const filteredConsoleEntries = consoleEntries.filter(
-    (entry) => selectedConsoleSourceFilter === "All Sources" || entry.source === selectedConsoleSourceFilter
-  );
-  const consoleRows =
-    filteredConsoleEntries.map((entry) => ({
-      key: entry.entryId,
-      entryId: entry.entryId,
-      timestamp: entry.timestamp,
-      type: entry.type,
-      source: entry.source,
-      message: entry.message,
-      processName: entry.processName ?? "n/a",
-      activityId: entry.activityId ?? "n/a",
-      threadRef: entry.threadRefId ?? entry.turnRefId ?? "n/a"
-    })) ?? [];
-  const consoleAlertCount = consoleEntries.filter(
-    (entry) => entry.type === "warning" || entry.type === "error" || entry.type === "fault"
-  ).length;
-  const visibleConsoleAlertCount = filteredConsoleEntries.filter(
-    (entry) => entry.type === "warning" || entry.type === "error" || entry.type === "fault"
-  ).length;
-  const consoleProcessCount = new Set(consoleEntries.map((entry) => entry.processName).filter(Boolean)).size;
-  const visibleConsoleProcessCount = new Set(filteredConsoleEntries.map((entry) => entry.processName).filter(Boolean)).size;
-  const consoleTopSource =
-    Object.entries(
-      consoleEntries.reduce<Record<string, number>>((counts, entry) => {
-        counts[entry.source] = (counts[entry.source] ?? 0) + 1;
-        return counts;
-      }, {})
-    ).sort((left, right) => right[1] - left[1])[0]?.[0] ?? "n/a";
-  const visibleConsoleTopSource =
-    Object.entries(
-      filteredConsoleEntries.reduce<Record<string, number>>((counts, entry) => {
-        counts[entry.source] = (counts[entry.source] ?? 0) + 1;
-        return counts;
-      }, {})
-    ).sort((left, right) => right[1] - left[1])[0]?.[0] ?? "n/a";
-  const selectedConsoleEntry =
-    filteredConsoleEntries.find((entry) => entry.entryId === selectedConsoleEntryId) ??
-    filteredConsoleEntries[0] ??
-    null;
-  const filteredDiagnosticReports = diagnosticReports.filter(
-    (report) => selectedDiagnosticSourceFilter === "All Sources" || report.source === selectedDiagnosticSourceFilter
-  );
-  const diagnosticRows = filteredDiagnosticReports.map((report) => ({
-    key: report.reportId,
-    reportId: report.reportId,
-    title: report.title,
-    kind: report.kind,
-    source: report.source,
-    createdAt: report.createdAt,
-    processName: report.processName ?? "n/a",
-    pid: report.pid != null ? String(report.pid) : "n/a",
-    summary: report.summary,
-    incidentId: String(
-      (selectedDiagnosticReport?.reportId === report.reportId
-        ? selectedDiagnosticReport.metadata?.incidentId
-        : null) ?? "n/a"
-    ),
-    bugType: String(
-      (selectedDiagnosticReport?.reportId === report.reportId
-        ? selectedDiagnosticReport.metadata?.bugType
-        : null) ?? "n/a"
-    )
-  }));
-  const diagnosticCrashCount = diagnosticReports.filter((report) => report.kind === "crash").length;
-  const diagnosticSpinCount = diagnosticReports.filter((report) => report.kind === "spin").length;
-  const visibleDiagnosticCrashCount = filteredDiagnosticReports.filter((report) => report.kind === "crash").length;
-  const visibleDiagnosticSpinCount = filteredDiagnosticReports.filter((report) => report.kind === "spin").length;
-  const diagnosticProcessCount = new Set(diagnosticReports.map((report) => report.processName).filter(Boolean)).size;
-  const visibleDiagnosticProcessCount = new Set(
-    filteredDiagnosticReports.map((report) => report.processName).filter(Boolean)
-  ).size;
-  const latestDiagnosticTimestamp = diagnosticReports[0]?.createdAt ?? null;
-  const latestVisibleDiagnosticTimestamp = filteredDiagnosticReports[0]?.createdAt ?? null;
-  const selectedDiagnosticReportSummary =
-    filteredDiagnosticReports.find((report) => report.reportId === selectedDiagnosticReportId) ??
-    filteredDiagnosticReports[0] ??
-    null;
-  const activeSelectedDiagnosticReport =
-    selectedDiagnosticReportSummary?.reportId === selectedDiagnosticReport?.reportId ? selectedDiagnosticReport : null;
-  const sourceRows = sourceEntries.map((item) => ({
-    key: `${item.path}:${item.line ?? 0}`,
-    label: item.label,
-    location: item.path?.split("/").slice(-2).join("/") ?? "no-path",
-    role: item.emphasis ?? "source",
-    path: item.path,
-    line: item.line
-  }));
-  const xrefRows = (xrefEntries ?? []).map((item) => ({
-    key: `${xrefMode}:${item.label}:${item.detail}:${item.line ?? 0}`,
-    label: item.label,
-    emphasis: item.emphasis ?? "reference",
-    detail: item.detail,
-    path: item.path,
-    line: item.line
-  }));
-  const governanceRows: Array<{
-    key: string;
-    objectId: string;
-    objectType: string;
-    label: string;
-    detail: string;
-    badge: string;
-    trace: string;
-    correctiveContext?: WorkItemSummaryDto["correctiveContext"];
-    tone: "active" | "warning" | "danger" | "steady";
-  }> = governanceEntries.map((entry) => ({
-    key: `${entry.badge}:${entry.id}`,
-    objectId: entry.id,
-    objectType: approvalRequests.some((request) => request.requestId === entry.id)
-      ? "Approval"
-      : incidents.some((incident) => incident.incidentId === entry.id)
-        ? "Incident"
-        : entry.desktopTaskRecord
-          ? "Desktop Task"
-        : entry.correctiveContext
-          ? "Corrective Work Item"
-          : "Work Item",
-    label: entry.label,
-    detail: entry.detail,
-    badge: entry.badge,
-    trace: approvalRequests.some((request) => request.requestId === entry.id)
-      ? "Actions > Actions Board"
-      : incidents.some((incident) => incident.incidentId === entry.id)
-        ? "Actions > Actions Board"
-        : entry.desktopTaskRecord
-          ? "Governed Task Ledger"
-        : entry.correctiveContext
-          ? "Actions > Actions Board"
-          : "Actions > Actions Board",
-    tone:
-      entry.badge === "blocked" || entry.badge === "denied" || entry.badge === "failed" || entry.badge === "retryable-failure"
-        ? "danger"
-        : entry.badge === "waiting" || entry.badge === "recovering" || entry.badge === "awaiting" || entry.badge === "awaiting-approval" || entry.badge === "retrying"
-          ? "warning"
-          : "active",
-    correctiveContext: entry.correctiveContext ?? null
-  }));
-  const linkedConversationRows: Array<{
-    key: string;
-    id: string;
-    label: string;
-    state: string;
-    attention: string;
-    stateTone: "active" | "warning" | "danger" | "steady";
-    attentionTone: "active" | "warning" | "danger" | "steady";
-    detail: string;
-  }> = prioritizedLinkedConversationEntries.map((entry) => ({
-    key: entry.id,
-    id: entry.id,
-    label: entry.label,
-    state: entry.badge,
-    attention: entry.flags[0] ?? entry.latestTurnState,
-    stateTone: toneForThreadState(entry.badge as ThreadSummaryDto["state"]),
-    attentionTone:
-      entry.latestTurnState === "failed"
-        ? "danger"
-        : entry.latestTurnState === "awaiting_approval" || entry.latestTurnState === "interrupted"
-          ? "warning"
-          : "active",
-    detail: entry.detail
-  }));
-  const selectedGovernanceEntry =
-    governanceRows.find((row) => row.key === selectedGovernanceKey) ??
-    governanceRows[0] ??
-    null;
-  const selectedGovernanceWorkSummary =
-    selectedGovernanceEntry &&
-    (selectedGovernanceEntry.objectType === "Work Item" || selectedGovernanceEntry.objectType === "Corrective Work Item")
-      ? workItems.find((item) => item.workItemId === selectedGovernanceEntry.objectId) ?? null
-      : null;
-  const selectedGovernanceTaskRecord =
-    selectedGovernanceEntry?.objectType === "Desktop Task"
-      ? desktopTaskRecords.find((record) => record.id === selectedGovernanceEntry.objectId) ?? null
-      : null;
-  const selectedGovernanceFallbackApproval =
-    selectedGovernanceWorkSummary && selectedGovernanceWorkSummary.approvalCount > 0
-      ? approvalRequests.find((request) => request.state === "awaiting") ?? null
-      : null;
-  const selectedGovernanceApprovalId =
-    selectedGovernanceEntry?.objectType === "Approval"
-      ? selectedGovernanceEntry.objectId
-      : selectedGovernanceFallbackApproval?.requestId ?? null;
-  const selectedGovernanceApprovalSummary = selectedGovernanceApprovalId
-    ? approvalRequests.find((request) => request.requestId === selectedGovernanceApprovalId) ?? null
-    : null;
-  const selectedGovernanceIdentityRows = selectedGovernanceEntry
-    ? [
-        ["Object Id", selectedGovernanceEntry.objectId],
-        ["Authority", selectedGovernanceEntry.objectType],
-        ["Trace", selectedGovernanceEntry.trace]
-      ]
-    : [];
-  const selectedGovernanceCorrectiveRows = selectedGovernanceEntry?.correctiveContext
-    ? [
-        ["Corrective Kind", selectedGovernanceEntry.correctiveContext.kind],
-        ["Decision", selectedGovernanceEntry.correctiveContext.decision ?? "unknown"],
-        ["Approval Posture", selectedGovernanceEntry.correctiveContext.approvalPosture ?? "unknown"],
-        [
-          "Alignment",
-          selectedGovernanceEntry.correctiveContext.alignmentStatus
-            ? `${selectedGovernanceEntry.correctiveContext.alignmentStatus}${
-                selectedGovernanceEntry.correctiveContext.alignmentScore != null
-                  ? ` (${selectedGovernanceEntry.correctiveContext.alignmentScore.toFixed(2)})`
-                  : ""
-              }`
-            : "unknown"
-        ]
-      ]
-    : [];
-  const selectedGovernanceTaskRows = selectedGovernanceTaskRecord
-    ? [
-        ["Target", selectedGovernanceTaskRecord.target],
-        ["Operation", selectedGovernanceTaskRecord.operation],
-        ["Capability", selectedGovernanceTaskRecord.capability ?? "unspecified"],
-        ["Governance", selectedGovernanceTaskRecord.governanceStatus ?? "unknown"],
-        ["Approval", selectedGovernanceTaskRecord.approvalStatus ?? "unknown"],
-        [
-          "Retries",
-          `${selectedGovernanceTaskRecord.retryCount ?? 0}/${selectedGovernanceTaskRecord.maxAttempts ?? 1}`
-        ],
-        ["Thread", selectedGovernanceTaskRecord.threadId ?? "n/a"],
-        ["Turn", selectedGovernanceTaskRecord.turnId ?? "n/a"]
-      ]
-    : [];
-  const selectedLinkedConversationIdentityRows = selectedLinkedConversation
-    ? [
-        ["Object Id", selectedLinkedConversation.id],
-        ["Authority", selectedLinkedConversation.badge],
-        ["Trace", `${selectedLinkedConversation.latestTurnState} · ${selectedLinkedConversation.latestActivityAt}`]
-      ]
-    : [];
-  const selectedSystemIdentityRows = selectedSystemEntry
-    ? [
-        ["Object Id", selectedSystemEntry.name],
-        ["Authority", selectedSystemEntry.type === "asdf-system" ? "ASDF System" : "System"],
-        ["Trace", selectedSystemEntry.status]
-      ]
-    : [];
-  const documentationRows = documentationPages.map((page) => ({
-    key: page.slug,
-    slug: page.slug,
-    label: page.title,
-    category: page.category,
-    summary: page.summary
-  }));
-  const browserFocusIdentityRows = [
-    [
-      "Object Id",
-      focusedSymbol
-        ? focusedPackage
-          ? `${focusedPackage}::${focusedSymbol}`
-          : focusedSymbol
-        : focusedPackage ?? domainDescriptor.label
-    ],
-    ["Authority", effectiveEntityKind ?? domainDescriptor.label],
-    [
-      "Trace",
-      sourcePreview?.data.path
-        ? `${sourcePreview.data.path}${sourcePreview.data.focusLine ? `:${sourcePreview.data.focusLine}` : ""}`
-        : runtimeInspection?.data.mode ?? "browse"
-    ]
-  ];
-  const showGenericBrowserFocus = false;
-
-  function buildFilterOptions(values: string[]): BrowserTableFilterOption[] {
-    return Array.from(new Set(values.filter(Boolean))).map((value) => ({
-      label: value,
-      value
-    }));
-  }
-
-  useEffect(() => {
-    if (runtimeForm !== activeListenerForm) {
-      setRuntimeForm(activeListenerForm);
-    }
-  }, [activeListenerForm, runtimeForm, setRuntimeForm]);
-
-  useEffect(() => {
-    if (selectedDomain !== "symbols" || !runtimeInspection?.data.symbol) {
-      return;
-    }
-
-    if (runtimeInspection.data.mode === "methods" && symbolWorkspaceMode !== "generic-function") {
-      setSymbolWorkspaceMode("generic-function");
-      return;
-    }
-
-    if (runtimeEntityDetail?.data.entityKind === "class" && symbolWorkspaceMode !== "class") {
-      setSymbolWorkspaceMode("class");
-    }
-  }, [
-    runtimeEntityDetail?.data.entityKind,
-    runtimeInspection?.data.mode,
-    runtimeInspection?.data.symbol,
-    selectedDomain,
-    symbolWorkspaceMode
-  ]);
-
-  useEffect(() => {
-    if (
-      conversationDraft === previousConversationHandoffPromptRef.current &&
-      conversationDraft !== conversationHandoffPrompt
-    ) {
-      setConversationDraft(conversationHandoffPrompt);
-    }
-    previousConversationHandoffPromptRef.current = conversationHandoffPrompt;
-  }, [conversationDraft, conversationHandoffPrompt, setConversationDraft]);
-
-  useEffect(() => {
-    setListenerActionMode("default");
-    setCustomListenerForm(null);
-  }, [focusedSymbol, focusedPackage, sourcePreview?.data.path, sourcePreview?.data.focusLine]);
-
-  return (
-    <div className="browser-journey">
-      <div className="browser-layout">
-        <div className="browser-main-stack browser-main-stack-full">
-          <section className="panel browser-detail-panel browser-domain-pane browser-inspector-panel">
-            <div className="browser-domain-header">
-              <div>
-                <p className="eyebrow">Browser</p>
-                <h3>{domainDescriptor.label}</h3>
-              </div>
-            </div>
-            {showGenericBrowserFocus ? (
-              <>
-                <div className="browser-focus-card">
-                  <div>
-                    <p className="context-label">Focused Entity</p>
-                    <strong>{focusedSymbol ?? focusedPackage ?? domainDescriptor.label}</strong>
-                    <p>
-                      {runtimeInspection?.data.summary ??
-                        runtimeEntityDetail?.data.summary ??
-                        sourcePreview?.data.summary ??
-                        domainDescriptor.summary}
-                    </p>
-                  </div>
-                  <Badge tone="steady">{effectiveEntityKind ?? "browser focus"}</Badge>
-                </div>
-                <dl className="detail-list">
-                  {browserFocusIdentityRows.map(([label, value]) => (
-                    <DetailRow key={`browser-focus:${label}`} label={label} value={value} />
-                  ))}
-                </dl>
-              </>
-            ) : null}
-            {selectedDomain === "packages" ? (
-              <div className="browser-domain-stack">
-                <div className="browser-domain-toolbar">
-                  <BrowserModePicker
-                    label="Package View"
-                    onChange={(value) => setPackageWorkspaceMode(value as typeof packageWorkspaceMode)}
-                    options={[
-                      { value: "packages", label: "Packages" },
-                      { value: "exports", label: "Exports" },
-                      { value: "internals", label: "Internals" }
-                    ]}
-                    value={packageWorkspaceMode}
-                  />
-                </div>
-                {packageWorkspaceMode === "packages" ? (
-                  <BrowserDataTable
-                    key="packages-packages"
-                    columnTemplate="minmax(0, 1.3fr) minmax(0, 0.8fr) minmax(0, 1fr)"
-                    columns={[
-                      {
-                        id: "package",
-                        label: "Package",
-                        render: (row) => <strong>{row.packageName}</strong>,
-                        sortValue: (row) => row.packageName
-                      },
-                      {
-                        id: "status",
-                        label: "Status",
-                        render: (row) => row.nicknameSummary,
-                        sortValue: (row) => row.nicknameSummary
-                      },
-                      {
-                        id: "uses",
-                        label: "Uses",
-                        render: (row) => row.usesSummary,
-                        sortValue: (row) => row.usesSummary
-                      }
-                    ]}
-                    emptyMessage="No matching packages are available."
-                    filterLabel="Package Filter"
-                    filterOptions={buildFilterOptions(packageRows.map((row) => row.nicknameSummary))}
-                    getFilterValue={(row) => row.nicknameSummary}
-                    getRowKey={(row) => row.key}
-                    onSelect={(row) => {
-                      setSelectedPackageName(row.packageName);
-                      void browseRuntimeEntity(row.packageName, row.packageName, "definitions");
-                    }}
-                    rows={packageRows}
-                    searchPlaceholder="Search packages"
-                    selectedKey={packageBrowser?.data.packageName ?? selectedPackageName}
-                  />
-                ) : (
-                  <BrowserDataTable
-                    key={`packages-${packageWorkspaceMode}`}
-                    columnTemplate="minmax(0, 1.3fr) minmax(0, 0.8fr) minmax(0, 1fr)"
-                    columns={[
-                      {
-                        id: "symbol",
-                        label: "Symbol",
-                        render: (row) => <strong>{row.symbol}</strong>,
-                        sortValue: (row) => row.symbol
-                      },
-                      {
-                        id: "kind",
-                        label: "Kind",
-                        render: (row) => row.kind,
-                        sortValue: (row) => row.kind
-                      },
-                      {
-                        id: "visibility",
-                        label: "Visibility",
-                        render: (row) => row.visibility,
-                        sortValue: (row) => row.visibility
-                      }
-                    ]}
-                    emptyMessage="No matching symbols are available in this package lane."
-                    filterLabel="Visibility"
-                    filterOptions={buildFilterOptions(packageSymbolRows.map((row) => row.kind))}
-                    getFilterValue={(row) => row.kind}
-                    getRowKey={(row) => row.key}
-                    onSelect={(row) =>
-                      void browseRuntimeEntity(
-                        row.symbol,
-                        packageBrowser?.data.packageName,
-                        row.kind === "generic-function" ? "methods" : "definitions"
-                      )
-                    }
-                    rows={packageSymbolRows}
-                    searchPlaceholder={`Search ${packageWorkspaceMode} symbols`}
-                    selectedKey={runtimeInspection?.data.symbol ?? runtimeEntityDetail?.data.symbol ?? null}
-                  />
-                )}
-              </div>
-            ) : selectedDomain === "symbols" ? (
-              <div className="browser-domain-stack">
-                <div className="browser-domain-toolbar">
-                  <BrowserModePicker
-                    label="Symbol Lane"
-                    onChange={(value) => setSymbolWorkspaceMode(value as typeof symbolWorkspaceMode)}
-                    options={kindBuckets.map((bucket) => ({
-                      value: bucket.key,
-                      label: bucket.title
-                    }))}
-                    value={symbolWorkspaceMode}
-                  />
-                  <FilterSelect
-                    label="Package"
-                    onChange={(value) => {
-                      setSymbolPackageScope(value);
-                      if (value !== allPackagesOption) {
-                        setSelectedPackageName(value);
-                      }
-                    }}
-                    options={packageScopeOptions}
-                    value={symbolPackageScope}
-                  />
-                </div>
-                <section className="browser-symbol-panel">
-                  <div className="browser-symbol-header">
-                    <strong>{activeSymbolBucket.title}</strong>
-                    <span>{activeSymbolBucket.subtitle}</span>
-                  </div>
-                  <BrowserDataTable
-                    key={`symbols-${symbolWorkspaceMode}`}
-                    columnTemplate="minmax(0, 1.05fr) minmax(0, 1.05fr) minmax(0, 0.8fr) minmax(0, 1fr)"
-                    columns={[
-                      {
-                        id: "package",
-                        label: "Package",
-                        render: (row) => row.packageName,
-                        sortValue: (row) => row.packageName
-                      },
-                      {
-                        id: "symbol",
-                        label: "Symbol",
-                        render: (row) => <strong>{row.symbol}</strong>,
-                        sortValue: (row) => row.symbol
-                      },
-                      {
-                        id: "kind",
-                        label: "Kind",
-                        render: (row) => row.kind,
-                        sortValue: (row) => row.kind
-                      },
-                      {
-                        id: "visibility",
-                        label: "Visibility",
-                        render: (row) => row.visibility,
-                        sortValue: (row) => row.visibility
-                      }
-                    ]}
-                    emptyMessage="No matching symbols in this lane."
-                    filterLabel="Visibility"
-                    filterOptions={[
-                      { label: "External", value: "external" },
-                      { label: "Internal", value: "internal" }
-                    ]}
-                    getFilterValue={(row) => row.visibility}
-                    getRowKey={(row) => row.key}
-                    onSelect={(row) =>
-                      void browseRuntimeEntity(row.symbol, row.packageName, row.inspectionMode)
-                    }
-                    remotePagination={{
-                      totalRowCount: symbolPageResult?.data.totalCount ?? 0,
-                      page: symbolPage,
-                      pageSize: symbolPageSize,
-                      searchTerm: symbolSearchTerm,
-                      activeFilter: symbolVisibilityFilter,
-                      onPageChange: setSymbolPage,
-                      onPageSizeChange: setSymbolPageSize,
-                      onSearchTermChange: setSymbolSearchTerm,
-                      onFilterChange: setSymbolVisibilityFilter
-                    }}
-                    rows={activeSymbolRows}
-                    searchPlaceholder="Search symbols"
-                    selectedKey={runtimeInspection?.data.symbol ?? runtimeEntityDetail?.data.symbol ?? null}
-                  />
-                  {activeSymbolRows.length === 0 && runtimeInspection?.data.symbol ? (
-                    <div className="browser-package-card">
-                      <strong>{runtimeInspection.data.symbol}</strong>
-                      <p>
-                        The live runtime focus is available even though the current package browser lane is sparse. Continue
-                        from this inspected symbol while the broader package view catches up.
-                      </p>
-                      <div className="ref-list">
-                        <span className="thread-flag">{runtimeInspection.data.packageName ?? selectedPackageName ?? "runtime"}</span>
-                        <span className="thread-flag">{runtimeInspection.data.mode}</span>
-                      </div>
-                    </div>
-                  ) : null}
-                </section>
-                <section className="browser-secondary-card">
-                  <div className="browser-secondary-card-header">
-                    <div>
-                      <p className="eyebrow">Manual Inspect</p>
-                      <h4>Direct Runtime Query</h4>
-                    </div>
-                    <button
-                      className="starter-chip"
-                      onClick={() => setSymbolInspectorExpanded((current) => !current)}
-                      type="button"
-                    >
-                      {symbolInspectorExpanded ? "Hide" : "Show"}
-                    </button>
-                  </div>
-                  {symbolInspectorExpanded ? (
-                    <div className="runtime-inspector-controls browser-manual-inspector-controls">
-                      <input
-                        className="filter-input"
-                        onChange={(event) => setRuntimeInspectorSymbol(event.target.value)}
-                        placeholder="Symbol or package"
-                        value={runtimeInspectorSymbol}
-                      />
-                      <input
-                        className="filter-input"
-                        onChange={(event) => setRuntimeInspectorPackage(event.target.value)}
-                        placeholder={runtimeSummary?.currentPackage ?? "Package"}
-                        value={runtimeInspectorPackage}
-                      />
-                      <select
-                        className="filter-input"
-                        onChange={(event) => setRuntimeInspectionMode(event.target.value as RuntimeInspectionMode)}
-                        value={runtimeInspectionMode}
-                      >
-                        <option value="describe">Describe</option>
-                        <option value="definitions">Definitions</option>
-                        <option value="callers">Callers</option>
-                        <option value="methods">Methods</option>
-                        <option value="divergence">Drift</option>
-                      </select>
-                      <button
-                        className="action-button"
-                        disabled={isInspectingRuntime || runtimeInspectorSymbol.trim().length === 0}
-                        onClick={() => void inspectRuntimeSymbol()}
-                        type="button"
-                      >
-                        {isInspectingRuntime ? "Inspecting..." : "Browse Entity"}
-                      </button>
-                    </div>
-                  ) : (
-                    <p className="inspector-copy">Ad hoc symbol, package, and XREF queries stay available here when needed.</p>
-                  )}
-                </section>
-              </div>
-            ) : selectedDomain === "classes-methods" ? (
-              <div className="browser-domain-stack">
-                <div className="browser-domain-toolbar">
-                  <BrowserModePicker
-                    label="Entity Set"
-                    onChange={(value) => setClassMethodMode(value as typeof classMethodMode)}
-                    options={[
-                      { value: "classes", label: "Classes" },
-                      { value: "generic-functions", label: "Generic Functions" }
-                    ]}
-                    value={classMethodMode}
-                  />
-                  <FilterSelect
-                    label="Package"
-                    onChange={(value) => {
-                      setClassMethodPackageScope(value);
-                      if (value !== allPackagesOption) {
-                        setSelectedPackageName(value);
-                      }
-                    }}
-                    options={packageScopeOptions}
-                    value={classMethodPackageScope}
-                  />
-                </div>
-                <BrowserDataTable
-                  key={`classes-methods-${classMethodMode}`}
-                  columnTemplate="minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 0.9fr)"
-                  columns={[
-                    {
-                      id: "package",
-                      label: "Package",
-                      render: (row) => row.packageName,
-                      sortValue: (row) => row.packageName
-                    },
-                    {
-                      id: "entity",
-                      label: classMethodMode === "classes" ? "Class" : "Generic Function",
-                      render: (row) => <strong>{row.symbol}</strong>,
-                      sortValue: (row) => row.symbol
-                    },
-                    {
-                      id: "kind",
-                      label: "Kind",
-                      render: (row) => row.kind,
-                      sortValue: (row) => row.kind
-                    },
-                    {
-                      id: "action",
-                      label: "Action",
-                      render: (row) => row.action,
-                      sortValue: (row) => row.action
-                    }
-                  ]}
-                  emptyMessage="No matching entities in this domain."
-                  filterLabel="Kind"
-                  filterOptions={[]}
-                  getFilterValue={(row) => row.kind}
-                  getRowKey={(row) => row.key}
-                  onSelect={(row) =>
-                    void browseRuntimeEntity(
-                      row.symbol,
-                      row.packageName,
-                      classMethodMode === "classes" ? "definitions" : "methods"
-                    )
-                  }
-                  remotePagination={{
-                    totalRowCount: classMethodPageResult?.data.totalCount ?? 0,
-                    page: classMethodPage,
-                    pageSize: classMethodPageSize,
-                    searchTerm: classMethodSearchTerm,
-                    activeFilter: "all",
-                    onPageChange: setClassMethodPage,
-                    onPageSizeChange: setClassMethodPageSize,
-                    onSearchTermChange: setClassMethodSearchTerm,
-                    onFilterChange: () => undefined
-                  }}
-                  rows={classMethodRows}
-                  searchPlaceholder={`Search ${classMethodMode === "classes" ? "classes" : "generic functions"}`}
-                  selectedKey={runtimeInspection?.data.symbol ?? runtimeEntityDetail?.data.symbol ?? null}
-                />
-              </div>
-            ) : selectedDomain === "systems" ? (
-              <div className="browser-domain-stack">
-                <BrowserDataTable
-                  key="systems"
-                  columnTemplate="minmax(0, 1.25fr) minmax(0, 0.95fr) minmax(0, 0.75fr) minmax(0, 0.8fr)"
-                  columns={[
-                    {
-                      id: "system",
-                      label: "System",
-                      render: (row) => <strong>{row.name}</strong>,
-                      sortValue: (row) => row.name
-                    },
-                    {
-                      id: "type",
-                      label: "Type",
-                      render: (row) => row.type,
-                      sortValue: (row) => row.type
-                    },
-                    {
-                      id: "status",
-                      label: "Status",
-                      render: (row) => row.status,
-                      sortValue: (row) => row.status
-                    },
-                    {
-                      id: "browse",
-                      label: "Browse",
-                      render: (row) => row.browse,
-                      sortValue: (row) => row.browse
-                    }
-                  ]}
-                  emptyMessage="No loaded systems are available."
-                  filterLabel="Type"
-                  filterOptions={buildFilterOptions(systemRows.map((row) => row.type))}
-                  getFilterValue={(row) => row.type}
-                  getRowKey={(row) => row.key}
-                  onSelect={(row) => {
-                    setSelectedSystemName(row.name);
-                    void browseRuntimeEntity(row.name.toUpperCase(), runtimeSummary?.currentPackage, "definitions");
-                  }}
-                  rows={systemRows}
-                  searchPlaceholder="Search loaded systems"
-                  selectedKey={selectedSystem}
-                />
-                {selectedSystemEntry ? (
-                  <>
-                    <div className="browser-focus-card">
-                      <div>
-                        <p className="context-label">Selected System</p>
-                        <strong>{selectedSystemEntry.name}</strong>
-                        <p>{selectedSystemEntry.status}</p>
-                      </div>
-                      <Badge tone="steady">{selectedSystemEntry.type === "asdf-system" ? "ASDF System" : "System"}</Badge>
-                    </div>
-                    <dl className="detail-list">
-                      {selectedSystemIdentityRows.map(([label, value]) => (
-                        <DetailRow key={`browser-system:${label}`} label={label} value={value} />
-                      ))}
-                    </dl>
-                    <div className="browser-action-strip">
-                      <button className="starter-chip" onClick={() => void openInspectorSurface()} type="button">
-                        Open Inspector
-                      </button>
-                    </div>
-                  </>
-                ) : null}
-              </div>
-            ) : selectedDomain === "runtime-objects" ? (
-              <div className="browser-domain-stack">
-                <BrowserDataTable
-                  key="runtime-objects"
-                  columnTemplate="minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 1.4fr)"
-                  columns={[
-                    {
-                      id: "scope",
-                      label: "Scope",
-                      render: (row) => <strong>{row.scopeLabel}</strong>,
-                      sortValue: (row) => row.scopeLabel
-                    },
-                    {
-                      id: "kind",
-                      label: "Kind",
-                      render: (row) => row.kind,
-                      sortValue: (row) => row.kind
-                    },
-                    {
-                      id: "summary",
-                      label: "Summary",
-                      render: (row) => row.summary,
-                      sortValue: (row) => row.summary,
-                      searchValue: (row) => `${row.scopeLabel} ${row.kind} ${row.summary}`
-                    }
-                  ]}
-                  emptyMessage="No runtime scopes are available."
-                  filterLabel="Kind"
-                  filterOptions={buildFilterOptions(runtimeScopeRows.map((row) => row.kind))}
-                  getFilterValue={(row) => row.kind}
-                  getRowKey={(row) => row.key}
-                  onSelect={(row) => {
-                    setSelectedScopeId(row.scopeId);
-                    void browseRuntimeEntity(
-                      row.symbolName ?? row.packageName,
-                      row.packageName,
-                      row.symbolName ? "describe" : "definitions"
-                    );
-                  }}
-                  rows={runtimeScopeRows}
-                  searchPlaceholder="Search runtime scopes"
-                  selectedKey={selectedScope?.scopeId ?? null}
-                />
-              </div>
-            ) : selectedDomain === "console" ? (
-              <div className="browser-domain-stack">
-                <BrowserModePicker
-                  label="Console Plane"
-                  onChange={(value) => {
-                    setSelectedConsolePlane(value as "environment" | "host");
-                    setSelectedConsoleSourceFilter("All Sources");
-                    setSelectedConsoleEntryId(null);
-                  }}
-                  options={[
-                    { value: "environment", label: "Environment" },
-                    { value: "host", label: "Host" }
-                  ]}
-                  value={selectedConsolePlane}
-                />
-                <FilterSelect
-                  label="Source"
-                  onChange={(value) => {
-                    setSelectedConsoleSourceFilter(value);
-                    setSelectedConsoleEntryId(null);
-                  }}
-                  options={["All Sources", ...buildFilterOptions(consoleEntries.map((row) => row.source)).map((option) => option.value)]}
-                  value={selectedConsoleSourceFilter}
-                />
-                <div className="metric-grid">
-                  <MetricTile label="Visible" value={filteredConsoleEntries.length} />
-                  <MetricTile label="Alerts" value={visibleConsoleAlertCount} />
-                  <MetricTile label="Processes" value={visibleConsoleProcessCount} />
-                  <MetricTile label="Top Source" value={visibleConsoleTopSource} />
-                </div>
-                <BrowserDataTable
-                  key={`console:${selectedConsolePlane}`}
-                  columnTemplate="minmax(0, 1fr) minmax(0, 0.7fr) minmax(0, 1.6fr)"
-                  columns={[
-                    {
-                      id: "source",
-                      label: "Source",
-                      render: (row) => <strong>{row.source}</strong>,
-                      sortValue: (row) => row.source,
-                      searchValue: (row) =>
-                        `${row.source} ${row.message} ${row.processName} ${row.activityId} ${row.threadRef}`
-                    },
-                    {
-                      id: "type",
-                      label: "Type",
-                      render: (row) => row.type,
-                      sortValue: (row) => row.type
-                    },
-                    {
-                      id: "message",
-                      label: "Message",
-                      render: (row) => row.message,
-                      sortValue: (row) => row.message,
-                      searchValue: (row) =>
-                        `${row.message} ${row.timestamp} ${row.processName} ${row.activityId} ${row.threadRef}`
-                    }
-                  ]}
-                  emptyMessage="No console entries are currently available."
-                  filterLabel="Type"
-                  filterOptions={buildFilterOptions(consoleRows.map((row) => row.type))}
-                  getFilterValue={(row) => row.type}
-                  getRowKey={(row) => row.key}
-                  onSelect={(row) => setSelectedConsoleEntryId(row.entryId)}
-                  rows={consoleRows}
-                  searchPlaceholder="Search console entries"
-                  selectedKey={selectedConsoleEntry?.entryId ?? null}
-                />
-                {selectedConsoleEntry ? (
-                  <>
-                    <div className="browser-focus-card">
-                      <div>
-                        <p className="context-label">Selected Console Entry</p>
-                        <strong>{selectedConsoleEntry.source}</strong>
-                        <p>{selectedConsoleEntry.message}</p>
-                      </div>
-                      <Badge tone={selectedConsoleEntry.type === "error" || selectedConsoleEntry.type === "fault" ? "danger" : selectedConsoleEntry.type === "warning" ? "warning" : "steady"}>
-                        {selectedConsoleEntry.type}
-                      </Badge>
-                    </div>
-	                    <dl className="detail-list">
-	                      <DetailRow label="Plane" value={selectedConsoleEntry.plane} />
-	                      <DetailRow label="Timestamp" value={selectedConsoleEntry.timestamp} />
-	                      <DetailRow label="Process" value={selectedConsoleEntry.processName ?? "n/a"} />
-	                      <DetailRow label="PID" value={selectedConsoleEntry.pid ? String(selectedConsoleEntry.pid) : "n/a"} />
-	                      <DetailRow label="Category" value={selectedConsoleEntry.category} />
-	                      <DetailRow label="Source" value={selectedConsoleEntry.source} />
-	                      <DetailRow label="Activity" value={selectedConsoleEntry.activityId ?? "n/a"} />
-	                      <DetailRow label="Thread" value={selectedConsoleEntry.threadRefId ?? selectedConsoleEntry.turnRefId ?? "n/a"} />
-	                    </dl>
-                  </>
-                ) : null}
-              </div>
-            ) : selectedDomain === "diagnostics" ? (
-              <div className="browser-domain-stack">
-                <FilterSelect
-                  label="Source"
-                  onChange={(value) => {
-                    setSelectedDiagnosticSourceFilter(value);
-                    setSelectedDiagnosticReportId(null);
-                  }}
-                  options={[
-                    "All Sources",
-                    ...buildFilterOptions(diagnosticReports.map((row) => row.source)).map((option) => option.value)
-                  ]}
-                  value={selectedDiagnosticSourceFilter}
-                />
-                <div className="metric-grid">
-                  <MetricTile label="Visible" value={filteredDiagnosticReports.length} />
-                  <MetricTile label="Crash" value={visibleDiagnosticCrashCount} />
-                  <MetricTile label="Spin" value={visibleDiagnosticSpinCount} />
-                  <MetricTile
-                    label="Latest"
-                    value={latestVisibleDiagnosticTimestamp ? transcriptRecencyLabel(latestVisibleDiagnosticTimestamp) : "n/a"}
-                  />
-                </div>
-                <BrowserDataTable
-                  key="diagnostics"
-                  columnTemplate="minmax(0, 1.1fr) minmax(0, 0.8fr) minmax(0, 1fr)"
-                  columns={[
-                    {
-                      id: "title",
-                      label: "Report",
-                      render: (row) => <strong>{row.title}</strong>,
-                      sortValue: (row) => row.title,
-                      searchValue: (row) =>
-                        `${row.title} ${row.processName} ${row.pid} ${row.summary} ${row.incidentId} ${row.bugType}`
-                    },
-                    {
-                      id: "kind",
-                      label: "Kind",
-                      render: (row) => row.kind,
-                      sortValue: (row) => row.kind
-                    },
-                    {
-                      id: "source",
-                      label: "Source",
-                      render: (row) => row.source,
-                      sortValue: (row) => row.source,
-                      searchValue: (row) =>
-                        `${row.source} ${row.createdAt} ${row.processName} ${row.pid} ${row.summary} ${row.incidentId} ${row.bugType}`
-                    }
-                  ]}
-                  emptyMessage="No retained diagnostic reports are currently available."
-                  filterLabel="Kind"
-                  filterOptions={buildFilterOptions(diagnosticRows.map((row) => row.kind))}
-                  getFilterValue={(row) => row.kind}
-                  getRowKey={(row) => row.key}
-                  onSelect={(row) => setSelectedDiagnosticReportId(row.reportId)}
-                  rows={diagnosticRows}
-                  searchPlaceholder="Search diagnostic reports"
-                  selectedKey={selectedDiagnosticReportSummary?.reportId ?? null}
-                />
-                {selectedDiagnosticReportSummary ? (
-                  <>
-                    <div className="browser-focus-card">
-                      <div>
-                        <p className="context-label">Selected Diagnostic Report</p>
-                        <strong>{selectedDiagnosticReportSummary.title}</strong>
-                        <p>{selectedDiagnosticReportSummary.summary}</p>
-                      </div>
-                      <Badge tone="warning">{selectedDiagnosticReportSummary.kind}</Badge>
-                    </div>
-                    <dl className="detail-list">
-                      <DetailRow label="Created" value={selectedDiagnosticReportSummary.createdAt} />
-                      <DetailRow label="Kind" value={selectedDiagnosticReportSummary.kind} />
-                      <DetailRow label="Source" value={selectedDiagnosticReportSummary.source} />
-                      <DetailRow label="Process" value={selectedDiagnosticReportSummary.processName ?? "n/a"} />
-                      <DetailRow label="Process Count" value={String(diagnosticProcessCount)} />
-                      <DetailRow label="Path" value={selectedDiagnosticReportSummary.path ?? "n/a"} />
-                    </dl>
-                  </>
-                ) : null}
-              </div>
-            ) : selectedDomain === "processes" ? (
-              <div className="browser-domain-stack">
-                <BrowserDataTable
-                  key="processes"
-                  columnTemplate="minmax(0, 1.1fr) minmax(0, 0.8fr) minmax(0, 0.7fr) minmax(0, 0.7fr) minmax(0, 1.2fr)"
-                  columns={[
-                    {
-                      id: "process",
-                      label: "Process",
-                      render: (row) => <strong>{row.label}</strong>,
-                      sortValue: (row) => row.label,
-                      searchValue: (row) => `${row.label} ${row.kind} ${row.summary}`
-                    },
-                    {
-                      id: "kind",
-                      label: "Kind",
-                      render: (row) => row.kind,
-                      sortValue: (row) => row.kind
-                    },
-                    {
-                      id: "state",
-                      label: "State",
-                      render: (row) => row.state,
-                      sortValue: (row) => row.state
-                    },
-                    {
-                      id: "cpu",
-                      label: "CPU",
-                      render: (row) => row.cpu,
-                      sortValue: (row) => row.cpu
-                    },
-                    {
-                      id: "memory",
-                      label: "Memory",
-                      render: (row) => row.memory,
-                      sortValue: (row) => row.memory
-                    }
-                  ]}
-                  emptyMessage="No runtime-linked processes are currently visible."
-                  filterLabel="Kind"
-                  filterOptions={buildFilterOptions(telemetryProcessRows.map((row) => row.kind))}
-                  getFilterValue={(row) => row.kind}
-                  getRowKey={(row) => row.key}
-                  onSelect={(row) => setSelectedTelemetryProcessId(row.processId)}
-                  rows={telemetryProcessRows}
-                  searchPlaceholder="Search runtime processes"
-                  selectedKey={selectedTelemetryProcess?.processId ?? null}
-                />
-                {selectedTelemetryProcess ? (
-                  <>
-                    <div className="browser-focus-card">
-                      <div>
-                        <p className="context-label">Selected Process</p>
-                        <strong>{selectedTelemetryProcess.label}</strong>
-                        <p>{selectedTelemetryProcess.summary}</p>
-                      </div>
-                      <Badge tone="active">{selectedTelemetryProcess.state}</Badge>
-                    </div>
-                    <dl className="detail-list">
-                      <DetailRow label="Object Id" value={selectedTelemetryProcess.processId} />
-                      <DetailRow label="PID" value={String(selectedTelemetryProcess.pid ?? "n/a")} />
-                      <DetailRow label="CPU" value={selectedTelemetryProcess.cpuPercent != null ? `${selectedTelemetryProcess.cpuPercent.toFixed(1)}%` : "n/a"} />
-                      <DetailRow label="Memory" value={selectedTelemetryProcess.memoryMb != null ? `${selectedTelemetryProcess.memoryMb.toFixed(1)} MB` : "n/a"} />
-                      <DetailRow label="Elapsed" value={selectedTelemetryProcess.elapsed ?? "n/a"} />
-                      <DetailRow label="Authority" value={selectedTelemetryProcess.kind === "compatibility-process" ? "governed compatibility process" : "governed runtime"} />
-                      <DetailRow label="Trace" value={selectedTelemetryProcess.workItemId ?? selectedTelemetryProcess.threadId ?? selectedTelemetryProcess.controlToken ?? "runtime telemetry"} />
-                    </dl>
-                  </>
-                ) : null}
-              </div>
-            ) : selectedDomain === "performance" ? (
-              <div className="browser-domain-stack">
-                <div className="metrics-grid">
-                  <MetricTile label="CPU" value={runtimeTelemetry?.cpu.utilizationPercent != null ? `${runtimeTelemetry.cpu.utilizationPercent.toFixed(1)}%` : "n/a"} />
-                  <MetricTile label="Load 1m" value={runtimeTelemetry?.cpu.loadAverage1m != null ? runtimeTelemetry.cpu.loadAverage1m.toFixed(2) : "n/a"} />
-                  <MetricTile label="RSS" value={runtimeTelemetry?.memory.rssMb != null ? `${runtimeTelemetry.memory.rssMb.toFixed(1)} MB` : "n/a"} />
-                  <MetricTile label="Heap Used" value={runtimeTelemetry?.memory.heapUsedMb != null ? `${runtimeTelemetry.memory.heapUsedMb.toFixed(1)} MB` : "n/a"} />
-                </div>
-                <div className="browser-focus-card">
-                  <div>
-                    <p className="context-label">Performance Posture</p>
-                    <strong>{runtimeTelemetry?.activitySummary ?? "Runtime telemetry is not yet available."}</strong>
-                    <p>{runtimeTelemetry?.cpu.summary ?? "CPU and memory posture will appear once telemetry is sampled."}</p>
-                  </div>
-                  <Badge tone="steady">{runtimeTelemetry?.cpu.coreCount ? `${runtimeTelemetry.cpu.coreCount} cores` : "host"}</Badge>
-                </div>
-                <dl className="detail-list">
-                  <DetailRow label="Sampled At" value={runtimeTelemetry?.sampledAt ?? "n/a"} />
-                  <DetailRow label="CPU Summary" value={runtimeTelemetry?.cpu.summary ?? "n/a"} />
-                  <DetailRow label="Memory Summary" value={runtimeTelemetry?.memory.summary ?? "n/a"} />
-                  <DetailRow label="System Memory" value={runtimeTelemetry?.memory.systemUsedPercent != null ? `${runtimeTelemetry.memory.systemUsedPercent.toFixed(1)}%` : "n/a"} />
-                </dl>
-              </div>
-            ) : selectedDomain === "host-io" ? (
-              <div className="browser-domain-stack">
-                <div className="metrics-grid">
-                  <MetricTile label="Connections" value={runtimeTelemetry?.network.openConnectionCount != null ? String(runtimeTelemetry.network.openConnectionCount) : "n/a"} />
-                  <MetricTile label="Interfaces" value={runtimeTelemetry?.network.interfaceCount != null ? String(runtimeTelemetry.network.interfaceCount) : "n/a"} />
-                  <MetricTile label="Disk Read" value={runtimeTelemetry?.disk.readKbps != null ? `${runtimeTelemetry.disk.readKbps.toFixed(0)} KB/s` : "n/a"} />
-                  <MetricTile label="Disk Write" value={runtimeTelemetry?.disk.writeKbps != null ? `${runtimeTelemetry.disk.writeKbps.toFixed(0)} KB/s` : "n/a"} />
-                </div>
-                <dl className="detail-list">
-                  <DetailRow label="Network Summary" value={runtimeTelemetry?.network.summary ?? "n/a"} />
-                  <DetailRow label="Disk Summary" value={runtimeTelemetry?.disk.summary ?? "n/a"} />
-                  <DetailRow label="Runtime PID" value={String(runtimeTelemetry?.runtimePid ?? "n/a")} />
-                  <DetailRow label="Activity" value={runtimeTelemetry?.activitySummary ?? "n/a"} />
-                </dl>
-              </div>
-            ) : selectedDomain === "source" ? (
-              <div className="browser-domain-stack">
-                <BrowserDataTable
-                  key="source"
-                  columnTemplate="minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 0.7fr)"
-                  columns={[
-                    {
-                      id: "artifact",
-                      label: "Artifact",
-                      render: (row) => <strong>{row.label}</strong>,
-                      sortValue: (row) => row.label
-                    },
-                    {
-                      id: "location",
-                      label: "Location",
-                      render: (row) => row.location,
-                      sortValue: (row) => row.location
-                    },
-                    {
-                      id: "role",
-                      label: "Role",
-                      render: (row) => row.role,
-                      sortValue: (row) => row.role
-                    }
-                  ]}
-                  emptyMessage="No source-backed entities are currently in focus."
-                  filterLabel="Role"
-                  filterOptions={buildFilterOptions(sourceRows.map((row) => row.role))}
-                  getFilterValue={(row) => row.role}
-                  getRowKey={(row) => row.key}
-                  onSelect={(row) => {
-                    setSelectedSourceEntryKey(row.key);
-                    if (row.path) {
-                      void loadSourcePreview(row.path, row.line ?? undefined);
-                    }
-                  }}
-                  rows={sourceRows}
-                  searchPlaceholder="Search source artifacts"
-                  selectedKey={selectedSourceEntry ? `${selectedSourceEntry.path}:${selectedSourceEntry.line ?? 0}` : null}
-                />
-              </div>
-            ) : selectedDomain === "xref" ? (
-              <div className="browser-domain-stack">
-                <BrowserModePicker
-                  label="Reference Direction"
-                  onChange={(value) => setXrefMode(value as typeof xrefMode)}
-                  options={[
-                    { value: "incoming", label: "Incoming" },
-                    { value: "outgoing", label: "Outgoing" }
-                  ]}
-                  value={xrefMode}
-                />
-                <BrowserDataTable
-                  key={`xref-${xrefMode}`}
-                  columnTemplate="minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 1.35fr)"
-                  columns={[
-                    {
-                      id: "label",
-                      label: "Reference",
-                      render: (row) => <strong>{row.label}</strong>,
-                      sortValue: (row) => row.label
-                    },
-                    {
-                      id: "type",
-                      label: "Type",
-                      render: (row) => row.emphasis,
-                      sortValue: (row) => row.emphasis
-                    },
-                    {
-                      id: "detail",
-                      label: "Detail",
-                      render: (row) => row.detail,
-                      sortValue: (row) => row.detail
-                    }
-                  ]}
-                  emptyMessage="No XREF items are available for the current focus."
-                  filterLabel="Type"
-                  filterOptions={buildFilterOptions(xrefRows.map((row) => row.emphasis))}
-                  getFilterValue={(row) => row.emphasis}
-                  getRowKey={(row) => row.key}
-                  onSelect={(row) => {
-                    if (row.path) {
-                      void loadSourcePreview(row.path, row.line ?? undefined);
-                    }
-                  }}
-                  rows={xrefRows}
-                  searchPlaceholder={`Search ${xrefMode} references`}
-                  selectedKey={null}
-                />
-              </div>
-            ) : selectedDomain === "governance" ? (
-              <div className="browser-domain-stack">
-                <BrowserDataTable
-                  key="governance"
-                  columnTemplate="minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 1.35fr)"
-                  columns={[
-                    {
-                      id: "item",
-                      label: "Item",
-                      render: (row) => <strong>{row.label}</strong>,
-                      sortValue: (row) => row.label
-                    },
-                    {
-                      id: "state",
-                      label: "State",
-                      render: (row) => <PriorityStateChip label={row.badge} tone={row.tone} />,
-                      sortValue: (row) => row.badge
-                    },
-                    {
-                      id: "detail",
-                      label: "Detail",
-                      render: (row) => row.detail,
-                      sortValue: (row) => row.detail
-                    }
-                  ]}
-                  emptyMessage="No governance-linked entities are loaded."
-                  filterLabel="State"
-                  filterOptions={buildFilterOptions(governanceRows.map((row) => row.badge))}
-                  getFilterValue={(row) => row.badge}
-                  getRowKey={(row) => row.key}
-                  onSelect={(row) => setSelectedGovernanceKey(row.key)}
-                  rows={governanceRows}
-                  searchPlaceholder="Search governance items"
-                  selectedKey={selectedGovernanceEntry?.key ?? null}
-                />
-                {selectedGovernanceEntry ? (
-                  <>
-                    <div className="browser-focus-card">
-                      <div>
-                        <p className="context-label">Selected Governance Object</p>
-                        <strong>{selectedGovernanceEntry.label}</strong>
-                        <p>{selectedGovernanceEntry.detail}</p>
-                      </div>
-                      <PriorityStateChip label={selectedGovernanceEntry.badge} tone={selectedGovernanceEntry.tone} />
-                    </div>
-                    <dl className="detail-list">
-                      {selectedGovernanceIdentityRows.map(([label, value]) => (
-                        <DetailRow key={`browser-governance:${label}`} label={label} value={value} />
-                      ))}
-                      {selectedGovernanceTaskRows.map(([label, value]) => (
-                        <DetailRow key={`browser-governance-task:${label}`} label={label} value={value} />
-                      ))}
-                      {selectedGovernanceCorrectiveRows.map(([label, value]) => (
-                        <DetailRow key={`browser-governance-corrective:${label}`} label={label} value={value} />
-                      ))}
-                    </dl>
-                    {selectedGovernanceTaskRecord?.result ? (
-                      <details>
-                        <summary>Task Result</summary>
-                        <pre className="runtime-preview">{JSON.stringify(selectedGovernanceTaskRecord.result, null, 2)}</pre>
-                      </details>
-                    ) : null}
-                    {selectedGovernanceTaskRecord?.lastError ? (
-                      <details>
-                        <summary>Task Error</summary>
-                        <pre className="runtime-preview">{JSON.stringify(selectedGovernanceTaskRecord.lastError, null, 2)}</pre>
-                      </details>
-                    ) : null}
-                    {selectedGovernanceEntry.correctiveContext?.proposedActions.length ? (
-                      <div className="thread-section">
-                        <p className="context-label">Corrective Actions</p>
-                        <div className="thread-card-list">
-                          {selectedGovernanceEntry.correctiveContext.proposedActions.map((action, index) => (
-                            <article className="thread-row active" key={`browser-governance-action:${index}`}>
-                              <div>
-                                <strong>{action.kind ?? "correction"}</strong>
-                                <p>{action.reason ?? "No corrective rationale captured."}</p>
-                              </div>
-                              <span>{action.target ?? "governed target"}</span>
-                            </article>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                    {selectedGovernanceEntry.correctiveContext?.triggerEvents.length ? (
-                      <div className="thread-section">
-                        <p className="context-label">Trigger Evidence</p>
-                        <div className="thread-flags">
-                          {selectedGovernanceEntry.correctiveContext.triggerEvents.map((event, index) => (
-                            <span className="thread-flag" key={`browser-governance-trigger:${index}`}>
-                              {event.kind ?? event.family ?? "event"}
-                              {event.eventId ? ` · ${event.eventId}` : ""}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                    <div className="browser-action-strip">
-                      {selectedGovernanceApprovalId ? (
-                        <button
-                          className="starter-chip"
-                          onClick={() => void onOpenApprovalRequest(selectedGovernanceApprovalId)}
-                          type="button"
-                        >
-                          Review Approval
-                        </button>
-                      ) : null}
-                      {selectedGovernanceApprovalId && selectedGovernanceApprovalSummary?.state === "awaiting" ? (
-                        <button
-                          className="starter-chip"
-                          disabled={isDecidingApproval}
-                          onClick={() => onSubmitApprovalDecision(selectedGovernanceApprovalId, "approve")}
-                          type="button"
-                        >
-                          {isDecidingApproval ? "Submitting..." : "Approve Corrective Work"}
-                        </button>
-                      ) : null}
-                      {selectedGovernanceApprovalId && selectedGovernanceApprovalSummary?.state === "awaiting" ? (
-                        <button
-                          className="starter-chip"
-                          disabled={isDecidingApproval}
-                          onClick={() => onSubmitApprovalDecision(selectedGovernanceApprovalId, "deny")}
-                          type="button"
-                        >
-                          {isDecidingApproval ? "Submitting..." : "Deny Corrective Work"}
-                        </button>
-                      ) : null}
-                      <button className="starter-chip" onClick={() => void openInspectorSurface()} type="button">
-                        Open Inspector
-                      </button>
-                    </div>
-                  </>
-                ) : null}
-              </div>
-            ) : selectedDomain === "linked-conversations" ? (
-              <div className="browser-domain-stack">
-                <BrowserDataTable
-                  key="linked-conversations"
-                  columnTemplate="minmax(0, 1.2fr) minmax(0, 0.8fr) minmax(0, 0.9fr)"
-                  columns={[
-                    {
-                      id: "thread",
-                      label: "Thread",
-                      render: (row) => <strong>{row.label}</strong>,
-                      sortValue: (row) => row.label,
-                      searchValue: (row) => `${row.label} ${row.detail}`
-                    },
-                    {
-                      id: "state",
-                      label: "State",
-                      render: (row) => <PriorityStateChip label={row.state} tone={row.stateTone} />,
-                      sortValue: (row) => row.state
-                    },
-                    {
-                      id: "attention",
-                      label: "Attention",
-                      render: (row) => <PriorityStateChip label={row.attention} tone={row.attentionTone} />,
-                      sortValue: (row) => row.attention
-                    }
-                  ]}
-                  emptyMessage="No linked conversation entities are loaded yet."
-                  filterLabel="State"
-                  filterOptions={buildFilterOptions(linkedConversationRows.map((row) => row.state))}
-                  getFilterValue={(row) => row.state}
-                  getRowKey={(row) => row.key}
-                  onSelect={(row) => {
-                    setSelectedLinkedConversationId(row.id);
-                    setSelectedThreadId(row.id);
-                  }}
-                  rows={linkedConversationRows}
-                  searchPlaceholder="Search linked conversations"
-                  selectedKey={selectedLinkedConversation?.id ?? null}
-                />
-                {selectedLinkedConversation ? (
-                  <>
-                    <div className="browser-focus-card">
-                      <div>
-                        <p className="context-label">Selected Linked Conversation</p>
-                        <strong>{selectedLinkedConversation.label}</strong>
-                        <p>{selectedLinkedConversation.detail}</p>
-                      </div>
-                      <PriorityStateChip
-                        label={selectedLinkedConversation.badge}
-                        tone={toneForThreadState(selectedLinkedConversation.badge as ThreadSummaryDto["state"])}
-                      />
-                    </div>
-                    <dl className="detail-list">
-                      {selectedLinkedConversationIdentityRows.map(([label, value]) => (
-                        <DetailRow key={`browser-linked-conversation:${label}`} label={label} value={value} />
-                      ))}
-                    </dl>
-                    <div className="browser-action-strip">
-                      <button className="starter-chip" onClick={() => void openInspectorSurface()} type="button">
-                        Open Inspector
-                      </button>
-                    </div>
-                  </>
-                ) : null}
-              </div>
-            ) : selectedDomain === "documentation" ? (
-              <div className="browser-domain-stack">
-                <BrowserDataTable
-                  key="documentation"
-                  columnTemplate="minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 1.4fr)"
-                  columns={[
-                    {
-                      id: "reference",
-                      label: "Reference",
-                      render: (row) => <strong>{row.label}</strong>,
-                      sortValue: (row) => row.label
-                    },
-                    {
-                      id: "category",
-                      label: "Category",
-                      render: (row) => row.category,
-                      sortValue: (row) => row.category
-                    },
-                    {
-                      id: "summary",
-                      label: "Summary",
-                      render: (row) => row.summary,
-                      sortValue: (row) => row.summary,
-                      searchValue: (row) => `${row.label} ${row.category} ${row.summary}`
-                    }
-                  ]}
-                  emptyMessage="No documentation references are available."
-                  filterLabel="Category"
-                  filterOptions={buildFilterOptions(documentationRows.map((row) => row.category))}
-                  getFilterValue={(row) => row.category}
-                  getRowKey={(row) => row.key}
-                  onSelect={(row) => {
-                    setSelectedDocumentationKey(row.key);
-                    void loadDocumentationPage(row.slug);
-                  }}
-                  rows={documentationRows}
-                  searchPlaceholder="Search documentation references"
-                  selectedKey={selectedDocumentationSlug}
-                />
-              </div>
-            ) : (
-              <div className="browser-package-card">
-                <strong>{domainDescriptor.label}</strong>
-                <p>Choose a browser domain to inspect its live runtime surface.</p>
-              </div>
-            )}
-          </section>
-
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function threadRecommendationScore(thread: ThreadSummaryDto): number {
-  let score = 0;
-  switch (thread.state) {
-    case "blocked":
-      score += 120;
-      break;
-    case "waiting":
-      score += 90;
-      break;
-    case "active":
-      score += 35;
-      break;
-    default:
-      score += 10;
-  }
-
-  switch (thread.latestTurnState) {
-    case "failed":
-      score += 120;
-      break;
-    case "interrupted":
-      score += 95;
-      break;
-    case "awaiting_approval":
-      score += 90;
-      break;
-    case "running":
-      score += 40;
-      break;
-    case "completed":
-      score += 15;
-      break;
-    default:
-      score += 5;
-  }
-
-  score += thread.attentionFlags.length * 8;
-  return score;
-}
-
-function primaryThreadRecommendationReason(thread: ThreadSummaryDto): string {
-  if (thread.latestTurnState === "failed") {
-    return "This thread contains a failed turn that still needs follow-through.";
-  }
-  if (thread.latestTurnState === "interrupted") {
-    return "This thread was interrupted and is the best conversation to resume.";
-  }
-  if (thread.latestTurnState === "awaiting_approval") {
-    return "This thread is paused on approval and remains operationally relevant.";
-  }
-  if (thread.state === "blocked" || thread.state === "waiting") {
-    return "This thread is carrying unresolved governed work.";
-  }
-  return "This is the strongest current conversation context for continued work.";
-}
-
-function workItemRecommendationScore(workItem: WorkItemSummaryDto): number {
-  let score = 0;
-  switch (workItem.state) {
-    case "blocked":
-      score += 125;
-      break;
-    case "quarantined":
-      score += 120;
-      break;
-    case "waiting":
-      score += 90;
-      break;
-    case "active":
-      score += 55;
-      break;
-    case "closable":
-      score += 30;
-      break;
-    default:
-      score += 10;
-  }
-
-  score += workItem.approvalCount * 8;
-  score += workItem.incidentCount * 12;
-  score += workItem.validationBurden === "pending" ? 12 : 0;
-  score += workItem.reconciliationBurden === "required" ? 14 : 0;
-  return score;
-}
-
-function primaryWorkRecommendationReason(workItem: WorkItemSummaryDto): string {
-  if (workItem.state === "blocked" || workItem.state === "quarantined") {
-    return "This work item is preventing trustworthy continuation.";
-  }
-  if (workItem.state === "waiting") {
-    return "This work item is paused and likely needs operator attention.";
-  }
-  if (workItem.validationBurden === "pending" || workItem.reconciliationBurden === "required") {
-    return "This work item still carries closure obligations.";
-  }
-  return "This is the most relevant governed execution item.";
-}
-
-function approvalRecommendationScore(approval: ApprovalRequestSummaryDto): number {
-  switch (approval.state) {
-    case "awaiting":
-      return 130;
-    case "denied":
-      return 85;
-    case "approved":
-      return 20;
-    default:
-      return 0;
-  }
-}
-
-function primaryApprovalRecommendationReason(approval: ApprovalRequestSummaryDto): string {
-  if (approval.state === "awaiting") {
-    return "This approval is actively blocking governed execution.";
-  }
-  if (approval.state === "denied") {
-    return "This approval was denied and may require redirection.";
-  }
-  return "This is the most relevant recent approval decision.";
-}
-
-function incidentRecommendationScore(incident: IncidentSummaryDto): number {
-  let score = 0;
-  switch (incident.severity) {
-    case "critical":
-      score += 140;
-      break;
-    case "high":
-      score += 115;
-      break;
-    case "moderate":
-      score += 80;
-      break;
-    case "low":
-      score += 35;
-      break;
-    default:
-      score += 10;
-  }
-
-  switch (incident.state) {
-    case "open":
-      score += 35;
-      break;
-    case "recovering":
-      score += 20;
-      break;
-    case "resolved":
-      score += 0;
-      break;
-    default:
-      score += 0;
-  }
-
-  return score;
-}
-
-function primaryIncidentRecommendationReason(incident: IncidentSummaryDto): string {
-  if (incident.state === "open") {
-    return "This incident remains open and dominates recovery attention.";
-  }
-  if (incident.state === "recovering") {
-    return "This incident is still in active recovery.";
-  }
-  return "This is the most relevant retained recovery record.";
-}
-
-function artifactRecommendationScore(_artifact: ArtifactSummaryDto): number {
-  return 15;
-}
-
-function compressActionQueue(items: ActionQueueItem[]): ActionQueueItem[] {
-  const normalizedTitles = new Set<string>();
-  const perTypeCounts = new Map<ActionQueueItem["objectType"], number>();
-  const limits: Record<ActionQueueItem["objectType"], number> = {
-    Runtime: 1,
-    Approval: 3,
-    Recovery: 3,
-    Work: 4,
-    Task: 3,
-    Thread: 4,
-    Artifact: 2
-  };
-
-  return items.filter((item) => {
-    const titleKey = item.title.trim().toLowerCase();
-    if (normalizedTitles.has(titleKey)) {
-      return false;
-    }
-
-    const count = perTypeCounts.get(item.objectType) ?? 0;
-    if (count >= limits[item.objectType]) {
-      return false;
-    }
-
-    normalizedTitles.add(titleKey);
-    perTypeCounts.set(item.objectType, count + 1);
-    return true;
-  });
-}
-
-function signalPriorityForTone(tone: "active" | "warning" | "danger" | "steady"): SignalPriority | null {
-  switch (tone) {
-    case "danger":
-      return "red";
-    case "warning":
-      return "yellow";
-    case "active":
-      return "blue";
-    default:
-      return null;
-  }
-}
-
-function priorityLabelForTone(
-  tone: "active" | "warning" | "danger" | "steady"
-): "High" | "Medium" | "Low" {
-  switch (tone) {
-    case "danger":
-      return "High";
-    case "warning":
-      return "Medium";
-    default:
-      return "Low";
-  }
-}
-
-function signalCountsForWorkspace(workspaceId: WorkspaceId, items: GlobalAttentionItem[]): SignalCounts {
-  const targetWorkspace = canonicalWorkspace(workspaceId);
-  const counts: SignalCounts = { red: 0, yellow: 0, blue: 0 };
-
-  for (const item of items) {
-    const priority = signalPriorityForTone(item.tone);
-    if (!priority || item.value <= 0) {
-      continue;
-    }
-
-    const itemWorkspace = canonicalWorkspace(item.workspace);
-    const matches =
-      targetWorkspace === "environment"
-        ? true
-        : itemWorkspace === targetWorkspace;
-
-    if (matches) {
-      counts[priority] += item.value;
-    }
-  }
-
-  return counts;
-}
-
-function signalCountsFromItems(items: GlobalAttentionItem[]): SignalCounts {
-  const counts: SignalCounts = { red: 0, yellow: 0, blue: 0 };
-
-  for (const item of items) {
-    const priority = signalPriorityForTone(item.tone);
-    if (!priority || item.value <= 0) {
-      continue;
-    }
-    counts[priority] += item.value;
-  }
-
-  return counts;
-}
-
-function toneForThreadState(
-  state: ThreadSummaryDto["state"]
-): "active" | "warning" | "danger" | "steady" {
-  switch (state) {
-    case "active":
-      return "active";
-    case "waiting":
-      return "warning";
-    case "blocked":
-      return "danger";
-    default:
-      return "steady";
-  }
-}
-
-function toneForTurnState(
-  state: TurnDetailDto["state"]
-): "active" | "warning" | "danger" | "steady" {
-  switch (state) {
-    case "running":
-    case "completed":
-      return "active";
-    case "awaiting_approval":
-    case "interrupted":
-      return "warning";
-    case "failed":
-      return "danger";
-    default:
-      return "steady";
-  }
-}
-
-function toneForApprovalState(
-  state: ApprovalRequestSummaryDto["state"]
-): "active" | "warning" | "danger" | "steady" {
-  switch (state) {
-    case "approved":
-      return "active";
-    case "awaiting":
-      return "warning";
-    case "denied":
-      return "danger";
-    default:
-      return "steady";
-  }
-}
-
-function toneForApprovalDecision(
-  decision: ApprovalDecisionDto["decision"]
-): "active" | "warning" | "danger" | "steady" {
-  switch (decision) {
-    case "approved":
-      return "active";
-    case "denied":
-      return "danger";
-    default:
-      return "steady";
-  }
-}
-
-function toneForIncidentSeverity(
-  severity: IncidentSummaryDto["severity"]
-): "active" | "warning" | "danger" | "steady" {
-  switch (severity) {
-    case "critical":
-    case "high":
-      return "danger";
-    case "moderate":
-      return "warning";
-    case "low":
-      return "steady";
-    default:
-      return "steady";
-  }
-}
-
-function toneForWorkState(
-  state: WorkItemSummaryDto["state"]
-): "active" | "warning" | "danger" | "steady" {
-  switch (state) {
-    case "active":
-    case "closable":
-      return "active";
-    case "waiting":
-      return "warning";
-    case "blocked":
-    case "quarantined":
-      return "danger";
-    default:
-      return "steady";
-  }
-}
-
-function attentionToneWeight(tone: "active" | "warning" | "danger" | "steady"): number {
-  switch (tone) {
-    case "danger":
-      return 4;
-    case "warning":
-      return 3;
-    case "active":
-      return 2;
-    default:
-      return 1;
-  }
 }

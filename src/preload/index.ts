@@ -146,6 +146,24 @@ const api: SbclAgentDesktopApi = {
       ipcRenderer.invoke("query:work-item-plan", workItemId, environmentId),
     workflowRecordDetail: (workflowRecordId: string, environmentId?: string) =>
       ipcRenderer.invoke("query:workflow-record-detail", workflowRecordId, environmentId),
+    orchestrationList: (environmentId?: string) =>
+      ipcRenderer.invoke("query:orchestration-list", environmentId),
+    orchestrationInbox: (environmentId?: string) =>
+      ipcRenderer.invoke("query:orchestration-inbox", environmentId),
+    orchestrationFocus: (input?: {
+      environmentId?: string;
+      planId?: string;
+      workflowRecordId?: string;
+      workItemId?: string;
+    }) => ipcRenderer.invoke("query:orchestration-focus", input),
+    orchestrationSnapshot: (input?: {
+      environmentId?: string;
+      planId?: string;
+    }) => ipcRenderer.invoke("query:orchestration-snapshot", input),
+    planVerification: (input?: {
+      environmentId?: string;
+      planId?: string;
+    }) => ipcRenderer.invoke("query:plan-verification", input),
     providerProfiles: (environmentId?: string): Promise<QueryResultDto<ProviderProfileSummaryDto>> =>
       ipcRenderer.invoke("query:provider-profiles", environmentId),
     packageManagementSummary: (environmentId?: string) =>

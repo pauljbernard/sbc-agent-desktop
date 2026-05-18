@@ -40,6 +40,7 @@ Because `sbcl-agent` embodies a shift in how software development is performed, 
 - governed execution state instead of only outputs
 - evidence and reconciliation instead of only completion messaging
 - multi-actor coordination instead of only one-user request/response flow
+- explicit project and planning context instead of inferring scope from transcript text alone
 
 ## Capability Map
 
@@ -79,6 +80,8 @@ Give the user an accurate picture of the environment as a whole before they dril
 - recent incidents
 - active tasks and workers
 - recent evidence and artifacts
+- system identity and purpose from `agent-constitution`
+- capability and dependency posture from `capability-inventory`
 
 ### UX Implication
 
@@ -119,6 +122,12 @@ Make conversation durable and inspectable without letting it swallow the rest of
 ### UX Implication
 
 The UX needs structured thread and turn views where conversation is paired with state, operations, and evidence.
+
+That now also implies:
+
+- explicit display of the current project frame of reference for the chat
+- visibility into whether project context is explicit, inferred, or absent
+- visibility into uncertainty escalation when project or capability posture is contradictory
 
 ### Service Surface
 
@@ -211,6 +220,12 @@ Preserve engineering discipline when work becomes mutating, risky, or multi-step
 ### UX Implication
 
 Work should be representable as governed progress, not merely as chat progress or shell side effects.
+
+It should also remain visibly linked to:
+
+- the selected or inferred project authority
+- capability readiness and missing prerequisite posture
+- actor ownership and recovery posture when continuation is interrupted
 
 ### Service Surface
 

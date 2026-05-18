@@ -50,12 +50,38 @@ Owns or aggregates:
 - task and worker state
 - policy posture
 - event evidence
+- `agent-constitution`
+- `capability-inventory`
+- explicit context-chat project targeting
 
 Primary user questions:
 
 - What environment am I in?
 - What is active right now?
 - What requires attention?
+- What is this system trying to optimize or protect?
+- What can it actually do right now?
+
+### Project
+
+A governed engineering context that shapes planning, execution, readiness, and design expectations.
+
+Includes:
+
+- constitution
+- requirements
+- feature specifications
+- architecture decisions
+- design system and style guidance
+- non-functional requirements
+- source roots
+- linked work-items, incidents, and artifacts
+
+Primary user questions:
+
+- Which project frame of reference is active?
+- Is it explicit, inferred, or ambiguous?
+- What constraints and quality gates apply to work in this project?
 
 ### Runtime
 
@@ -107,6 +133,7 @@ Primary user questions:
 
 - What problem space is this conversation tracking?
 - What turns and outputs belong together?
+- Which project context, if any, is shaping this conversation?
 
 ### Message
 
@@ -192,6 +219,7 @@ Includes:
 - approval burden
 - validation burden
 - closure conditions
+- linked project authority where applicable
 
 Primary user questions:
 
@@ -227,6 +255,7 @@ Includes:
 - linked entities
 - recovery state
 - closure status
+- project and capability context when they affect recovery choices
 
 Primary user questions:
 
@@ -258,6 +287,42 @@ Includes:
 - identity
 - status
 - assigned work
+
+### Agent Constitution
+
+The durable identity and operating charter for the system itself.
+
+Includes:
+
+- system role
+- governance posture
+- objectives
+- optimization priorities
+- hard invariants
+- self-improvement boundaries
+
+Primary user questions:
+
+- Who is this system supposed to be?
+- What is it allowed or required to optimize?
+
+### Capability Inventory
+
+The planner-grade summary of what the environment can currently do.
+
+Includes:
+
+- readiness summary
+- provider route viability
+- executable readiness
+- missing prerequisites
+- dependency anomalies
+- package-management posture
+
+Primary user questions:
+
+- What tools and routes are ready?
+- What is degraded, missing, or unsafe to assume?
 - recent activity
 
 Primary user questions:

@@ -2158,6 +2158,22 @@ export interface QueryApi {
     workflowRecordId: string,
     environmentId?: string
   ): Promise<QueryResultDto<WorkflowRecordDto>>;
+  orchestrationList(environmentId?: string): Promise<QueryResultDto<Record<string, unknown>[]>>;
+  orchestrationInbox(environmentId?: string): Promise<QueryResultDto<Record<string, unknown>[]>>;
+  orchestrationFocus(input?: {
+    environmentId?: string;
+    planId?: string;
+    workflowRecordId?: string;
+    workItemId?: string;
+  }): Promise<QueryResultDto<Record<string, unknown>>>;
+  orchestrationSnapshot(input?: {
+    environmentId?: string;
+    planId?: string;
+  }): Promise<QueryResultDto<Record<string, unknown>>>;
+  planVerification(input?: {
+    environmentId?: string;
+    planId?: string;
+  }): Promise<QueryResultDto<Record<string, unknown>>>;
   memoryList(environmentId?: string): Promise<QueryResultDto<MemoryListDto>>;
   memoryDetail(memoryId: string, environmentId?: string): Promise<QueryResultDto<MemoryEntryDto>>;
   providerProfiles(environmentId?: string): Promise<QueryResultDto<ProviderProfileSummaryDto>>;

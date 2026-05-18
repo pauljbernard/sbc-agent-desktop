@@ -41,14 +41,42 @@ export type ExecutionWorkspaceProps = {
   selectedWorkItemId: string | null;
   selectedWorkItem: WorkItemDetailDto | null;
   selectedWorkflowRecord: WorkflowRecordDto | null;
+  orchestrationFocus: Record<string, unknown> | null;
+  orchestrationSnapshot: Record<string, unknown> | null;
+  planVerification: Record<string, unknown> | null;
   approvalRequests: ApprovalRequestSummaryDto[];
   openInspectorSurface: () => Promise<void>;
 };
 
 export function ExecutionWorkspace(props: ExecutionWorkspaceProps) {
+  const orchestrationSnapshot = executionRecord(props.orchestrationSnapshot);
+  const postureSummary = executionRecord(orchestrationSnapshot.postureSummary);
+  const latestStepSummary = executionRecord(orchestrationSnapshot.latestStepSummary);
+  const planVerification = executionRecord(props.planVerification);
+  const verificationCounts = executionRecord(planVerification.verificationCounts);
+  const selectedPlanId =
+    firstExecutionString(
+      executionRecord(props.orchestrationFocus).planId,
+      executionRecord(executionRecord(props.orchestrationFocus).plan).id,
+      orchestrationSnapshot.planId
+    ) ?? "No active plan";
+  const primaryCommandLabel =
+    firstExecutionString(
+      executionRecord(props.orchestrationFocus).primaryCommandLabel,
+      executionRecord(executionRecord(props.orchestrationFocus).primaryCommand).label,
+      orchestrationSnapshot.primaryCommandLabel,
+      executionRecord(orchestrationSnapshot.primaryCommand).label
+    ) ?? "No approval command";
+  const primaryCommandDescription =
+    firstExecutionString(
+      executionRecord(props.orchestrationFocus).primaryCommandDescription,
+      executionRecord(executionRecord(props.orchestrationFocus).primaryCommand).description,
+      orchestrationSnapshot.primaryCommandDescription,
+      executionRecord(orchestrationSnapshot.primaryCommand).description
+    ) ?? "No approval request is blocking execution.";
   const selectedWorkTitle = props.selectedWorkItem?.title ?? props.workItems[0]?.title ?? "No governed work item selected";
   const executionObjective =
-    props.selectedWorkItem?.waitingReason ??
+    firstExecutionString(props.selectedWorkItem?.waitingReason, postureSummary.nextAction, latestStepSummary.resultSummary) ??
     props.selectedWorkflowRecord?.closureSummary ??
     props.runtimeSummary?.divergencePosture ??
     "Inspect runtime posture, pick the current work item, and resolve whatever still prevents trustworthy continuation.";
@@ -111,13 +139,51 @@ export function ExecutionWorkspace(props: ExecutionWorkspaceProps) {
           </div>
           <div className="signal-digest-card">
             <span className="context-label">Approvals</span>
-            <strong>{props.approvalRequests.length}</strong>
-            <p>{props.approvalRequests[0]?.title ?? "No approval request is blocking execution."}</p>
+            <strong>{primaryCommandLabel}</strong>
+            <p>
+              {firstExecutionString(
+                postureSummary.waitingOn,
+                postureSummary.nextAction,
+                primaryCommandDescription,
+                props.approvalRequests[0]?.title
+              ) ?? "No approval request is blocking execution."}
+            </p>
+          </div>
+          <div className="signal-digest-card">
+            <span className="context-label">Orchestration</span>
+            <strong>{selectedPlanId}</strong>
+            <p>
+              {firstExecutionString(postureSummary.waitingOn, postureSummary.nextAction, latestStepSummary.capability) ??
+                "No orchestration posture is currently attached to this execution context."}
+            </p>
+          </div>
+          <div className="signal-digest-card">
+            <span className="context-label">Verification</span>
+            <strong>{String(verificationCounts.verifiedCount ?? 0)}</strong>
+            <p>
+              {firstExecutionString(
+                latestStepSummary.reconciliationStatus,
+                executionRecord(planVerification.latestEvidenceSummary).status
+              ) ?? "No verification evidence is projected yet."}
+            </p>
           </div>
         </div>
       </section>
     </div>
   );
+}
+
+function executionRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function firstExecutionString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.length > 0) {
+      return value;
+    }
+  }
+  return null;
 }
 
 function toneForWorkState(

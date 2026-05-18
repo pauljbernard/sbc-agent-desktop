@@ -573,6 +573,9 @@ export type WorkWorkspaceProps = {
   selectedWorkItem: WorkItemDetailDto | null;
   selectedWorkItemPlan: WorkItemPlanDto | null;
   selectedWorkflowRecord: WorkflowRecordDto | null;
+  orchestrationFocus: Record<string, unknown> | null;
+  orchestrationSnapshot: Record<string, unknown> | null;
+  planVerification: Record<string, unknown> | null;
   pendingWorkItemFocusId: string | null;
   clearPendingWorkItemFocusId: () => void;
   setSelectedWorkItemId: (workItemId: string) => void;
@@ -597,6 +600,9 @@ export function WorkWorkspace({
   selectedWorkItem,
   selectedWorkItemPlan,
   selectedWorkflowRecord,
+  orchestrationFocus,
+  orchestrationSnapshot,
+  planVerification,
   pendingWorkItemFocusId,
   clearPendingWorkItemFocusId,
   setSelectedWorkItemId,
@@ -628,15 +634,59 @@ export function WorkWorkspace({
     selectedWorkItem ? workItems.find((item) => item.workItemId === selectedWorkItem.workItemId) ?? null : null;
   const selectedWorkItemLinkedApproval =
     selectedWorkItem?.linkedEntities.find((entity) => entity.entityType === "approval") ?? null;
+  const orchestrationFocusRecord = workspaceRecord(orchestrationFocus);
+  const orchestrationSnapshotRecord = workspaceRecord(orchestrationSnapshot);
+  const orchestrationPostureSummary = workspaceRecord(orchestrationSnapshotRecord.postureSummary);
+  const latestOrchestrationStepSummary = workspaceRecord(orchestrationSnapshotRecord.latestStepSummary);
+  const planVerificationRecord = workspaceRecord(planVerification);
+  const verificationCounts = workspaceRecord(planVerificationRecord.verificationCounts);
+  const selectedWorkItemOrchestrationApprovalId = firstWorkspaceString(
+    orchestrationFocusRecord.approvalId,
+    workspaceRecord(orchestrationFocusRecord.approvalSummary).approvalId,
+    orchestrationSnapshotRecord.approvalId,
+    workspaceRecord(orchestrationSnapshotRecord.approvalSummary).approvalId
+  );
   const fallbackAwaitingApproval =
     selectedWorkItemSummary && selectedWorkItemSummary.approvalCount > 0
       ? approvalRequests.find((request) => request.state === "awaiting") ?? null
       : null;
-  const selectedWorkItemApprovalId = selectedWorkItemLinkedApproval?.entityId ?? fallbackAwaitingApproval?.requestId ?? null;
+  const selectedWorkItemApprovalId =
+    selectedWorkItemLinkedApproval?.entityId ??
+    selectedWorkItemOrchestrationApprovalId ??
+    fallbackAwaitingApproval?.requestId ??
+    null;
   const selectedWorkItemApprovalSummary = selectedWorkItemApprovalId
     ? approvalRequests.find((request) => request.requestId === selectedWorkItemApprovalId) ?? null
     : null;
   const selectedWorkItemApprovalState = selectedWorkItemApprovalSummary?.state ?? "none";
+  const selectedPlanId =
+    firstWorkspaceString(
+      orchestrationFocusRecord.planId,
+      workspaceRecord(orchestrationFocusRecord.plan).id,
+      orchestrationSnapshotRecord.planId
+    ) ?? "none";
+  const orchestrationAction =
+    firstWorkspaceString(orchestrationFocusRecord.action, orchestrationPostureSummary.nextAction) ?? "inspect";
+  const orchestrationWaitingOn =
+    firstWorkspaceString(orchestrationPostureSummary.waitingOn, orchestrationFocusRecord.waitingOn) ?? "none";
+  const orchestrationReconciliation =
+    firstWorkspaceString(latestOrchestrationStepSummary.reconciliationStatus) ?? "unknown";
+  const orchestrationPrimaryCommandLabel =
+    firstWorkspaceString(
+      orchestrationFocusRecord.primaryCommandLabel,
+      workspaceRecord(orchestrationFocusRecord.primaryCommand).label,
+      orchestrationSnapshotRecord.primaryCommandLabel,
+      workspaceRecord(orchestrationSnapshotRecord.primaryCommand).label
+    ) ?? "Inspect";
+  const orchestrationPrimaryCommandDescription =
+    firstWorkspaceString(
+      orchestrationFocusRecord.primaryCommandDescription,
+      workspaceRecord(orchestrationFocusRecord.primaryCommand).description,
+      orchestrationSnapshotRecord.primaryCommandDescription,
+      workspaceRecord(orchestrationSnapshotRecord.primaryCommand).description
+    ) ?? "No orchestration command description is currently available.";
+  const orchestrationApprovalState =
+    firstWorkspaceString(orchestrationWaitingOn, orchestrationFocusRecord.status, orchestrationSnapshotRecord.status) ?? "none";
 
   useEffect(() => {
     if (!pendingWorkItemFocusId || selectedWorkItem?.workItemId !== pendingWorkItemFocusId || !selectedWorkflowRecord) {
@@ -740,6 +790,10 @@ export function WorkWorkspace({
               <ContextBlock label="Waiting" value={selectedWorkItem.waitingReason ?? "None"} />
               <ContextBlock label="Runtime" value={selectedWorkItem.runtimeSummary} />
               <ContextBlock label="Source Relationship" value={selectedWorkItem.sourceRelationship} />
+              <ContextBlock label="Plan" value={selectedPlanId} />
+              <ContextBlock label="Action" value={orchestrationAction} />
+              <ContextBlock label="Waiting On" value={orchestrationWaitingOn} />
+              <ContextBlock label="Verified Steps" value={String(verificationCounts.verifiedCount ?? 0)} />
             </div>
             {selectedWorkItem.correctiveContext ? (
               <section className="linked-entities-panel">
@@ -754,7 +808,8 @@ export function WorkWorkspace({
                     label="Approval Posture"
                     value={selectedWorkItem.correctiveContext.approvalPosture ?? "unknown"}
                   />
-                  <ContextBlock label="Linked Approval" value={selectedWorkItemApprovalState} />
+                  <ContextBlock label="Linked Approval" value={orchestrationApprovalState} />
+                  <ContextBlock label="Primary Command" value={orchestrationPrimaryCommandLabel} />
                   <ContextBlock
                     label="Alignment"
                     value={
@@ -915,9 +970,10 @@ export function WorkWorkspace({
                   className="starter-chip"
                   disabled={isDecidingApproval}
                   onClick={() => void submitApprovalDecisionForRequest(selectedWorkItemApprovalId, "approve")}
+                  title={orchestrationPrimaryCommandDescription}
                   type="button"
                 >
-                  {isDecidingApproval ? "Submitting..." : "Approve Corrective Work"}
+                  {isDecidingApproval ? "Submitting..." : orchestrationPrimaryCommandLabel}
                 </button>
               ) : null}
               {selectedWorkItemApprovalId && selectedWorkItemApprovalSummary?.state === "awaiting" ? (
@@ -927,7 +983,7 @@ export function WorkWorkspace({
                   onClick={() => void submitApprovalDecisionForRequest(selectedWorkItemApprovalId, "deny")}
                   type="button"
                 >
-                  {isDecidingApproval ? "Submitting..." : "Deny Corrective Work"}
+                  {isDecidingApproval ? "Submitting..." : "Deny Approval"}
                 </button>
               ) : null}
               <button className="starter-chip" onClick={openSteerWorkItemDialog} type="button">
@@ -976,6 +1032,10 @@ export function WorkWorkspace({
               <ContextBlock label="Reconciliation" value={selectedWorkflowRecord.reconciliationState} />
               <ContextBlock label="Closure" value={selectedWorkflowRecord.closureReadiness} />
               <ContextBlock label="Phase" value={selectedWorkflowRecord.phase} />
+              <ContextBlock label="Plan" value={selectedPlanId} />
+              <ContextBlock label="Action" value={orchestrationAction} />
+              <ContextBlock label="Waiting On" value={orchestrationWaitingOn} />
+              <ContextBlock label="Step Reconciliation" value={orchestrationReconciliation} />
             </div>
             <p className="lead-copy">{selectedWorkflowRecord.closureSummary}</p>
             <section className="linked-entities-panel">
@@ -1088,4 +1148,17 @@ function formatCorrectiveSummary(correctiveContext: CorrectiveContextDto | null 
   }
 
   return "This work item exists to execute a governed reconciliation correction.";
+}
+
+function workspaceRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function firstWorkspaceString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.length > 0) {
+      return value;
+    }
+  }
+  return null;
 }

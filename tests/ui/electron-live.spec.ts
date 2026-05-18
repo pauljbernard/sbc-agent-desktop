@@ -269,17 +269,19 @@ async function railOptionLabels(listbox: Locator): Promise<string[]> {
 async function selectConversationThread(page: Page, title: string): Promise<void> {
   const listPanel = page.locator(".conversation-list-panel");
   await expect(listPanel).toContainText(title, { timeout: 15000 });
+  const searchInput = listPanel.getByRole("textbox", { name: "Search conversation threads" });
+  await searchInput.fill(title);
   const row = listPanel.locator(".browser-table-row").filter({ hasText: title }).first();
   await row.scrollIntoViewIfNeeded();
   const detailPanel = page.locator(".conversation-browse-detail-panel");
-  await expect(detailPanel).not.toContainText("Select a thread first.", { timeout: 15000 });
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    await row.evaluate((element: HTMLElement) => element.click());
-    await expect(row).toHaveClass(/selected|active/, { timeout: 15000 });
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await row.click({ force: true, timeout: 5000 });
     try {
+      await expect(row).toHaveClass(/selected|active/, { timeout: 5000 });
       await expect(detailPanel).toContainText(title, { timeout: 3000 });
       return;
     } catch {
+      await row.evaluate((element: HTMLElement) => element.click());
       await page.waitForTimeout(350);
     }
   }
@@ -326,6 +328,44 @@ async function currentAwaitingApprovalRequestId(page: Page): Promise<string> {
     throw new Error(`No awaiting approval request found. Requests: ${JSON.stringify(requests)}`);
   }
   return request.requestId;
+}
+
+async function approvalRequestIdForThreadWorkItem(page: Page, threadTitle: string): Promise<string> {
+  return page.evaluate(async (targetTitle) => {
+    const summary = await window.sbclAgentDesktop.query.environmentSummary();
+    const environmentId = summary.data.environmentId;
+    const threads = await window.sbclAgentDesktop.query.threadList(environmentId);
+    const thread = threads.data.find((entry) => entry.title === targetTitle);
+    if (!thread) {
+      throw new Error(`No thread found for ${targetTitle}`);
+    }
+    const threadDetail = await window.sbclAgentDesktop.query.threadDetail(thread.threadId, environmentId);
+    const turnId = threadDetail.data.turns.at(-1)?.turnId;
+    if (!turnId) {
+      throw new Error(`No turn found for ${targetTitle}`);
+    }
+    const turnDetail = await window.sbclAgentDesktop.query.turnDetail(turnId, environmentId);
+    const workItemId = turnDetail.data.workItemIds[0] ?? null;
+    const approvals = await window.sbclAgentDesktop.query.approvalRequestList(environmentId);
+    const awaiting = approvals.data.filter((entry) => entry.state === "awaiting");
+    for (const approval of awaiting) {
+      const detail = await window.sbclAgentDesktop.query.approvalRequestDetail(approval.requestId, environmentId);
+      if (workItemId && workItemId !== "work-item" && detail.data.linkedEntities.some((entity) => entity.entityType === "work-item" && entity.entityId === workItemId)) {
+        return approval.requestId;
+      }
+      const haystack = [approval.title, approval.summary, detail.data.title, detail.data.requestedAction, detail.data.rationale]
+        .filter((value) => typeof value === "string")
+        .join(" ")
+        .toLowerCase();
+      if (haystack.includes("create governed project artifacts") || haystack.includes("governed project authoring")) {
+        return approval.requestId;
+      }
+    }
+    if (awaiting.length === 1) {
+      return awaiting[0].requestId;
+    }
+    throw new Error(`No awaiting approval request matched thread ${targetTitle}`);
+  }, threadTitle);
 }
 
 async function approveNewRequest(page: Page, previousIds: string[]): Promise<string> {
@@ -1166,6 +1206,41 @@ test.describe("live sbcl-agent desktop shell", () => {
     }
   });
 
+  test("surfaces and completes governed editor approval through context chat in mock mode", async () => {
+    const { app, page } = await launchDesktop({
+      SBCL_AGENT_ADAPTER: "mock",
+      TUTOR_CODEX_PROVIDER: "mock"
+    });
+    try {
+      const prompt = "append (+ 1 1) to the editor surface.";
+      await createConversationSession(page, "Governed Editor Approval Session");
+
+      const composer = page.locator(".conversation-composer-panel .conversation-draft-editor");
+      const transcript = page.locator(".conversation-thread-transcript-panel");
+      const sendButton = page.getByRole("button", { name: "Send message", exact: true }).last();
+
+      await composer.fill(prompt);
+      await sendButton.click();
+
+      await expect(transcript).toContainText(prompt, { timeout: 15000 });
+      await expect(transcript).toContainText(
+        'This action requires approval before I can continue. Reply "yes" to approve workspace-write and I will continue.',
+        { timeout: 15000 }
+      );
+      await expect(composer).toHaveValue("", { timeout: 15000 });
+
+      await composer.fill("yes");
+      await sendButton.click();
+
+      await expect(transcript).toContainText("Appended (+ 1 1) to the editor now.", {
+        timeout: 15000
+      });
+      await expect(composer).toHaveValue("", { timeout: 15000 });
+    } finally {
+      await closeDesktop(app, page);
+    }
+  });
+
   test("anchors short transcript history against the composer instead of the top of the transcript panel with the mock provider", async () => {
     const { app, page } = await launchDesktop({
       TUTOR_CODEX_PROVIDER: "mock"
@@ -1700,28 +1775,22 @@ test.describe("live sbcl-agent desktop shell", () => {
       TUTOR_CODEX_PROVIDER: "mock"
     });
     try {
-      await createConversationSession(page, "Governed Project Authoring Session");
+      const threadTitle = `Governed Project Authoring Session ${Date.now()}`;
+      await createConversationSession(page, threadTitle);
 
       const composer = page.locator(".conversation-composer-panel .conversation-draft-editor");
       const transcript = page.locator(".conversation-thread-transcript-panel");
       const detailPanel = page.locator(".conversation-browse-detail-panel");
 
-
-      const initialApprovalIds = await approvalRequestIds(page);
-
       await openWorkspace(page, "Conversations");
-      await selectConversationThread(page, "Governed Project Authoring Session");
+      await selectConversationThread(page, threadTitle);
       await composer.fill("please create governed project artifacts");
       await page.getByRole("button", { name: "Send message", exact: true }).last().click();
 
       await expect(transcript).toContainText("I have prepared 1 proposed action.", { timeout: 15000 });
       await expect(detailPanel).toContainText("Approvals", { timeout: 15000 });
-      const createApprovalId = await approveNewRequest(page, initialApprovalIds);
-      await page.evaluate(async (requestId) => {
-        const summary = await window.sbclAgentDesktop.query.environmentSummary();
-        const environmentId = summary.data.environmentId;
-        await window.sbclAgentDesktop.command.approveRequest({ environmentId, requestId });
-      }, createApprovalId);
+      await composer.fill("yes");
+      await page.getByRole("button", { name: "Send message", exact: true }).last().click();
       await expect.poll(async () => {
         return page.evaluate(async () => {
           const summary = await window.sbclAgentDesktop.query.environmentSummary();
@@ -2769,9 +2838,11 @@ test.describe("live sbcl-agent desktop shell", () => {
 
       const sidebar = page.locator("aside.sidebar").first();
       await sidebar.getByRole("button", { name: "Listener", exact: true }).first().click();
-      await page.locator(".runtime-eval-panel").scrollIntoViewIfNeeded();
-      await page.locator(".runtime-editor").fill("(+ 20 22)");
-      await page.getByRole("button", { name: "Run Form", exact: true }).click();
+      await expect(page.locator("body")).toContainText("Listener", { timeout: 15000 });
+      await expect(page.getByRole("button", { name: "Run Form", exact: true })).toBeVisible();
+      await page.locator(".runtime-editor").first().fill("(+ 20 22)");
+      await page.getByRole("button", { name: "Run Form", exact: true }).focus();
+      await page.keyboard.press("Enter");
 
       await expect.poll(async () => {
         return page.evaluate(async ({ environmentId, existingWorkItemIds }) => {
@@ -2813,8 +2884,8 @@ test.describe("live sbcl-agent desktop shell", () => {
         });
       }, baseline)) as { workItemId: string; title: string; approvalTitle: string; requestId: string };
 
-      await openWorkspace(page, "Approvals");
-      await expect(page.locator(".approvals-list-panel")).toContainText("Governed Decisions", { timeout: 15000 });
+      await openWorkspace(page, "Notifications");
+      await expect(page.locator(".operate-table-panel")).toContainText(correctiveTarget.title, { timeout: 15000 });
       await page.evaluate(async ({ environmentId, requestId }) => {
         await window.sbclAgentDesktop.command.approveRequest({ environmentId, requestId });
       }, { environmentId: baseline.environmentId, requestId: correctiveTarget.requestId });

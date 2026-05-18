@@ -48,6 +48,9 @@ export interface ConversationSurfacePacketInput {
   selectedConversationSection: string | null;
   selectedBrowserDomain: string | null;
   environmentFocus: EnvironmentFocusState;
+  orchestrationFocus: Record<string, unknown> | null;
+  orchestrationSnapshot: Record<string, unknown> | null;
+  planVerification: Record<string, unknown> | null;
   selectedThread: ThreadDetailDto | null;
   selectedThreadId: string | null;
   conversationDraft: string;
@@ -98,6 +101,9 @@ export function buildConversationSurfaceContext(input: ConversationSurfacePacket
     selectedConversationSection,
     selectedBrowserDomain,
     environmentFocus,
+    orchestrationFocus,
+    orchestrationSnapshot,
+    planVerification,
     selectedThread,
     selectedThreadId,
     conversationDraft,
@@ -131,6 +137,11 @@ export function buildConversationSurfaceContext(input: ConversationSurfacePacket
       incidentId: environmentFocus.incidentId ?? null,
       artifactId: environmentFocus.artifactId ?? null,
       eventCursor: environmentFocus.eventCursor ?? null
+    },
+    orchestration: {
+      focus: summarizeOrchestrationRecord(orchestrationFocus),
+      snapshot: summarizeOrchestrationRecord(orchestrationSnapshot),
+      verification: summarizeOrchestrationRecord(planVerification)
     },
     thread: selectedThread
       ? {
@@ -275,6 +286,25 @@ export function buildConversationSurfaceContext(input: ConversationSurfacePacket
         }
       : null
   };
+}
+
+function summarizeOrchestrationRecord(
+  value: Record<string, unknown> | null
+): Record<string, unknown> | null {
+  if (!value) {
+    return null;
+  }
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => {
+      if (entry == null) {
+        return false;
+      }
+      if (typeof entry === "string" || typeof entry === "number" || typeof entry === "boolean") {
+        return true;
+      }
+      return Array.isArray(entry) || typeof entry === "object";
+    })
+  );
 }
 
 export function buildConversationSurfaceActions(input: ConversationSurfacePacketInput): Array<Record<string, unknown>> {

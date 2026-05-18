@@ -35,6 +35,7 @@ The environment frame is the persistent top-level structure of the application.
 It contains:
 
 - environment selector
+- visible environment identity and purpose posture
 - primary navigation
 - global attention strip
 - workspace canvas
@@ -50,6 +51,7 @@ Workspace domains are the primary navigable product areas.
 The initial workspace set is:
 
 - Environment
+- Projects
 - Conversations
 - Runtime
 - Work
@@ -69,6 +71,7 @@ Entity views are the stable detail surfaces for governed objects.
 Initial entity view types:
 
 - environment detail
+- project detail
 - thread detail
 - turn detail
 - runtime scope detail
@@ -100,6 +103,7 @@ Utility surfaces:
 - direct evaluation surface
 - search surface
 - quick-open entity surface
+- context-chat project targeting editor
 
 ## Primary Navigation Structure
 
@@ -158,6 +162,8 @@ Purpose:
 Primary content:
 
 - environment summary
+- agent constitution
+- capability and dependency posture
 - source posture
 - image posture
 - workflow posture
@@ -165,6 +171,22 @@ Primary content:
 - active context
 - recent evidence
 - active tasks and workers
+
+### Projects Workspace
+
+Purpose:
+
+- manage governed project authority and the frame of reference that shapes planning
+
+Primary content:
+
+- project list
+- selected project summary
+- constitution and requirements posture
+- architecture and design guidance
+- quality gates and release readiness
+- linked work-items, incidents, and artifacts
+- current chat targeting posture for explicit or inferred project selection
 
 ### Conversations Workspace
 
@@ -179,6 +201,7 @@ Primary content:
 - selected thread detail
 - selected turn timeline
 - linked operations and artifacts
+- current planning-context frame including project selection and uncertainty posture
 
 The thread list must support stateful supervision at scale, including views for:
 
@@ -288,6 +311,9 @@ Users must be able to access entities through at least four routes:
 
 The IA must make the following relationships easy to traverse:
 
+- project -> work-item
+- project -> incident
+- project -> artifact
 - thread -> turn
 - turn -> operation
 - turn -> artifact
@@ -315,6 +341,8 @@ Attention categories:
 - failed
 - quarantined
 - awaiting colder validation
+- low-confidence project selection
+- degraded capability posture
 
 Attention should also be aggregatable by thread, actor, and work type so users can supervise concurrent development rather than chase isolated notifications.
 

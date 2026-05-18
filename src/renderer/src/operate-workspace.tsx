@@ -50,6 +50,7 @@ export type OperateWorkspaceProps = {
   summary: EnvironmentSummaryDto | null;
   status: EnvironmentStatusDto | null;
   approvalRequests: ApprovalRequestSummaryDto[];
+  orchestrationInbox: Record<string, unknown>[];
   selectedApprovalId: string | null;
   selectedArtifactId: string | null;
   selectedIncidentId: string | null;
@@ -63,6 +64,13 @@ export type OperateWorkspaceProps = {
 };
 
 type TriageSource = "Approval" | "Incident" | "Blocked Work" | "Queue";
+type OrchestrationAction =
+  | "grant-approval"
+  | "operator-review"
+  | "repair-or-replan"
+  | "verify-and-continue"
+  | "continue"
+  | "inspect";
 
 interface TriageRow {
   key: string;
@@ -127,6 +135,7 @@ export function OperateWorkspace({
   summary,
   status,
   approvalRequests,
+  orchestrationInbox,
   selectedApprovalId,
   selectedArtifactId,
   selectedIncidentId,
@@ -227,6 +236,55 @@ export function OperateWorkspace({
       });
     }
 
+    for (const entry of orchestrationInbox) {
+      const record = operateRecord(entry);
+      const latestStepSummary = operateRecord(record.latestStepSummary);
+      const latestEvidenceSummary = operateRecord(record.latestEvidenceSummary);
+      const planId = firstOperateString(record.planId) ?? "unknown-plan";
+      const workflowRecordId = firstOperateString(record.workflowRecordId);
+      const workItemId = firstOperateString(record.workItemId);
+      const action = firstOperateString(record.action) as OrchestrationAction | null;
+      const urgency = firstOperateString(record.urgency);
+      const waitingOn = firstOperateString(record.waitingOn);
+      const nextAction = firstOperateString(record.nextAction);
+      const commandLabel = firstOperateString(record.primaryCommandLabel);
+      const commandDescription = firstOperateString(
+        record.primaryCommandDescription,
+        operateRecord(record.primaryCommand).description
+      );
+      const queueRow: TriageRow = {
+        key: `orchestration:${planId}`,
+        source: "Queue",
+        title: firstOperateString(record.goal, latestStepSummary.goal) ?? planId,
+        timestamp: firstOperateString(record.updatedAt, latestEvidenceSummary.completedAt),
+        score: scoreForOrchestrationUrgency(urgency),
+        state: firstOperateString(record.status, latestStepSummary.status) ?? "open",
+        priority: priorityForOrchestrationUrgency(urgency),
+        reason:
+          firstOperateString(nextAction, waitingOn, latestStepSummary.resultSummary, latestEvidenceSummary.status) ??
+          "Orchestration requires operator attention.",
+        destination: "Operate",
+        actionLabel: commandLabel ?? actionLabelForOrchestration(action),
+        tone: toneForOrchestrationUrgency(urgency, action),
+        requestId:
+          action === "grant-approval" ? firstOperateString(record.approvalId, record.requestId) ?? undefined : undefined,
+        workItemId: workItemId ?? undefined,
+        facts: [
+          ["Plan", planId],
+          ["Workflow", workflowRecordId ?? "none"],
+          ["Action", commandLabel ?? action ?? "inspect"],
+          ["Urgency", urgency ?? "low"],
+          ["Waiting", waitingOn ?? "none"],
+          ["Command", firstOperateString(record.primaryCommandOperator) ?? "none"],
+          ["Detail", commandDescription ?? "No backend command description provided."]
+        ]
+      };
+      const existing = rowByKey.get(queueRow.key);
+      if (!existing || queueRow.score >= existing.score) {
+        rowByKey.set(queueRow.key, queueRow);
+      }
+    }
+
     for (const item of actionQueue) {
       const key = item.key;
       const queueRow: TriageRow = {
@@ -271,7 +329,7 @@ export function OperateWorkspace({
     }
 
     return Array.from(rowByKey.values());
-  }, [actionQueue, approvalRequests, availableApprovalRequests, incidents, workItems, summary.approvals]);
+  }, [actionQueue, approvalRequests, availableApprovalRequests, incidents, orchestrationInbox, workItems, summary.approvals]);
 
   const [selectedTriageKey, setSelectedTriageKey] = useState<string | null>(triageRows[0]?.key ?? null);
   const lastSyncedFocusKeyRef = useRef<string | null>(null);
@@ -533,4 +591,73 @@ export function OperateWorkspace({
       ) : null}
     </div>
   );
+}
+
+function operateRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function firstOperateString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.length > 0) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function scoreForOrchestrationUrgency(urgency: string | null): number {
+  switch (urgency) {
+    case "high":
+      return 140;
+    case "medium":
+      return 100;
+    default:
+      return 60;
+  }
+}
+
+function priorityForOrchestrationUrgency(urgency: string | null): "High" | "Medium" | "Low" {
+  switch (urgency) {
+    case "high":
+      return "High";
+    case "medium":
+      return "Medium";
+    default:
+      return "Low";
+  }
+}
+
+function toneForOrchestrationUrgency(
+  urgency: string | null,
+  action: OrchestrationAction | null
+): AttentionTone {
+  if (action === "grant-approval" || action === "repair-or-replan") {
+    return "warning";
+  }
+  switch (urgency) {
+    case "high":
+      return "danger";
+    case "medium":
+      return "warning";
+    default:
+      return "steady";
+  }
+}
+
+function actionLabelForOrchestration(action: OrchestrationAction | null): string {
+  switch (action) {
+    case "grant-approval":
+      return "Review Approval";
+    case "operator-review":
+      return "Review Orchestration";
+    case "repair-or-replan":
+      return "Repair Orchestration";
+    case "verify-and-continue":
+      return "Verify And Continue";
+    case "continue":
+      return "Continue Orchestration";
+    default:
+      return "Inspect Orchestration";
+  }
 }

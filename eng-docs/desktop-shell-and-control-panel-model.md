@@ -69,6 +69,7 @@ The current `sbcl-agent-ux` application becomes the first hosted application ins
 Its responsibilities become:
 
 - environment posture and orientation
+- project posture and explicit chat project targeting
 - operational overview
 - approvals and blocked-work visibility
 - incidents and recovery coordination
@@ -114,6 +115,7 @@ The control panel should primarily reason about:
 
 - current operational posture
 - active continuation
+- active project frame of reference
 - incidents
 - approvals
 - evidence
@@ -181,6 +183,7 @@ The current live direction is:
 
 - top-level shell items stay shallow and direct
 - `Operate` is the consolidated operational instrument
+- `Projects` is the governed project and context instrument
 - `Browser` is the consolidated introspection instrument
 - `Conversations` and `Configuration` remain separate focused surfaces
 
@@ -193,6 +196,7 @@ The existing environment-first orientation work is valuable and should remain in
 Preserve:
 
 - environment posture landing
+- project-aware planning posture
 - operational brief
 - attention pressure model
 - evidence visibility
@@ -220,11 +224,19 @@ The shell will likely need first-class read/command surfaces for:
 The control panel can continue to consume:
 
 - environment summary
+- project list and project detail
 - workspace summary
 - desktop model
 - incident detail
 - approval detail
 - workflow and artifact read models
+
+It should also consume and render:
+
+- `agent-constitution`
+- `capability-inventory`
+- explicit context-chat project targeting state
+- planning-context authority and uncertainty posture where the backend already computes them
 
 But the shell should stop being represented only as one big control-panel read model.
 

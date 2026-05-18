@@ -12,6 +12,7 @@ The architecture must support:
 - future Windows portability
 - strong alignment with the `sbcl-agent` environment and service model
 - separation between product architecture and platform-specific implementation details
+- first-class planning and context engineering surfaces instead of treating them as hidden prompt assembly
 
 ## Architecture Goals
 
@@ -77,19 +78,28 @@ flowchart LR
     Chat["ContextChatActor"]
     Thread["thread / turn state"]
     Retrieval["retrieval dossier"]
+    Planner["planning-context packet"]
     Runtime["runtime state"]
     Policy["policy posture"]
+    Project["project authority"]
+    Capability["capability inventory"]
     Provider["provider execution"]
 
     UI --> Chat
     Chat --> Thread
     Chat --> Retrieval
+    Chat --> Planner
     Chat --> Runtime
     Chat --> Policy
-    Thread --> Provider
+    Chat --> Project
+    Chat --> Capability
+    Thread --> Planner
     Retrieval --> Provider
-    Runtime --> Provider
-    Policy --> Provider
+    Planner --> Provider
+    Runtime --> Planner
+    Policy --> Planner
+    Project --> Planner
+    Capability --> Planner
 ```
 
 For the federated employee/contractor node model, the desktop is additionally locked to a strict boundary:
@@ -115,6 +125,9 @@ It owns:
 - task and worker state
 - policy and approval state
 - canonical event evidence
+- `agent-constitution`
+- `capability-inventory`
+- explicit context-chat project targeting
 
 ## Layer 2: Public Service Interface Layer
 
@@ -125,12 +138,21 @@ It should expose:
 - environment service
 - conversation service
 - runtime service
+- retrieval service
 - workflow service
+- project service
 - artifact service
 - incident service
 - task service
 - approval service
 - event stream service
+
+For planning-intensive UX, this layer must also expose enough stable context for the desktop to project the same planning frame as the backend:
+
+- environment summaries that include `agent-constitution` and `capability-inventory`
+- project authority and linked-project posture
+- context-chat project targeting state
+- contradiction-aware uncertainty and selection posture where the backend already computes it
 
 ## Layer 3: Electron Desktop Application Core
 
@@ -147,6 +169,12 @@ It should own:
 - local desktop persistence for non-authoritative UI state
 - design-system implementation
 - command routing to public services
+
+It should not own the canonical planning packet or invent its own substitute for backend context engineering. Its role is to:
+
+- select and present the right environment/project frame
+- let the operator steer that frame explicitly
+- visualize the backend's authority, uncertainty, capability, and workflow posture
 
 This layer should be as platform-neutral as reasonably possible, while being concretely split into:
 

@@ -69,6 +69,95 @@ describe("mock environment contract", () => {
     expect(sent.data.assistantMessage).toContain("hello from qa");
   });
 
+  it("surfaces approval-required editor append requests through conversation send", () => {
+    const created = commandCreateConversationThread({
+      environmentId: defaultEnvironmentId,
+      title: "Governed Editor Approval Thread",
+      summary: "Thread used for approval contract coverage."
+    });
+
+    const sent = commandSendConversationMessage({
+      environmentId: defaultEnvironmentId,
+      threadId: created.data.threadId,
+      prompt: "append (+ 1 1) to the editor surface."
+    });
+
+    expect(sent.status).toBe("awaiting_approval");
+    expect(sent.data.threadId).toBe(created.data.threadId);
+    expect(sent.data.pendingApproval).toMatchObject({
+      actorMessageId: "actor-message-editor-approval",
+      approvalId: "approval-binding-shift",
+      policyIds: ["workspace-write"]
+    });
+  });
+
+  it("recognizes equivalent governed editor append wording", () => {
+    const created = commandCreateConversationThread({
+      environmentId: defaultEnvironmentId,
+      title: "Governed Editor Approval Variant Thread",
+      summary: "Thread used for approval wording coverage."
+    });
+
+    const sent = commandSendConversationMessage({
+      environmentId: defaultEnvironmentId,
+      threadId: created.data.threadId,
+      prompt: "append (+ 1 1) into the surface editor."
+    });
+
+    expect(sent.status).toBe("awaiting_approval");
+    expect(sent.data.pendingApproval).toMatchObject({
+      actorMessageId: "actor-message-editor-approval",
+      approvalId: "approval-binding-shift",
+      policyIds: ["workspace-write"]
+    });
+  });
+
+  it("routes evaluate prompts through the mock runtime contract", () => {
+    const created = commandCreateConversationThread({
+      environmentId: defaultEnvironmentId,
+      title: "Runtime Evaluation Thread",
+      summary: "Thread used for runtime evaluation coverage."
+    });
+
+    const sent = commandSendConversationMessage({
+      environmentId: defaultEnvironmentId,
+      threadId: created.data.threadId,
+      prompt: "evaluate (defun foo (x)(x-1))"
+    });
+
+    expect(sent.status).toBe("ok");
+    expect(sent.data.threadId).toBe(created.data.threadId);
+    expect(sent.data.runtimeReply).toMatchObject({
+      evaluationId: "eval-ok",
+      outcome: "ok"
+    });
+    expect(sent.data.assistantMessage).toBe("foo");
+  });
+
+  it("retains a simple defun across subsequent evaluate turns", () => {
+    const created = commandCreateConversationThread({
+      environmentId: defaultEnvironmentId,
+      title: "Stateful Runtime Evaluation Thread",
+      summary: "Thread used for sequential runtime evaluation coverage."
+    });
+
+    const defined = commandSendConversationMessage({
+      environmentId: defaultEnvironmentId,
+      threadId: created.data.threadId,
+      prompt: "evaluate (defun foo (x)(* 1 x))"
+    });
+    const invoked = commandSendConversationMessage({
+      environmentId: defaultEnvironmentId,
+      threadId: created.data.threadId,
+      prompt: "evaluate (foo 5)"
+    });
+
+    expect(defined.status).toBe("ok");
+    expect(defined.data.assistantMessage).toBe("foo");
+    expect(invoked.status).toBe("ok");
+    expect(invoked.data.assistantMessage).toBe("5");
+  });
+
   it("projects runtime inspection and source preview read models", () => {
     const inspection = queryRuntimeInspectSymbol({
       environmentId: defaultEnvironmentId,

@@ -38,6 +38,17 @@ This matters because modern engineering work is no longer just file manipulation
 
 Agents can inspect, evaluate, mutate, stage, and explain work across multiple layers. Once that becomes true, the user needs a system that keeps those layers aligned instead of scattering them across disconnected tools.
 
+That alignment now includes planning context as well as execution context. The backend no longer builds provider-bound requests from transcript alone; it constructs a canonical planning packet that distinguishes:
+
+- task frame
+- authority state
+- decisive evidence
+- uncertainty and obligations
+- strategy posture
+- optional support
+
+`Surface` does not expose that packet as a single raw object, but it increasingly presents the environment, project, conversation, execution, and orchestration surfaces that produce it.
+
 ## Realtime Introspective Environment Architecture
 
 The diagram below shows the architectural distinction that drives the whole system. `sbcl-agent` and `Surface` are not arranged like a traditional external agent supervising a target environment from the outside. The agent executes inside the same live SBCL environment that holds runtime state, transcript, memory, governance, evidence, and desktop state.
@@ -150,6 +161,8 @@ Threads and turns can carry:
 
 That means a conversation is not just "discussion about the work." It can be part of the durable record of how the work was inspected, changed, governed, and resolved.
 
+The backend also now supports explicit project-aware conversation framing. Context Chat can be anchored to zero, one, or many projects, and project ambiguity can be promoted into planning uncertainty instead of being silently ignored. The desktop already benefits from that richer project-aware backend contract even where the UX is still evolving.
+
 ## Conversational Context Architecture
 
 The conversation layer does not send only the current prompt to the model. It assembles live context from the Surface desktop, the SBCL environment, transcript history, and deliberate operator memory before a turn is executed.
@@ -192,6 +205,24 @@ It is where you inspect:
 - documentation
 
 This is one of the largest conceptual shifts for developers coming from file-first tooling. You do not begin from a directory tree because the system wants you to inspect what the environment actually is before assuming what the files probably mean.
+
+## Projects Are Now First-Class
+
+The environment is not only runtime-aware. It is also project-aware.
+
+Governed projects can now carry:
+
+- constitutions
+- requirements
+- feature specifications
+- architecture decisions
+- testing strategy
+- quality gates
+- release readiness
+- readiness obligations
+- linked work-items and incidents
+
+This matters because planning and execution are now grounded not only in environment posture but also in project authority and project readiness.
 
 ## The Listener Remains Central
 

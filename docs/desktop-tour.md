@@ -36,6 +36,7 @@ Docked panels are presented as a compact, scrollable selectable list at the top 
 Top-level workspaces:
 
 - Operate
+- Projects
 - Conversations
 - Browser
 - Execution
@@ -67,9 +68,9 @@ This keeps the main working surface at the top of the page instead of burying it
 `Surface` is designed to support one working sequence:
 
 1. orient to the environment
-2. inspect the live system or conversation state
+2. inspect the active project, live system, or conversation state
 3. act through browser, listener, or governed workflow
-4. review evidence, incidents, or closure posture
+4. review evidence, incidents, readiness, or closure posture
 
 That sequence is intentional. `Surface` is trying to reduce the gap between inspection, action, and proof.
 

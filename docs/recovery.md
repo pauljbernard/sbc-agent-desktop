@@ -14,6 +14,7 @@ Use it when the environment is degraded, interrupted, or carrying recovery work 
 - inspect severity and recovery state
 - read recovery summary and next action
 - inspect linked runtime and artifact context
+- inspect linked work-item, project, and workflow posture
 - understand whether the environment can safely resume execution
 
 ## Page Structure
@@ -36,3 +37,5 @@ Go here when:
 ## Goal
 
 Recovery is complete only when the environment can return to execution without hidden obligations.
+
+That now includes project and workflow obligations, not only raw runtime stability. A system can be technically alive while still carrying blocked governed work, unresolved readiness obligations, or contradictory project/workflow posture that should prevent confident continuation.

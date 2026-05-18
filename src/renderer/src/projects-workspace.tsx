@@ -9,6 +9,22 @@ import type {
 import { BrowserDataTable } from "./browser-data-table";
 import { Badge, PanelHeader } from "./surface-support";
 
+function projectRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function firstProjectString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (trimmed.length > 0) {
+        return trimmed;
+      }
+    }
+  }
+  return null;
+}
+
 function toneForProjectStatus(status: string): "active" | "steady" | "warning" | "danger" {
   switch (status) {
     case "active":
@@ -294,6 +310,7 @@ export function ProjectsWorkspace({
   selectedProjectDetail,
   currentProjectId,
   approvalRequests,
+  orchestrationInbox,
   workItems,
   isDecidingApproval,
   onSelectProject,
@@ -321,6 +338,7 @@ export function ProjectsWorkspace({
   selectedProjectDetail: ProjectDetailDto | null;
   currentProjectId: string | null;
   approvalRequests: ApprovalRequestSummaryDto[];
+  orchestrationInbox: Record<string, unknown>[];
   workItems: WorkItemSummaryDto[];
   isDecidingApproval: boolean;
   onSelectProject: (projectId: string) => void;
@@ -357,16 +375,53 @@ export function ProjectsWorkspace({
       : null)
     ?? workItems.find((item) => item.approvalCount > 0 && item.correctiveContext)
     ?? null;
-  const selectedCorrectiveApproval =
+  const orchestrationApprovalById = new Map(
+    orchestrationInbox
+      .map((entry) => {
+        const record = projectRecord(entry);
+        const approvalId = firstProjectString(record.approvalId, projectRecord(record.approvalSummary).approvalId);
+        return approvalId ? [approvalId, record] : null;
+      })
+      .filter((entry): entry is [string, Record<string, unknown>] => Array.isArray(entry))
+  );
+  const selectedCorrectiveOrchestration =
     (selectedCorrectiveWorkItem
+      ? orchestrationInbox
+          .map((entry) => projectRecord(entry))
+          .find(
+            (record) =>
+              firstProjectString(record.workItemId) === selectedCorrectiveWorkItem.workItemId &&
+              firstProjectString(record.primaryCommandOperator) === "desktop-task/approve-approval"
+          ) ?? null
+      : null)
+    ?? null;
+  const selectedCorrectiveApprovalId =
+    firstProjectString(
+      selectedCorrectiveOrchestration?.approvalId,
+      projectRecord(selectedCorrectiveOrchestration?.approvalSummary).approvalId
+    )
+    ?? (selectedCorrectiveWorkItem
       ? approvalRequests.find(
           (request) =>
             request.state === "awaiting"
             && request.title.trim().toLowerCase() === selectedCorrectiveWorkItem.title.trim().toLowerCase()
-        )
+        )?.requestId ?? null
       : null)
-    ?? approvalRequests.find((request) => request.state === "awaiting")
+    ?? approvalRequests.find((request) => request.state === "awaiting")?.requestId
     ?? null;
+  const selectedCorrectiveApproval = selectedCorrectiveApprovalId
+    ? approvalRequests.find((request) => request.requestId === selectedCorrectiveApprovalId) ?? null
+    : null;
+  const selectedCorrectiveCommandLabel =
+    firstProjectString(
+      selectedCorrectiveOrchestration?.primaryCommandLabel,
+      projectRecord(selectedCorrectiveOrchestration?.primaryCommand).label
+    ) ?? "Approve";
+  const selectedCorrectiveCommandDescription =
+    firstProjectString(
+      selectedCorrectiveOrchestration?.primaryCommandDescription,
+      projectRecord(selectedCorrectiveOrchestration?.primaryCommand).description
+    ) ?? "No orchestration command description is currently available.";
 
   return (
     <div className="projects-journey">
@@ -524,6 +579,18 @@ export function ProjectsWorkspace({
                       <dd>{row.value}</dd>
                     </div>
                   ))}
+                  {selectedCorrectiveOrchestration ? (
+                    <>
+                      <div className="detail-row">
+                        <dt>Primary Command</dt>
+                        <dd>{selectedCorrectiveCommandLabel}</dd>
+                      </div>
+                      <div className="detail-row">
+                        <dt>Command Detail</dt>
+                        <dd>{selectedCorrectiveCommandDescription}</dd>
+                      </div>
+                    </>
+                  ) : null}
                 </div>
                 {selectedCorrectiveApproval ? (
                   <div className="browser-action-strip">
@@ -539,9 +606,10 @@ export function ProjectsWorkspace({
                         className="starter-chip"
                         disabled={isDecidingApproval}
                         onClick={() => onSubmitApprovalDecision(selectedCorrectiveApproval.requestId, "approve")}
+                        title={selectedCorrectiveCommandDescription}
                         type="button"
                       >
-                        {isDecidingApproval ? "Submitting..." : "Approve Corrective Work"}
+                        {isDecidingApproval ? "Submitting..." : selectedCorrectiveCommandLabel}
                       </button>
                     ) : null}
                     {selectedCorrectiveApproval.state === "awaiting" ? (
@@ -551,7 +619,7 @@ export function ProjectsWorkspace({
                         onClick={() => onSubmitApprovalDecision(selectedCorrectiveApproval.requestId, "deny")}
                         type="button"
                       >
-                        {isDecidingApproval ? "Submitting..." : "Deny Corrective Work"}
+                        {isDecidingApproval ? "Submitting..." : "Deny Approval"}
                       </button>
                     ) : null}
                   </div>
